@@ -1,0 +1,85 @@
+{
+  // ══════════════════════════════════════════════════════════════
+  // MCP Database Tools 配置文件
+  // 第一层：全局通用阻止关键字（所有数据库类型、所有项目、所有环境生效）
+  // ══════════════════════════════════════════════════════════════
+  "defaultDisabledKeywords": [
+    "DROP",
+    "DELETE",
+    "UPDATE",
+    "INSERT",
+    "ALTER",
+    "CREATE",
+    "TRUNCATE",
+    "MERGE",
+    "GRANT",
+    "REVOKE",
+    "REPLACE",
+    "BACKUP",
+    "RESTORE",
+    "KILL",
+    "SHUTDOWN"
+  ],
+
+  // ══════════════════════════════════════════════════════════════
+  // 第二层：按数据库类型追加的阻止关键字（可选，未配置时使用内置默认）
+  // ══════════════════════════════════════════════════════════════
+  "defaultDisabledKeywordsByType": {
+    "sqlserver": [ "BULK INSERT", "OPENROWSET", "OPENDATASOURCE", "xp_cmdshell", "sp_configure" ],
+    "mysql": [ "LOAD DATA", "FLUSH", "OPTIMIZE", "REPAIR", "CHECKSUM", "HANDLER" ],
+    "oracle": [ "FLASHBACK", "PURGE", "ALTER SYSTEM", "ALTER DATABASE", "AUDIT", "NOAUDIT" ]
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // 审计日志配置
+  // ══════════════════════════════════════════════════════════════
+  "audit": {
+    "enabled": true,
+    "logPath": "logs/audit.log",
+    "maxFileSizeMB": 10,
+    "maxRetentionDays": 30
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // 项目名 → 项目配置（含多环境）
+  // 每个项目下：defaultEnvironment 为 db_query 未指定 environment 时的回退环境；
+  // environments 为 环境名 → 该环境的数据库配置，环境名自由命名（如 dev/test/prod/xiqing-prod）。
+  // 调用：db_query(project="erp-system", environment="prod") 或省略 environment 走 defaultEnvironment。
+  // ══════════════════════════════════════════════════════════════
+  "databases": {
+    "erp-system": {
+      "defaultEnvironment": "prod",
+      "environments": {
+        "prod": {
+          "type": "sqlserver",
+          "connectionString": "Server=.;Database=ERP;Trusted_Connection=true;TrustServerCertificate=true;",
+          "maxRows": 1000,
+          "commandTimeout": 30,
+          "disabledKeywords": []
+        }
+      }
+    },
+    "crm-mysql": {
+      "defaultEnvironment": "prod",
+      "environments": {
+        "prod": {
+          "type": "mysql",
+          "connectionString": "Server=localhost;Database=CRM;User=root;Password=xxx;",
+          "maxRows": 500,
+          "commandTimeout": 30
+        }
+      }
+    },
+    "finance-oracle": {
+      "defaultEnvironment": "prod",
+      "environments": {
+        "prod": {
+          "type": "oracle",
+          "connectionString": "Data Source=ORCL;User Id=scott;Password=tiger;",
+          "maxRows": 2000,
+          "commandTimeout": 60
+        }
+      }
+    }
+  }
+}

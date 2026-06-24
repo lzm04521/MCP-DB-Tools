@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP DB Tools 阻止关键字</title>
+    <link rel="stylesheet" href="./admin.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">MCP DB Tools</p>
+        <h1>阻止关键字</h1>
+        <p id="configPath" class="muted">读取配置中...</p>
+      </div>
+      <div class="toolbar" aria-label="全局操作">
+        <a class="button secondary" href="/admin">项目配置</a>
+        <button id="reloadBtn" type="button" class="button secondary">重新加载</button>
+        <button id="saveBtn" type="button" class="button primary">保存关键字</button>
+      </div>
+    </header>
+
+    <main class="shell single">
+      <section class="card">
+        <div class="card-title">
+          <div>
+            <h2>全局默认阻止关键字</h2>
+            <p class="muted">所有数据库类型都会叠加这些关键字；每行一个关键字或短语。</p>
+          </div>
+          <span id="globalCount" class="pill">0 个</span>
+        </div>
+        <label class="full">
+          <span>defaultDisabledKeywords</span>
+          <textarea id="defaultDisabledKeywords" rows="10" spellcheck="false"></textarea>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <div>
+            <h2>按数据库类型追加</h2>
+            <p class="muted">这些关键字会在全局默认之上，按数据库类型继续叠加。</p>
+          </div>
+        </div>
+        <div class="grid three">
+          <label>
+            <span>SQL Server</span>
+            <textarea id="sqlserverKeywords" rows="10" spellcheck="false"></textarea>
+          </label>
+          <label>
+            <span>MySQL</span>
+            <textarea id="mysqlKeywords" rows="10" spellcheck="false"></textarea>
+          </label>
+          <label>
+            <span>Oracle</span>
+            <textarea id="oracleKeywords" rows="10" spellcheck="false"></textarea>
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <div>
+            <h2>说明</h2>
+            <p class="muted">保存后会写入 config.json，并生成备份。项目/环境额外阻止关键字仍在项目配置页维护。</p>
+          </div>
+        </div>
+        <ul class="keyword-notes">
+          <li>空行会被忽略。</li>
+          <li>大小写不同但文本相同的关键字会去重。</li>
+          <li>下层只能追加，不能缩减上层；最终生效列表由运行时合并。</li>
+        </ul>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="./admin-api.js"></script>
+    <script src="./keywords.js"></script>
+  </body>
+</html>

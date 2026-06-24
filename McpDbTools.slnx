@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/McpDbTools.Server/McpDbTools.Server.csproj" />
+    <Project Path="src/McpDbTools.Tests/McpDbTools.Tests.csproj" />
+  </Folder>
+</Solution>

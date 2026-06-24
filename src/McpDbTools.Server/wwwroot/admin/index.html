@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP DB Tools Config Admin</title>
+    <link rel="stylesheet" href="./admin.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Local Admin</p>
+        <h1>MCP DB Tools Config Admin</h1>
+        <p id="configPath" class="muted">正在加载配置路径...</p>
+      </div>
+      <div class="toolbar" aria-label="全局操作">
+        <a class="button secondary" href="/admin/keywords">
+          阻止关键字
+        </a>
+        <button id="reloadBtn" type="button" class="button secondary">
+          重新加载
+        </button>
+        <button id="saveBtn" type="button" class="button primary">
+          保存配置
+        </button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="sidebar" aria-label="项目列表">
+        <div class="side-title">
+          <h2>项目</h2>
+          <button id="addProjectBtn" type="button" class="button ghost">
+            新增项目
+          </button>
+        </div>
+        <div id="projectList" class="project-list"></div>
+      </aside>
+
+      <section class="workspace" aria-label="配置编辑区">
+        <div id="emptyState" class="empty-state hidden">
+          <h2>还没有项目</h2>
+          <p>点击“新增项目”开始维护 config.json。</p>
+        </div>
+
+        <form id="editor" class="editor hidden">
+          <section class="card">
+            <div class="card-title">
+              <div>
+                <p class="eyebrow">Project</p>
+                <h2>项目配置</h2>
+              </div>
+              <button
+                id="deleteProjectBtn"
+                type="button"
+                class="button danger subtle"
+              >
+                删除项目
+              </button>
+            </div>
+            <div class="grid two">
+              <label>
+                <span>项目 key *</span>
+                <input
+                  id="projectName"
+                  type="text"
+                  required
+                  autocomplete="off"
+                />
+                <small>MCP 调用参数 project，修改会影响调用方。</small>
+              </label>
+              <label>
+                <span>显示名</span>
+                <input id="projectDisplayName" type="text" autocomplete="off" />
+              </label>
+              <label>
+                <span>默认环境</span>
+                <select id="defaultEnvironment"></select>
+              </label>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-title">
+              <div>
+                <p class="eyebrow">Environment</p>
+                <h2>环境</h2>
+              </div>
+              <button
+                id="addEnvironmentBtn"
+                type="button"
+                class="button secondary"
+              >
+                新增环境
+              </button>
+            </div>
+            <div id="environmentTabs" class="env-tabs"></div>
+          </section>
+
+          <section id="environmentEditor" class="card hidden">
+            <div class="card-title">
+              <div>
+                <p class="eyebrow">Connection</p>
+                <h2>连接配置</h2>
+              </div>
+              <button
+                id="deleteEnvironmentBtn"
+                type="button"
+                class="button danger subtle"
+              >
+                删除环境
+              </button>
+            </div>
+
+            <div id="productionWarning" class="warning hidden" role="status">
+              当前环境已标记为生产环境。保存不会再要求输入项目名确认，
+              请在修改连接字符串、数据库类型、项目 key、环境 key 或删除环境前仔细核对。
+            </div>
+
+            <div class="grid two">
+              <label>
+                <span>环境 key *</span>
+                <input
+                  id="environmentName"
+                  type="text"
+                  required
+                  autocomplete="off"
+                />
+              </label>
+              <label>
+                <span>显示名</span>
+                <input
+                  id="environmentDisplayName"
+                  type="text"
+                  autocomplete="off"
+                />
+              </label>
+              <label>
+                <span>数据库类型</span>
+                <select id="databaseType">
+                  <option value="sqlserver">SqlServer</option>
+                  <option value="mysql">MySQL</option>
+                  <option value="oracle">Oracle</option>
+                </select>
+              </label>
+              <label class="switch-row">
+                <input id="isProduction" type="checkbox" />
+                <span>生产环境</span>
+              </label>
+              <label>
+                <span>最大行数 *</span>
+                <input id="maxRows" type="number" min="1" step="1" required />
+              </label>
+              <label>
+                <span>命令超时（秒）*</span>
+                <input
+                  id="commandTimeout"
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                />
+              </label>
+            </div>
+
+            <label class="full">
+              <span>连接字符串 *</span>
+              <textarea
+                id="connectionString"
+                rows="4"
+                spellcheck="false"
+              ></textarea>
+              <small id="connectionHelp"
+                >本机 Admin
+                页面会直接加载完整连接字符串，编辑时请注意避免截图或共享。</small
+              >
+            </label>
+
+            <label class="full">
+              <span>阻止关键字</span>
+              <input
+                id="disabledKeywords"
+                type="text"
+                autocomplete="off"
+                placeholder="例如 DROP, DELETE, xp_cmdshell"
+              />
+              <small
+                >特殊关键字设置，用逗号分隔；保存时会去除空白并按大小写不敏感去重。</small
+              >
+            </label>
+          </section>
+
+          <section class="card">
+            <div class="card-title">
+              <div>
+                <p class="eyebrow">Audit</p>
+                <h2>审计配置</h2>
+              </div>
+            </div>
+            <div class="grid two">
+              <label class="switch-row">
+                <input id="auditEnabled" type="checkbox" />
+                <span>启用审计日志</span>
+              </label>
+              <label>
+                <span>日志路径 *</span>
+                <input id="auditLogPath" type="text" required />
+              </label>
+              <label>
+                <span>单文件最大 MB *</span>
+                <input
+                  id="auditMaxFileSizeMB"
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                />
+              </label>
+              <label>
+                <span>保留天数 *</span>
+                <input
+                  id="auditMaxRetentionDays"
+                  type="number"
+                  min="1"
+                  step="1"
+                  required
+                />
+              </label>
+            </div>
+          </section>
+        </form>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="confirmDialog" class="dialog">
+      <form method="dialog">
+        <h2 id="confirmTitle">确认操作</h2>
+        <p id="confirmMessage"></p>
+        <div class="dialog-actions">
+          <button value="cancel" type="submit" class="button secondary">
+            取消
+          </button>
+          <button
+            id="confirmOkBtn"
+            value="ok"
+            type="submit"
+            class="button danger"
+          >
+            确认
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./admin-api.js"></script>
+    <script src="./admin.js"></script>
+  </body>
+</html>

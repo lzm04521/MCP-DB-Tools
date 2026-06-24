@@ -1,0 +1,102 @@
+# .NET 构建产物
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+artifacts/
+publish/
+
+# NuGet / 打包产物
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+project.lock.json
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+# 测试与覆盖率产物
+TestResults/
+[Tt]est[Rr]esult*/
+coverage/
+.coverage/
+*.coverage
+*.coveragexml
+*.trx
+*.lcov
+*.opencover.xml
+coverage.cobertura.xml
+
+# Visual Studio / MSBuild 本地文件
+.vs/
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+*.csproj.user
+*.vbproj.user
+*.vcxproj.user
+*.pubxml.user
+
+# JetBrains Rider / ReSharper
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+# VS Code：默认忽略个人本地配置，保留可共享配置入口
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Claude Code / CodeGraph 本地状态
+.claude/settings.local.json
+.codegraph/
+
+# 运行时日志与临时文件
+logs/
+*.log
+*.log.*
+audit.log*
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# 本地配置与密钥文件
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local.json
+appsettings.*.local.json
+# 如果 src/McpDbTools.Server/config.json 写入真实连接串，请不要提交；可改用本地覆盖文件或取消注释下一行。
+# src/McpDbTools.Server/config.json
+
+# 本地数据库/缓存文件
+*.db
+*.sqlite
+*.sqlite3
+*.cache
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 发布压缩包
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+CLAUDE.md
