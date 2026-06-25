@@ -1,0 +1,28 @@
+/* 设计令牌：颜色、圆角、阴影、字体等全局变量。
+   所有页面共享，调整主题只需改本文件。 */
+
+:root {
+  /* 语义色 */
+  --color-primary: #1e3a5f;
+  --color-primary-soft: rgba(30, 58, 95, 0.1);   /* primary 的浅底，供 .pill 等使用 */
+  --color-secondary: #2563eb;
+  --color-accent: #059669;
+  --color-danger: #b42318;
+  --color-warning: #9a6700;
+
+  /* 中性色 */
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-muted: #f1f5f9;
+  --color-border: #d8dee8;
+  --color-foreground: #0f172a;
+  --color-subtle: #64748b;
+
+  /* 形状与阴影 */
+  --shadow-card: 0 16px 45px rgba(15, 23, 42, 0.08);
+  --radius-lg: 18px;
+  --radius-md: 12px;
+
+  /* 字体 */
+  font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+}

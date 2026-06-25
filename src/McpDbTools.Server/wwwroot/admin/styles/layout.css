@@ -1,0 +1,125 @@
+/* 布局层：页面骨架的位置与尺寸。
+   只管“在哪里、多大”，外观（背景/边框/圆角/阴影）交给 components.css。 */
+
+/* 顶栏：左侧标题 + 右侧操作区，下方为导航条 */
+.topbar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px clamp(16px, 4vw, 40px);
+}
+
+.topbar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+/* 通用“两端对齐的标题行”：toolbar / card-title / side-title / dialog-actions 复用 */
+.toolbar,
+.dialog-actions,
+.card-title,
+.side-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* 导航条 */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 视图容器：shell 注入各视图内容（含 .shell 网格）。
+   自身不设 padding（由内部 .shell 负责），确保视图切换时布局一致。 */
+.view-root {
+  display: block;
+}
+
+/* 主区：左侧栏 + 右侧工作区 */
+.shell {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 24px;
+  padding: 0 clamp(16px, 4vw, 40px) 40px;
+}
+
+/* 单列布局（关键字页等全局配置页使用） */
+.shell.single {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.sidebar {
+  align-self: start;
+  position: sticky;
+  top: 18px;
+}
+
+.project-list,
+.env-tabs {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.workspace,
+.editor {
+  display: grid;
+  gap: 18px;
+}
+
+/* 表单网格 */
+.grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.full {
+  margin-top: 16px;
+}
+
+/* 开关行：勾选框 + 文案横排 */
+.switch-row {
+  align-content: center;
+  grid-template-columns: auto 1fr;
+  min-height: 44px;
+}
+
+/* 响应式：窄屏改单列 */
+@media (max-width: 860px) {
+  .topbar__head,
+  .toolbar,
+  .card-title,
+  .side-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+
+  .grid.two,
+  .grid.three {
+    grid-template-columns: 1fr;
+  }
+}
