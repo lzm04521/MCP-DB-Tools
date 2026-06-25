@@ -85,7 +85,8 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
     app.UseStaticFiles();
     app.MapGet("/", () => Results.Redirect("/admin"));
     app.MapGet("/admin", () => Results.Redirect("/admin/index.html"));
-    app.MapGet("/admin/keywords", () => Results.Redirect("/admin/keywords.html"));
+    app.MapGet("/admin/keywords", () => Results.Redirect("/admin/#/keywords", permanent: false));
+    app.MapGet("/admin/keywords.html", () => Results.Redirect("/admin/#/keywords", permanent: false));
     app.MapGet("/admin/session", (HttpResponse response) =>
     {
         SetAdminSessionCookie(response, sessionSecret);

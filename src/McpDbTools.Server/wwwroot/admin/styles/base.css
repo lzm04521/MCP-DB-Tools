@@ -1,0 +1,65 @@
+/* 基础层：reset、全局排版、共享工具类。
+   不含布局结构，也不含组件外观（见 layout.css / components.css）。 */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  color: var(--color-foreground);
+  background: linear-gradient(135deg, #eef5ff 0%, var(--color-background) 42%, #f3fbf7 100%);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  letter-spacing: -0.03em;
+}
+
+h2 {
+  font-size: 20px;
+}
+
+/* 标题上方的小标签 */
+.eyebrow {
+  color: var(--color-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.muted,
+small {
+  color: var(--color-subtle);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* 尊重用户“减少动态”偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
