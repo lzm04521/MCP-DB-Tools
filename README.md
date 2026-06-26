@@ -41,7 +41,7 @@ dotnet build
           "connectionString": "Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;",
           "maxRows": 1000,
           "commandTimeout": 30,
-          "disabledKeywords": []
+          "disabledKeywords": [],
         },
         "prod": {
           "displayName": "生产环境",
@@ -50,11 +50,11 @@ dotnet build
           "connectionString": "Server=prod;Database=MyDb;User Id=readonly;Password=***;TrustServerCertificate=true;",
           "maxRows": 500,
           "commandTimeout": 30,
-          "disabledKeywords": []
-        }
-      }
-    }
-  }
+          "disabledKeywords": [],
+        },
+      },
+    },
+  },
 }
 ```
 
@@ -70,7 +70,11 @@ dotnet build
   "mcpServers": {
     "db-tools": {
       "command": "dotnet",
-      "args": ["run", "--project", "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/McpDbTools.Server.csproj"],
+      "args": [
+        "run",
+        "--project",
+        "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/McpDbTools.Server.csproj"
+      ],
       "env": {
         "ConfigStore__ConfigPath": "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json"
       }
@@ -98,11 +102,11 @@ dotnet build
 
 同一个程序支持 MCP 与 Admin 两类运行模式：
 
-| 模式 | 参数 | 说明 |
-|------|------|------|
-| MCP 模式 | 无参数 | 默认模式。启动 MCP stdio server，不启动 Admin UI |
-| Admin 模式 | `--admin-only` | 只启动本机 Admin Web 服务，不启动 MCP stdio server |
-| 调试混合模式 | `--admin` | 同时启动 MCP 与 Admin UI；仅建议开发调试使用 |
+| 模式         | 参数           | 说明                                               |
+| ------------ | -------------- | -------------------------------------------------- |
+| MCP 模式     | 无参数         | 默认模式。启动 MCP stdio server，不启动 Admin UI   |
+| Admin 模式   | `--admin-only` | 只启动本机 Admin Web 服务，不启动 MCP stdio server |
+| 调试混合模式 | `--admin`      | 同时启动 MCP 与 Admin UI；仅建议开发调试使用       |
 
 Admin UI 默认端口为 `5123`，可通过 `--admin-port` 修改。开发时如需使用源码目录下的配置文件，同样建议设置 `ConfigStore__ConfigPath`：
 
@@ -173,12 +177,12 @@ backups/config.20260623-184500-123.json
 
 在指定项目和环境上执行只读 SQL 查询。
 
-| 参数 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `project` | string | 是 | 项目名，对应 `config.json` 中 `databases` 的键 |
-| `sql` | string | 是 | SQL 语句，仅允许只读操作 |
-| `environment` | string | 否 | 环境名；未传时使用项目的 `defaultEnvironment` |
-| `limit` | int | 否 | 临时限制返回行数，必须为正整数；最终取 `min(limit, maxRows)`，不能突破配置上限 |
+| 参数          | 类型   | 必填 | 说明                                                                           |
+| ------------- | ------ | ---- | ------------------------------------------------------------------------------ |
+| `project`     | string | 是   | 项目名，对应 `config.json` 中 `databases` 的键                                 |
+| `sql`         | string | 是   | SQL 语句，仅允许只读操作                                                       |
+| `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment`                                  |
+| `limit`       | int    | 否   | 临时限制返回行数，必须为正整数；最终取 `min(limit, maxRows)`，不能突破配置上限 |
 
 返回 JSON 示例：
 
@@ -202,15 +206,15 @@ backups/config.20260623-184500-123.json
 
 错误以结构化 JSON 返回，不抛到 MCP 协议层。常见错误码：
 
-| 错误码 | 说明 |
-|--------|------|
-| `PROJECT_NOT_FOUND` | 项目不存在 |
-| `ENVIRONMENT_REQUIRED` | 未指定环境，且项目未配置默认环境 |
-| `ENVIRONMENT_NOT_FOUND` | 环境不存在 |
-| `SQL_BLOCKED` | SQL 被安全守卫阻止 |
-| `SQL_PARSE_ERROR` | SQL 为空或无法识别首关键字 |
-| `QUERY_TIMEOUT` | 查询超时 |
-| `QUERY_ERROR` | 数据库执行错误 |
+| 错误码                  | 说明                             |
+| ----------------------- | -------------------------------- |
+| `PROJECT_NOT_FOUND`     | 项目不存在                       |
+| `ENVIRONMENT_REQUIRED`  | 未指定环境，且项目未配置默认环境 |
+| `ENVIRONMENT_NOT_FOUND` | 环境不存在                       |
+| `SQL_BLOCKED`           | SQL 被安全守卫阻止               |
+| `SQL_PARSE_ERROR`       | SQL 为空或无法识别首关键字       |
+| `QUERY_TIMEOUT`         | 查询超时                         |
+| `QUERY_ERROR`           | 数据库执行错误                   |
 
 ## 配置文件详解
 
@@ -222,7 +226,7 @@ backups/config.20260623-184500-123.json
   "defaultDisabledKeywordsByType": {
     "sqlserver": ["BULK INSERT", "OPENROWSET", "xp_cmdshell"],
     "mysql": ["LOAD DATA", "FLUSH"],
-    "oracle": ["FLASHBACK", "PURGE"]
+    "oracle": ["FLASHBACK", "PURGE"],
   },
   // 审计日志已改为全局开启（本地 audit.db），无需在此配置；残留的 audit 节点会被静默忽略
   "databases": {
@@ -237,21 +241,21 @@ backups/config.20260623-184500-123.json
           "connectionString": "...",
           "maxRows": 1000,
           "commandTimeout": 30,
-          "disabledKeywords": []
-        }
-      }
-    }
-  }
+          "disabledKeywords": [],
+        },
+      },
+    },
+  },
 }
 ```
 
 ### 三层 SQL 阻止关键字
 
-| 层级 | 字段 | 作用域 |
-|------|------|--------|
-| 全局 | `defaultDisabledKeywords` | 所有数据库、所有项目、所有环境 |
-| 类型 | `defaultDisabledKeywordsByType` | 按数据库类型追加 |
-| 环境 | `databases.<项目>.environments.<环境>.disabledKeywords` | 单个环境追加 |
+| 层级 | 字段                                                    | 作用域                         |
+| ---- | ------------------------------------------------------- | ------------------------------ |
+| 全局 | `defaultDisabledKeywords`                               | 所有数据库、所有项目、所有环境 |
+| 类型 | `defaultDisabledKeywordsByType`                         | 按数据库类型追加               |
+| 环境 | `databases.<项目>.environments.<环境>.disabledKeywords` | 单个环境追加                   |
 
 最终阻止列表 = 全局 ∪ 按类型 ∪ 环境。全部转大写去重；下层只能追加，不能缩减上层。
 
@@ -361,8 +365,3 @@ src/McpDbTools.Server/
 - 不支持跨环境 / 多连接 JOIN 查询（每个环境对应一个数据库连接；同一连接内数据库自身支持的跨 schema 查询由数据库决定）
 - Admin UI 当前只设计为本机访问；如需远程访问，需要另行设计认证、授权、TLS 与审计
 - 实际数据库连接需在目标环境用真实数据库验证（单元测试覆盖纯逻辑层）
-
-## 设计文档
-
-- [doc/design.md](doc/design.md)
-- [doc/admin-ui-design.md](doc/admin-ui-design.md)
