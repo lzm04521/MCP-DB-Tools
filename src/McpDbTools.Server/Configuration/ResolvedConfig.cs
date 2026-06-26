@@ -11,9 +11,6 @@ public sealed record ResolvedConfig
 {
     /// <summary>当前配置中的所有项目（项目名 → ResolvedProject）。</summary>
     public required IReadOnlyDictionary<string, ResolvedProject> Projects { get; init; }
-
-    /// <summary>审计日志配置。</summary>
-    public required AuditConfig Audit { get; init; }
 }
 
 /// <summary>
@@ -111,8 +108,7 @@ public static class ResolvedConfigBuilder
 
         return new ResolvedConfig
         {
-            Projects = new ReadOnlyDictionary<string, ResolvedProject>(projects),
-            Audit = raw.Audit
+            Projects = new ReadOnlyDictionary<string, ResolvedProject>(projects)
         };
     }
 }

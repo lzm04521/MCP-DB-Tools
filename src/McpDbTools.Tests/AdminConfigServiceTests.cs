@@ -1,6 +1,7 @@
 using System.Text.Json;
 using McpDbTools.Server.Admin;
 using McpDbTools.Server.Configuration;
+using McpDbTools.Server.Database;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -24,7 +25,7 @@ public class AdminConfigServiceTests : IDisposable
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
-        var service = new AdminConfigService(store, options);
+        var service = new AdminConfigService(store, new DatabaseProviderFactory(), options);
         return (store, service, configPath);
     }
 
@@ -35,7 +36,7 @@ public class AdminConfigServiceTests : IDisposable
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
-        var service = new AdminConfigService(store, options);
+        var service = new AdminConfigService(store, new DatabaseProviderFactory(), options);
         return (store, service, configPath);
     }
 
@@ -83,7 +84,6 @@ public class AdminConfigServiceTests : IDisposable
 
             AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
             {
-                Audit = new AuditConfig { Enabled = false, LogPath = "logs/audit.log", MaxFileSizeMB = 10, MaxRetentionDays = 30 },
                 Projects = new List<AdminProjectDto>
                 {
                     new()
@@ -140,7 +140,6 @@ public class AdminConfigServiceTests : IDisposable
         {
             AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
             {
-                Audit = new AuditConfig { Enabled = true, LogPath = "logs/audit.log", MaxFileSizeMB = 20, MaxRetentionDays = 15 },
                 Projects = new List<AdminProjectDto>
                 {
                     new()
@@ -211,7 +210,6 @@ public class AdminConfigServiceTests : IDisposable
                     ["mysql"] = new() { "load data" },
                     ["oracle"] = new() { "flashback" }
                 },
-                Audit = new AuditConfig { Enabled = false, LogPath = "logs/audit.log", MaxFileSizeMB = 10, MaxRetentionDays = 30 },
                 Projects = service.GetConfig().Projects
             }, CancellationToken.None);
 
@@ -250,7 +248,6 @@ public class AdminConfigServiceTests : IDisposable
         {
             AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
             {
-                Audit = new AuditConfig { Enabled = false, LogPath = "logs/audit.log", MaxFileSizeMB = 10, MaxRetentionDays = 30 },
                 Projects = new List<AdminProjectDto>
                 {
                     new()
@@ -267,6 +264,141 @@ public class AdminConfigServiceTests : IDisposable
                                 IsProduction = true,
                                 Type = "mysql",
                                 ConnectionString = null,
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success);
+        }
+    }
+
+    [Fact]
+    public async Task SaveConfig_ProjectKeyChange_Rejected()
+    {
+        // 需求 1：项目 key 创建后不可修改。携带 originalName 但 name 与之不同应报错。
+        var (store, service, _) = Create("""
+        {
+          "audit": { "enabled": false, "logPath": "logs/audit.log", "maxFileSizeMB": 10, "maxRetentionDays": 30 },
+          "databases": {
+            "erp": {
+              "defaultEnvironment": "prod",
+              "environments": {
+                "prod": { "type": "sqlserver", "connectionString": "Server=.;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            }
+          }
+        }
+        """);
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp-renamed",
+                        OriginalName = "erp",
+                        DefaultEnvironment = "prod",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod",
+                                OriginalName = "prod",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=.;",
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Contains(result.Errors, e => e.Contains("项目 key") && e.Contains("不可修改"));
+        }
+    }
+
+    [Fact]
+    public async Task SaveConfig_EnvironmentKeyChange_Rejected()
+    {
+        // 环境键同样不可修改
+        var (store, service, _) = Create("""
+        {
+          "audit": { "enabled": false, "logPath": "logs/audit.log", "maxFileSizeMB": 10, "maxRetentionDays": 30 },
+          "databases": {
+            "erp": {
+              "defaultEnvironment": "prod",
+              "environments": {
+                "prod": { "type": "sqlserver", "connectionString": "Server=.;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            }
+          }
+        }
+        """);
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        OriginalName = "erp",
+                        DefaultEnvironment = "prod",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod-renamed",
+                                OriginalName = "prod",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=.;",
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Contains(result.Errors, e => e.Contains("环境 key") && e.Contains("不可修改"));
+        }
+    }
+
+    [Fact]
+    public async Task SaveConfig_NewProject_AllowsAnyKey()
+    {
+        // 新建项目（无 originalName）可自由命名
+        var (store, service, _) = CreateMissing();
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "brand-new-project",
+                        DefaultEnvironment = "test",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "test",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=.;",
                                 MaxRows = 100,
                                 CommandTimeout = 30
                             }

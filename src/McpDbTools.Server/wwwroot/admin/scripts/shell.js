@@ -42,7 +42,12 @@
   function applyHeader(view) {
     dom.eyebrow.textContent = view.eyebrow || '';
     dom.viewTitle.textContent = view.title || '';
-    dom.saveBtn.textContent = view.saveLabel || '保存';
+    // 只读视图（无 save 或 saveLabel 为空）隐藏保存按钮，避免误导
+    const canSave = typeof view.save === 'function' && view.saveLabel;
+    dom.saveBtn.classList.toggle('hidden', !canSave);
+    if (canSave) {
+      dom.saveBtn.textContent = view.saveLabel || '保存';
+    }
   }
 
   /** 卸载旧视图（同步表单到内存 state），清空容器，挂载新视图。 */

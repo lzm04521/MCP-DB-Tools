@@ -5,15 +5,24 @@
 .topbar {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 24px clamp(16px, 4vw, 40px);
+  gap: 10px;
+  padding: 14px clamp(16px, 4vw, 40px);
 }
 
 .topbar__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
+}
+
+/* 标题区：h1 + eyebrow + configPath 同行横排，节省纵向空间 */
+.topbar__title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
 }
 
 /* 通用“两端对齐的标题行”：toolbar / card-title / side-title / dialog-actions 复用 */
@@ -51,7 +60,7 @@
 /* 单列布局（关键字页等全局配置页使用） */
 .shell.single {
   grid-template-columns: minmax(0, 1fr);
-  max-width: 1180px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 
@@ -121,5 +130,14 @@
   .grid.two,
   .grid.three {
     grid-template-columns: 1fr;
+  }
+
+  /* 审计筛选栏：窄屏下每个字段占满整行，避免挤压 */
+  .audit-filter-bar .filter-field,
+  .audit-filter-bar .filter-actions {
+    flex: 1 1 100%;
+  }
+  .filter-actions .button {
+    flex: 1;
   }
 }

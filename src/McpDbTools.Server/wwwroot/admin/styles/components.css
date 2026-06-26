@@ -261,3 +261,305 @@ textarea {
   display: grid;
   gap: 16px;
 }
+
+/* ============ 只读字段（已持久化的 key，创建后不可改） ============ */
+input.readonly-field,
+input[readonly] {
+  background: var(--color-muted);
+  color: var(--color-subtle);
+  cursor: not-allowed;
+}
+
+/* ============ 卡片标题多按钮区（测试连接 + 删除等） ============ */
+.card-title-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.card-title-actions .button {
+  min-height: 38px;
+  padding: 8px 16px;
+}
+
+/* ============ 测试连接结果提示条 ============ */
+.connection-test {
+  margin-top: 16px;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.connection-test.ok {
+  background: rgba(5, 150, 105, 0.1);
+  color: var(--color-accent);
+  border-color: rgba(5, 150, 105, 0.3);
+}
+
+.connection-test.fail {
+  background: rgba(180, 35, 24, 0.08);
+  color: var(--color-danger);
+  border-color: rgba(180, 35, 24, 0.3);
+  word-break: break-all;
+}
+
+.connection-test.pending {
+  background: var(--color-muted);
+  color: var(--color-subtle);
+}
+
+/* ============ 审计日志 / 备份表格 ============ */
+.audit-table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+/* 备份表格：文件名列占满，操作列不换行 */
+.backup-table .cell-name {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: var(--color-secondary);
+}
+
+.backup-table .col-actions,
+.audit-table .col-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.row-action {
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.audit-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--color-muted);
+  color: var(--color-foreground);
+  font-weight: 700;
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.audit-table tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(216, 222, 232, 0.6);
+  vertical-align: top;
+}
+
+.audit-table tbody tr:hover {
+  background: #f8fbff;
+}
+
+.audit-table .cell-time {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  color: var(--color-subtle);
+}
+
+.audit-table .cell-sql {
+  max-width: 320px;
+}
+
+.audit-table .sql-preview {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  color: var(--color-secondary);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.audit-table .cell-error {
+  color: var(--color-danger);
+  max-width: 160px;
+}
+
+.audit-table .error-preview {
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 可点击单元格：SQL / 错误信息点击弹窗查看全部，给视觉提示 */
+.audit-table .clickable {
+  cursor: pointer;
+}
+
+.audit-table .clickable:hover .sql-preview,
+.audit-table .clickable:hover .error-preview {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.audit-table .audit-empty-row td {
+  text-align: center;
+  color: var(--color-subtle);
+  padding: 32px 12px;
+}
+
+/* 成功 / 失败徽章 */
+.badge-ok,
+.badge-fail {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.badge-ok {
+  background: rgba(5, 150, 105, 0.12);
+  color: var(--color-accent);
+}
+
+.badge-fail {
+  background: rgba(180, 35, 24, 0.12);
+  color: var(--color-danger);
+}
+
+.row-fail {
+  background: rgba(180, 35, 24, 0.03);
+}
+
+/* ============ 筛选区（紧凑横排） ============ */
+.audit-filter-card {
+  padding: 14px 18px;
+}
+
+.audit-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 700;
+  min-width: 130px;
+}
+
+.filter-field span {
+  font-size: 12px;
+  color: var(--color-subtle);
+}
+
+.filter-field input,
+.filter-field select {
+  min-height: 38px;
+  padding: 7px 10px;
+  font-size: 14px;
+}
+
+/* SQL 关键词框弹性占据剩余宽度 */
+.filter-field-grow {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.filter-actions .button {
+  min-height: 38px;
+  padding: 8px 16px;
+}
+
+/* ============ 分页 ============ */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.pager .button {
+  min-height: 38px;
+  padding: 8px 16px;
+}
+
+.pager-info {
+  font-weight: 700;
+  color: var(--color-foreground);
+}
+
+/* 每页条数下拉（与分页按钮同行） */
+.pager-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  margin-left: 8px;
+}
+
+.pager-size span {
+  font-size: 13px;
+  color: var(--color-subtle);
+}
+
+.pager-size select {
+  min-height: 38px;
+  width: auto;
+  padding: 7px 10px;
+}
+
+/* 审计页清理控件：天数下拉 + 清理按钮横排。放分页栏最右，远离刷新避免误点 */
+.pager-cleanup {
+  margin-left: auto;
+}
+
+.cleanup-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cleanup-control select {
+  min-height: 38px;
+  width: auto;
+  padding: 7px 10px;
+}
+
+/* ============ SQL 详情弹窗 ============ */
+.sql-dialog {
+  width: min(820px, calc(100vw - 32px));
+  max-height: calc(100dvh - 64px);
+}
+
+.sql-content {
+  margin: 0;
+  padding: 16px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: var(--radius-md);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 60vh;
+  overflow: auto;
+  user-select: all;
+}

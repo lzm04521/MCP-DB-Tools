@@ -16,9 +16,6 @@ public sealed class AdminConfigResponse
 
     [JsonPropertyName("projects")]
     public List<AdminProjectDto> Projects { get; init; } = new();
-
-    [JsonPropertyName("audit")]
-    public AuditConfig Audit { get; init; } = new();
 }
 
 public sealed class AdminConfigRequest
@@ -31,9 +28,6 @@ public sealed class AdminConfigRequest
 
     [JsonPropertyName("projects")]
     public List<AdminProjectDto> Projects { get; init; } = new();
-
-    [JsonPropertyName("audit")]
-    public AuditConfig Audit { get; init; } = new();
 }
 
 public sealed class AdminProjectDto

@@ -22,18 +22,19 @@ public class DbQueryToolTests : IDisposable
         Directory.CreateDirectory(_tempDir);
     }
 
-    /// <summary>写临时 config.json 并构造 ConfigStore + DbQueryTool（audit 关闭，避免写文件）。</summary>
+    /// <summary>写临时 config.json 并构造 ConfigStore + DbQueryTool（audit 落临时 db，测试结束随目录删除）。</summary>
     private DbQueryTool CreateTool(string databasesJson)
     {
         string configPath = Path.Combine(_tempDir, "config.json");
-        string json = $$"""{"audit":{"enabled":false},"databases":{{databasesJson}}}""";
+        string json = $$"""{"databases":{{databasesJson}}}""";
         File.WriteAllText(configPath, json);
 
         using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         var store = new ConfigStore(
             loggerFactory.CreateLogger<ConfigStore>(),
-            Options.Create(new ConfigStoreOptions { ConfigPath = configPath }));
-        var audit = new AuditLogger(store, loggerFactory.CreateLogger<AuditLogger>());
+            options);
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
         return new DbQueryTool(store, new SqlGuard(), new DatabaseProviderFactory(), audit);
     }
 
