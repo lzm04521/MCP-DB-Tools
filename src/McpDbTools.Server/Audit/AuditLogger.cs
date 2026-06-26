@@ -32,22 +32,14 @@ public sealed record AuditEntry
 /// <item>全局开启，不再依赖开关配置；db 文件位于 config.json 同目录，文件名 audit.db。</item>
 /// <item>WAL 模式 + busy_timeout：MCP 写入与 Admin 页读取同进程并发安全。</item>
 /// <item>每次写入用独立短连接，参数化 INSERT；写入失败仅记 Error，不影响主流程（沿用既有约定）。</item>
-/// <item>惰性清理：保留期 30 天，每小时最多触发一次 DELETE。</item>
+/// <item>不自动清理：记录保留至用户在 Admin UI「审计日志」页手动清理为止。</item>
 /// </list>
 /// </para>
 /// </summary>
 public sealed class AuditLogger
 {
-    /// <summary>日志保留天数（全局常量，需求 3：取消配置项改为全局记录）。</summary>
-    public const int RetentionDays = 30;
-
-    /// <summary>惰性清理最小间隔，避免每条写入都扫表。</summary>
-    private static readonly TimeSpan CleanupInterval = TimeSpan.FromHours(1);
-
     private readonly string _connectionString;
     private readonly ILogger<AuditLogger> _logger;
-    private readonly object _cleanupLock = new();
-    private DateTime _lastCleanupUtc = DateTime.MinValue;
     private int _initialized;
 
     public AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger)
@@ -96,8 +88,6 @@ public sealed class AuditLogger
             command.Parameters.AddWithValue("@success", entry.Success ? 1 : 0);
             command.Parameters.AddWithValue("@error", (object?)entry.Error ?? DBNull.Value);
             command.ExecuteNonQuery();
-
-            MaybeCleanup();
         }
         catch (Exception ex)
         {
@@ -239,39 +229,6 @@ public sealed class AuditLogger
             return query;
         }
         return query with { Page = page, PageSize = pageSize };
-    }
-
-    /// <summary>惰性清理：每隔一段时间删除超过保留期的记录。多线程下加锁保证只跑一次。</summary>
-    private void MaybeCleanup()
-    {
-        DateTime nowUtc = DateTime.UtcNow;
-        lock (_cleanupLock)
-        {
-            if (nowUtc - _lastCleanupUtc < CleanupInterval)
-            {
-                return;
-            }
-            _lastCleanupUtc = nowUtc;
-        }
-
-        try
-        {
-            string cutoff = nowUtc.AddDays(-RetentionDays)
-                .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
-            using var connection = OpenConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "DELETE FROM audit_log WHERE time < @cutoff";
-            command.Parameters.AddWithValue("@cutoff", cutoff);
-            int deleted = command.ExecuteNonQuery();
-            if (deleted > 0)
-            {
-                _logger.LogInformation("审计日志清理：删除 {Count} 条过期记录", deleted);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "审计日志过期清理失败");
-        }
     }
 
     /// <summary>

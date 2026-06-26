@@ -33,7 +33,7 @@ public class AuditLoggerTests : IDisposable
         return (store, logger, Path.Combine(_tempDir, "audit.db"));
     }
 
-    /// <summary>以「当前 UTC 往前 daysAgo 天」生成 ISO 时间，保证落在保留期内不被清理。</summary>
+    /// <summary>以「当前 UTC 往前 daysAgo 天」生成 ISO 时间，保证各条记录时间互不相同、可稳定排序。</summary>
     private static string Iso(int daysAgo) => DateTime.UtcNow.AddDays(-daysAgo)
         .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture);
 
@@ -208,7 +208,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void DeleteOlderThan_RemovesOldKeepsNew()
     {
-        // 注意：用较小的天数偏移（均 < 默认保留期 30 天），避免被惰性清理误删
+        // 用 1/4/10 天偏移构造新旧记录，便于验证 DeleteOlderThan 按天数删除的行为
         var (store, logger, _) = Create();
         using (store)
         {
