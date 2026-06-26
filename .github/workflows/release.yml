@@ -1,0 +1,96 @@
+name: release
+
+# 打 v* 开头的 tag（如 v1.0.0、v1.0.0-beta）时触发：构建四平台 self-contained 单文件包并发布 GitHub Release。
+# 不在普通 push 时触发，避免误发。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 创建 Release 与上传产物需要写权限
+
+jobs:
+  build:
+    name: build (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false   # 单个平台失败不取消其它平台，便于排查
+      matrix:
+        # rid 与压缩产物名后缀保持一致；Windows 用 windows runner（zip 更顺），Linux 用 ubuntu
+        include:
+          - os: windows-latest
+            rid: win-x64
+            archive: zip
+          - os: windows-latest
+            rid: win-arm64
+            archive: zip
+          - os: ubuntu-latest
+            rid: linux-x64
+            archive: tar.gz
+          - os: ubuntu-latest
+            rid: linux-arm64
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (self-contained single-file)
+        run: >
+          dotnet publish src/McpDbTools.Server/McpDbTools.Server.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish
+
+      - name: Stage package (drop dev config.json, keep wwwroot)
+        shell: bash
+        run: |
+          # 删除发布输出里的示例 config.json，避免覆盖用户既有配置；
+          # wwwroot（Admin UI 静态资源）必须保留。
+          rm -f publish/config.json
+          rm -f publish/*.pdb
+
+      - name: Archive package
+        shell: bash
+        run: |
+          pkg="McpDbTools-${GITHUB_REF_NAME}-${{ matrix.rid }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "${pkg}.zip" ./publish/*
+          else
+            tar -czf "${pkg}.tar.gz" -C publish .
+          fi
+          echo "ASSET=${pkg}.${{ matrix.archive }}" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: ${{ env.ASSET }}
+          retention-days: 7
+
+  release:
+    name: create release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # 不手写 tag_name：workflow 由 tag push 触发，会自动用触发 tag 建 Release
+          generate_release_notes: true
+          files: assets/*
