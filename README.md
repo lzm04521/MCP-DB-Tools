@@ -8,9 +8,9 @@
 - **多环境项目配置**：同一项目可维护 `dev` / `test` / `prod` 等多个环境，并设置默认环境
 - **SQL 安全守卫**：白名单（只读语句）+ 黑名单（三层合并关键字）双重校验，拦截多语句注入
 - **配置热重载**：修改 `config.json` 即时生效，无需重启 MCP 进程
-- **审计日志**：JSONL 格式记录已解析到项目与环境后的查询、SQL 阻止与执行结果，支持开关、按大小轮转、按天数过期清理
+- **审计日志**：本地 SQLite（`audit.db`，WAL 模式）全局记录已解析到项目与环境后的查询、SQL 阻止与执行结果，固定保留 30 天（惰性清理），可在 Admin UI 按字段筛选、分页查看与手动清理
 - **AI 友好返回**：columns 与 rows 分离，rows 用二维数组压缩 token 消耗
-- **本机 Admin UI**：通过浏览器维护 `config.json`，支持直接编辑连接字符串、生产环境保护、保存前备份与原子写入
+- **本机 Admin UI**：通过浏览器维护 `config.json`，支持直接编辑连接字符串、生产环境保护、测试连接、保存前备份与原子写入；另提供审计日志查看与备份管理
 
 ## 快速开始
 
@@ -28,12 +28,7 @@ dotnet build
 
 ```jsonc
 {
-  "audit": {
-    "enabled": true,
-    "logPath": "logs/audit.log",
-    "maxFileSizeMB": 10,
-    "maxRetentionDays": 30
-  },
+  // 审计日志已改为全局开启（本地 audit.db），无需在此配置
   "databases": {
     "my-project": {
       "displayName": "示例项目",
@@ -134,14 +129,16 @@ http://127.0.0.1:5123/admin
 
 Admin UI 目前支持：
 
-- 新增、编辑、删除项目
-- 新增、编辑、删除环境
-- 设置默认环境
+- 新增、编辑、删除项目；**项目 key 与环境 key 创建后不可修改**（前端置灰 + 后端校验双保险）
+- 新增、编辑、删除环境；设置默认环境
+- 输入 key 时若显示名为空，自动同步相同内容；手动改显示名后停止跟随
 - 维护 `displayName`、`isProduction`、数据库类型、连接字符串、`maxRows`、`commandTimeout`、环境级 `disabledKeywords`
-- 维护全局阻止关键字与按数据库类型追加的阻止关键字（访问 `/admin/keywords`）
-- 维护审计日志配置
+- 维护全局阻止关键字与按数据库类型追加的阻止关键字（`#/keywords`）
+- **测试连接**：在项目配置页用当前编辑框的连接串即时验证（不落盘，成功/失败带耗时）
+- **审计日志查看**（`#/audit-log`）：按项目/环境/类型/状态/时间/SQL 关键词筛选，项目环境联动下拉，分页（每页 50/100/500/1000/5000），SQL 与错误长文本点击弹窗查看并复制，手动清理 30/60/90 天前记录
+- **备份管理**（`#/backups`）：列出备份、下载、恢复（恢复前自动快照可撤销）、删除
 - 本机页面会直接加载并显示完整连接字符串，便于复制和维护
-- 生产环境显示风险提示，保存配置不再要求输入项目名确认
+- 生产环境显示风险提示
 - 保存前自动备份当前 `config.json`
 - 使用临时文件验证 + 原子替换写入配置，避免 MCP 进程读到半写入文件
 - 保存时会将 `config.json` 重写为标准 JSON；原文件中的注释与手工排版不会保留
@@ -227,12 +224,7 @@ backups/config.20260623-184500-123.json
     "mysql": ["LOAD DATA", "FLUSH"],
     "oracle": ["FLASHBACK", "PURGE"]
   },
-  "audit": {
-    "enabled": true,
-    "logPath": "logs/audit.log",
-    "maxFileSizeMB": 10,
-    "maxRetentionDays": 30
-  },
+  // 审计日志已改为全局开启（本地 audit.db），无需在此配置；残留的 audit 节点会被静默忽略
   "databases": {
     "<项目>": {
       "displayName": "项目显示名",
@@ -263,20 +255,16 @@ backups/config.20260623-184500-123.json
 
 最终阻止列表 = 全局 ∪ 按类型 ∪ 环境。全部转大写去重；下层只能追加，不能缩减上层。
 
-### 审计日志配置
+### 审计日志
 
-```json
-"audit": {
-  "enabled": true,
-  "logPath": "logs/audit.log",
-  "maxFileSizeMB": 10,
-  "maxRetentionDays": 30
-}
-```
+审计日志**全局开启**，记录到本地 SQLite 数据库 `audit.db`，位于 `config.json` 同目录。采用 WAL 模式，MCP 写入与 Admin 页读取可同进程并发。
 
-`logPath` 支持相对路径。相对路径按当前进程工作目录解析；发布部署时建议固定程序目录运行，或使用绝对路径。
+- 每次成功解析到项目与环境的 `db_query` 调用都会记录一条（含 SQL 被安全守卫阻止、执行成功/失败）
+- 固定保留 30 天（常量 `AuditLogger.RetentionDays`），惰性清理：每次写入后距上次清理超过 1 小时才扫表删除过期记录
+- 项目不存在、环境缺失等早期参数解析错误不会写入审计日志
+- 可在 Admin UI「审计日志」页按字段筛选查看、按 30/60/90 天手动清理
 
-审计日志记录范围：项目和环境成功解析后的 `db_query` 会记录 SQL 被安全守卫阻止的情况，以及实际进入数据库提供者执行后的成功或失败结果。项目不存在、环境缺失等早期参数解析错误会直接以结构化 JSON 返回，目前不会写入审计日志。
+> 兼容说明：旧的 `config.json` 中若残留 `audit` 节点，反序列化时会被静默忽略；旧的 `logs/audit.log`（JSONL）不再写入，保留为只读归档。
 
 ## SQL 安全策略
 
@@ -299,13 +287,10 @@ backups/config.20260623-184500-123.json
 D:\Tools\McpDbTools\
 ├── McpDbTools.Server.exe
 ├── config.json
+├── audit.db                  # 审计日志数据库（首次写入时自动创建）
 ├── backups\
-├── logs\
 └── wwwroot\
-    └── admin\
-        ├── index.html
-        ├── admin.js
-        └── admin.css
+    └── admin\                # SPA：index.html + styles/*.css + scripts/*.js
 ```
 
 发布命令：
@@ -349,13 +334,13 @@ dotnet publish src/McpDbTools.Server -c Release
 
 ```text
 src/McpDbTools.Server/
-├── Admin/             # Admin API DTO 与配置读写服务
-├── Audit/             # 审计日志器
+├── Admin/             # Admin API DTO、配置读写服务、测试连接、备份管理
+├── Audit/             # 审计日志器（SQLite）+ 查询模型
 ├── Configuration/     # 配置模型、热重载、三层关键字合并
-├── Database/          # 三种数据库提供者 + 工厂
+├── Database/          # 三种数据库提供者 + 工厂（含连接测试）
 ├── Security/          # SqlGuard SQL 安全守卫
 ├── Tools/             # db_query / db_list MCP 工具
-├── wwwroot/admin/     # 静态 Admin UI
+├── wwwroot/admin/     # 静态 Admin UI（SPA：index.html + scripts/*.js + styles/*.css）
 └── Program.cs         # MCP / Admin 运行模式入口
 ```
 
@@ -363,9 +348,10 @@ src/McpDbTools.Server/
 
 - .NET 8
 - ASP.NET Core Minimal API（Admin UI）
-- 静态 HTML / CSS / JavaScript（无 npm 构建链）
+- 静态 HTML / CSS / JavaScript（无 npm 构建链，SPA 多文件组织）
 - [ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 1.4.0（MCP C# SDK）
 - Microsoft.Data.SqlClient 7.0.1 / MySqlConnector 2.6.0 / Oracle.ManagedDataAccess.Core 3.21.210
+- Microsoft.Data.Sqlite（审计日志本地存储）
 - xUnit
 
 ## 已知限制
@@ -373,7 +359,6 @@ src/McpDbTools.Server/
 - 不解析字符串字面量，字符串内的关键字可能被误判（安全工具宁可误拒）
 - 不支持存储过程参数化传入（参数在 SQL 文本中直接拼接）
 - 不支持跨环境 / 多连接 JOIN 查询（每个环境对应一个数据库连接；同一连接内数据库自身支持的跨 schema 查询由数据库决定）
-- Admin UI 当前只负责配置维护，不执行测试连接或测试查询
 - Admin UI 当前只设计为本机访问；如需远程访问，需要另行设计认证、授权、TLS 与审计
 - 实际数据库连接需在目标环境用真实数据库验证（单元测试覆盖纯逻辑层）
 
