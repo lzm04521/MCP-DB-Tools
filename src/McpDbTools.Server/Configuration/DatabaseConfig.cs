@@ -74,26 +74,10 @@ public sealed class ProjectConfig
 }
 
 /// <summary>
-/// 审计日志配置（对应 config.json 中 audit 节点）。默认关闭。
-/// </summary>
-public sealed class AuditConfig
-{
-    [JsonPropertyName("enabled")]
-    public bool Enabled { get; init; }
-
-    [JsonPropertyName("logPath")]
-    public string LogPath { get; init; } = "logs/audit.log";
-
-    [JsonPropertyName("maxFileSizeMB")]
-    public int MaxFileSizeMB { get; init; } = 10;
-
-    [JsonPropertyName("maxRetentionDays")]
-    public int MaxRetentionDays { get; init; } = 30;
-}
-
-/// <summary>
 /// 配置文件根模型（对应 config.json 整体结构）。
 /// 三层阻止关键字：全局通用 → 按类型 → 按项目。
+/// <para>审计日志已改为本地 SQLite（audit.db）全局记录，不再由 config.json 配置；
+/// 若旧文件残留 audit 节点，反序列化时会因没有对应属性而被静默忽略。</para>
 /// </summary>
 public sealed class DatabasesConfig
 {
@@ -104,10 +88,6 @@ public sealed class DatabasesConfig
     /// <summary>第二层：按数据库类型追加的阻止关键字。未配置时为空。</summary>
     [JsonPropertyName("defaultDisabledKeywordsByType")]
     public Dictionary<DatabaseType, List<string>>? DefaultDisabledKeywordsByType { get; init; }
-
-    /// <summary>审计日志配置。</summary>
-    [JsonPropertyName("audit")]
-    public AuditConfig Audit { get; init; } = new();
 
     /// <summary>项目名 → 项目配置（含多环境）。JSON 节点名为 databases。</summary>
     [JsonPropertyName("databases")]

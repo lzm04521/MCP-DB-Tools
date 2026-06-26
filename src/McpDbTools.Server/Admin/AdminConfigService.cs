@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Text.Json;
 using McpDbTools.Server.Configuration;
+using McpDbTools.Server.Database;
 using Microsoft.Extensions.Options;
 
 namespace McpDbTools.Server.Admin;
@@ -14,13 +16,18 @@ public sealed class AdminConfigService
     };
 
     private readonly ConfigStore _configStore;
+    private readonly DatabaseProviderFactory _providerFactory;
     private readonly string _configPath;
+    private readonly string _backupDirectory;
     private readonly JsonSerializerOptions _jsonOptions;
 
-    public AdminConfigService(ConfigStore configStore, IOptions<ConfigStoreOptions> options)
+    public AdminConfigService(ConfigStore configStore, DatabaseProviderFactory providerFactory, IOptions<ConfigStoreOptions> options)
     {
         _configStore = configStore;
+        _providerFactory = providerFactory;
         _configPath = Path.GetFullPath(options.Value.ConfigPath);
+        string directory = Path.GetDirectoryName(_configPath) ?? AppContext.BaseDirectory;
+        _backupDirectory = Path.Combine(directory, "backups");
         _jsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -33,6 +40,27 @@ public sealed class AdminConfigService
 
     public AdminConfigResponse GetConfig()
         => ToResponse(_configStore.Current);
+
+    /// <summary>
+    /// 测试连接是否可用。用入参的连接字符串即时打开连接，不落盘、不影响当前配置。
+    /// </summary>
+    public async Task<TestConnectionResult> TestConnectionAsync(TestConnectionRequest request, CancellationToken cancellationToken)
+    {
+        string connectionString = request.ConnectionString?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return new TestConnectionResult { Success = false, Error = "连接字符串不能为空。" };
+        }
+        if (!TryParseDatabaseType(request.DatabaseType, out DatabaseType type))
+        {
+            return new TestConnectionResult { Success = false, Error = $"数据库类型不支持: {request.DatabaseType}" };
+        }
+
+        IDatabaseProvider provider = _providerFactory.Get(type);
+        int timeout = request.TimeoutSeconds > 0 ? request.TimeoutSeconds : 5;
+        (bool success, long elapsedMs, string? error) = await provider.TestConnectionAsync(connectionString, timeout, cancellationToken);
+        return new TestConnectionResult { Success = success, ElapsedMs = elapsedMs, Error = error };
+    }
 
     public async Task<AdminSaveResult> SaveConfigAsync(AdminConfigRequest request, CancellationToken cancellationToken)
     {
@@ -89,15 +117,12 @@ public sealed class AdminConfigService
                 ? config.DefaultDisabledKeywords
                 : DefaultDisabledKeywords.BuiltIn),
             DefaultDisabledKeywordsByType = ToResponseKeywordsByType(config),
-            Projects = projects,
-            Audit = config.Audit
+            Projects = projects
         };
     }
 
     private static DatabasesConfig ToConfig(AdminConfigRequest request, DatabasesConfig current, List<string> errors)
     {
-        ValidateAudit(request.Audit, errors);
-
         var projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase);
         foreach (AdminProjectDto project in request.Projects)
         {
@@ -118,6 +143,13 @@ public sealed class AdminConfigService
             }
 
             ProjectConfig? currentProject = FindCurrentProject(current, project);
+            // 项目 key 创建后不可修改：携带 originalName（表示已存在的项目）时，name 必须与之相同
+            string? originalProjectName = NullIfWhiteSpace(project.OriginalName);
+            if (originalProjectName is not null && !string.Equals(originalProjectName, projectName, StringComparison.Ordinal))
+            {
+                errors.Add($"项目 key 创建后不可修改：原 “{originalProjectName}” 不能改为 “{projectName}”。");
+            }
+
             var environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase);
             foreach (AdminEnvironmentDto env in project.Environments)
             {
@@ -144,6 +176,12 @@ public sealed class AdminConfigService
                 }
 
                 DatabaseConfig? currentEnv = FindCurrentEnvironment(currentProject, env);
+                // 环境 key 创建后不可修改：同项目 key 规则
+                string? originalEnvName = NullIfWhiteSpace(env.OriginalName);
+                if (currentProject is not null && originalEnvName is not null && !string.Equals(originalEnvName, envName, StringComparison.Ordinal))
+                {
+                    errors.Add($"环境 key 创建后不可修改：项目 {projectName} 下原 “{originalEnvName}” 不能改为 “{envName}”。");
+                }
                 string connectionString = env.ConnectionString?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(connectionString) && currentEnv is not null)
                 {
@@ -202,7 +240,6 @@ public sealed class AdminConfigService
                     item => item.Key,
                     item => item.Value.ToList())
                 : ToConfigKeywordsByType(request.DefaultDisabledKeywordsByType, errors),
-            Audit = request.Audit,
             Projects = projects
         };
     }
@@ -266,22 +303,6 @@ public sealed class AdminConfigService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
 
-    private static void ValidateAudit(AuditConfig audit, List<string> errors)
-    {
-        if (string.IsNullOrWhiteSpace(audit.LogPath))
-        {
-            errors.Add("审计日志路径 logPath 不能为空。");
-        }
-        if (audit.MaxFileSizeMB <= 0)
-        {
-            errors.Add("审计日志 maxFileSizeMB 必须大于 0。");
-        }
-        if (audit.MaxRetentionDays <= 0)
-        {
-            errors.Add("审计日志 maxRetentionDays 必须大于 0。");
-        }
-    }
-
     private async Task<string> WriteConfigAtomicallyAsync(DatabasesConfig config, CancellationToken cancellationToken)
     {
         string directory = Path.GetDirectoryName(_configPath) ?? AppContext.BaseDirectory;
@@ -314,6 +335,118 @@ public sealed class AdminConfigService
         }
 
         return backupName;
+    }
+
+    /// <summary>列出所有备份（按时间倒序）。</summary>
+    public BackupListResponse ListBackups()
+    {
+        var items = new List<BackupItem>();
+        if (Directory.Exists(_backupDirectory))
+        {
+            foreach (string file in Directory.EnumerateFiles(_backupDirectory, "config.*.json"))
+            {
+                var info = new FileInfo(file);
+                items.Add(new BackupItem
+                {
+                    Name = info.Name,
+                    Time = info.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+                    SizeBytes = info.Length
+                });
+            }
+        }
+
+        // 按时间倒序（文件名含时间戳，名字字典序与时间序一致，倒序即最新在前）
+        items.Sort((a, b) => string.Compare(b.Name, a.Name, StringComparison.Ordinal));
+        return new BackupListResponse { Items = items, Directory = _backupDirectory };
+    }
+
+    /// <summary>返回备份文件物理路径与内容类型，供下载。文件不存在或非法名返回 null。</summary>
+    public string? GetBackupPath(string name)
+    {
+        if (!IsSafeBackupName(name))
+        {
+            return null;
+        }
+        string path = Path.Combine(_backupDirectory, name);
+        return File.Exists(path) ? path : null;
+    }
+
+    /// <summary>
+    /// 将指定备份恢复为当前 config.json。
+    /// <para>安全策略：先把当前 config.json 复制为一份新备份（恢复前快照，可撤销），再用备份覆盖。</para>
+    /// <para>返回新产生的「恢复前快照」备份名，便于撤销提示。</para>
+    /// </summary>
+    public RestoreResult RestoreBackup(string name)
+    {
+        string? backupPath = GetBackupPath(name);
+        if (backupPath is null)
+        {
+            return new RestoreResult { Success = false, Error = "备份不存在或文件名非法。" };
+        }
+
+        try
+        {
+            Directory.CreateDirectory(_backupDirectory);
+
+            // 恢复前先把当前配置存为快照（可撤销）
+            string snapshotName = $"config.{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.json";
+            string snapshotPath = Path.Combine(_backupDirectory, snapshotName);
+            if (File.Exists(_configPath))
+            {
+                File.Copy(_configPath, snapshotPath, overwrite: false);
+            }
+            else
+            {
+                // 当前无配置文件：写一个空快照占位
+                File.WriteAllText(snapshotPath, "{}");
+            }
+
+            // 用备份内容覆盖当前配置（先读到内存再写，避免 File.Replace 的目标文件限制）
+            string content = File.ReadAllText(backupPath);
+            File.WriteAllText(_configPath, content);
+
+            return new RestoreResult { Success = true, SnapshotName = snapshotName, RestoredName = name };
+        }
+        catch (Exception ex)
+        {
+            return new RestoreResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    /// <summary>删除指定备份文件。</summary>
+    public DeleteBackupResult DeleteBackup(string name)
+    {
+        string? path = GetBackupPath(name);
+        if (path is null)
+        {
+            return new DeleteBackupResult { Success = false, Error = "备份不存在或文件名非法。" };
+        }
+        try
+        {
+            File.Delete(path);
+            return new DeleteBackupResult { Success = true, Name = name };
+        }
+        catch (Exception ex)
+        {
+            return new DeleteBackupResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    /// <summary>备份文件名安全校验：必须形如 config.{时间戳}.json，禁止路径穿越。</summary>
+    private static bool IsSafeBackupName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+        // 禁止任何路径分隔或父目录引用
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+            name.Contains('/') || name.Contains('\\') || name.Contains(".."))
+        {
+            return false;
+        }
+        return name.StartsWith("config.", StringComparison.OrdinalIgnoreCase)
+            && name.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
     }
 
     private static ProjectConfig? FindCurrentProject(DatabasesConfig current, AdminProjectDto project)

@@ -6,9 +6,8 @@
   const NAV_ITEMS = [
     { id: 'projects', label: '项目配置' },
     { id: 'keywords', label: '全局关键字' },
-    { id: 'audit-log', label: '审计日志', disabled: true, hint: '规划中（将改为本地数据库日志）' },
-    { id: 'backups', label: '备份管理', disabled: true, hint: '规划中（Phase 3）' },
-    { id: 'test', label: '测试连接', disabled: true, hint: '规划中（Phase 3）' }
+    { id: 'audit-log', label: '审计日志' },
+    { id: 'backups', label: '备份管理' }
   ];
 
   let container = null;

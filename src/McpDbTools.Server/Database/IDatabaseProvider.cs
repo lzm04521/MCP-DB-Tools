@@ -15,6 +15,12 @@ public interface IDatabaseProvider
 
     /// <summary>执行查询。sql 已通过 SqlGuard 校验。</summary>
     Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct);
+
+    /// <summary>
+    /// 测试连接是否可用。仅打开连接（用短超时，默认 5 秒），不执行任何 SQL。
+    /// 返回 (success, elapsedMs, error)。
+    /// </summary>
+    Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct);
 }
 
 /// <summary>
@@ -27,6 +33,38 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
 
     /// <summary>由子类创建对应驱动类型的连接对象。</summary>
     protected abstract DbConnection CreateConnection(string connectionString);
+
+    public async Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(
+        string connectionString, int timeoutSeconds, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        int timeout = timeoutSeconds > 0 ? timeoutSeconds : 5;
+        // 用 CTS 兜底超时：各驱动 ConnectionTimeout 多为只读，统一在调用层控制
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeout));
+        try
+        {
+            await using DbConnection conn = CreateConnection(connectionString);
+            await conn.OpenAsync(timeoutCts.Token);
+            sw.Stop();
+            return (true, sw.ElapsedMilliseconds, null);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // 触发的是超时 CTS，不是外部取消
+            sw.Stop();
+            return (false, sw.ElapsedMilliseconds, $"连接超时（{timeout} 秒）");
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 外部取消向上传播，不包装
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return (false, sw.ElapsedMilliseconds, ex.Message);
+        }
+    }
 
     public async Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
     {

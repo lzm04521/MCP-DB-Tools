@@ -55,7 +55,7 @@
                     required
                     autocomplete="off"
                   />
-                  <small>MCP 调用参数 project，修改会影响调用方。</small>
+                  <small id="projectNameHelp">MCP 调用参数 project，创建后不可修改。</small>
                 </label>
                 <label>
                   <span>显示名</span>
@@ -91,14 +91,25 @@
                   <p class="eyebrow">Connection</p>
                   <h2>连接配置</h2>
                 </div>
-                <button
-                  id="deleteEnvironmentBtn"
-                  type="button"
-                  class="button danger subtle"
-                >
-                  删除环境
-                </button>
+                <div class="card-title-actions">
+                  <button
+                    id="testConnectionBtn"
+                    type="button"
+                    class="button secondary"
+                  >
+                    测试连接
+                  </button>
+                  <button
+                    id="deleteEnvironmentBtn"
+                    type="button"
+                    class="button danger subtle"
+                  >
+                    删除环境
+                  </button>
+                </div>
               </div>
+
+              <div id="testConnectionResult" class="connection-test hidden" role="status"></div>
 
               <div id="productionWarning" class="warning hidden" role="status">
                 当前环境已标记为生产环境。保存不会再要求输入项目名确认，
@@ -114,6 +125,7 @@
                     required
                     autocomplete="off"
                   />
+                  <small id="environmentNameHelp">创建后不可修改。</small>
                 </label>
                 <label>
                   <span>显示名</span>
@@ -177,45 +189,6 @@
                 >
               </label>
             </section>
-
-            <section class="card">
-              <div class="card-title">
-                <div>
-                  <p class="eyebrow">Audit</p>
-                  <h2>审计配置</h2>
-                </div>
-              </div>
-              <div class="grid two">
-                <label class="switch-row">
-                  <input id="auditEnabled" type="checkbox" />
-                  <span>启用审计日志</span>
-                </label>
-                <label>
-                  <span>日志路径 *</span>
-                  <input id="auditLogPath" type="text" required />
-                </label>
-                <label>
-                  <span>单文件最大 MB *</span>
-                  <input
-                    id="auditMaxFileSizeMB"
-                    type="number"
-                    min="1"
-                    step="1"
-                    required
-                  />
-                </label>
-                <label>
-                  <span>保留天数 *</span>
-                  <input
-                    id="auditMaxRetentionDays"
-                    type="number"
-                    min="1"
-                    step="1"
-                    required
-                  />
-                </label>
-              </div>
-            </section>
           </form>
         </section>
       </div>
@@ -224,13 +197,13 @@
 
   function collectElements(root) {
     const ids = [
-      'projectList', 'emptyState', 'editor', 'projectName', 'projectDisplayName',
+      'projectList', 'emptyState', 'editor', 'projectName', 'projectNameHelp', 'projectDisplayName',
       'defaultEnvironment', 'deleteProjectBtn', 'addEnvironmentBtn',
       'environmentTabs', 'environmentEditor', 'deleteEnvironmentBtn',
-      'productionWarning', 'environmentName', 'environmentDisplayName',
+      'testConnectionBtn', 'testConnectionResult',
+      'productionWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
       'databaseType', 'isProduction', 'maxRows', 'commandTimeout',
-      'connectionString', 'disabledKeywords', 'auditEnabled', 'auditLogPath',
-      'auditMaxFileSizeMB', 'auditMaxRetentionDays'
+      'connectionString', 'disabledKeywords'
     ];
     const refs = { addProjectBtn: root.getElementById('addProjectBtn') };
     for (const id of ids) {
@@ -270,7 +243,6 @@
     }
 
     renderProjectList();
-    bindAudit();
 
     const hasProjects = state.config.projects.length > 0;
     el.emptyState.classList.toggle('hidden', hasProjects);
@@ -305,7 +277,17 @@
   function bindProject() {
     const project = activeProject();
     el.projectName.value = project.name || '';
+    // 项目 key 创建后不可编辑：仅新建（originalName 为 null）时允许输入
+    const projectLocked = Boolean(project.originalName);
+    el.projectName.readOnly = projectLocked;
+    el.projectName.classList.toggle('readonly-field', projectLocked);
+    el.projectNameHelp.textContent = projectLocked
+      ? '创建后不可修改（已持久化）。'
+      : 'MCP 调用参数 project，创建后不可修改。';
+
     el.projectDisplayName.value = project.displayName || '';
+    // 切换项目时重置跟随标记：显示名为空→跟随 key；已有值→视为用户已定，不跟随
+    el.projectDisplayName.dataset.autoSynced = project.displayName ? '0' : '1';
     el.defaultEnvironment.innerHTML = '<option value="">不设置默认环境</option>';
     project.environments.forEach(env => {
       const option = document.createElement('option');
@@ -341,7 +323,17 @@
     }
 
     el.environmentName.value = env.name || '';
+    // 环境 key 创建后不可编辑：仅新建时允许输入
+    const envLocked = Boolean(env.originalName);
+    el.environmentName.readOnly = envLocked;
+    el.environmentName.classList.toggle('readonly-field', envLocked);
+    el.environmentNameHelp.textContent = envLocked
+      ? '创建后不可修改（已持久化）。'
+      : '创建后不可修改。';
+
     el.environmentDisplayName.value = env.displayName || '';
+    // 切换环境时重置跟随标记：显示名为空→跟随 key；已有值→视为用户已定，不跟随
+    el.environmentDisplayName.dataset.autoSynced = env.displayName ? '0' : '1';
     el.databaseType.value = env.type || 'sqlserver';
     el.isProduction.checked = Boolean(env.isProduction);
     el.maxRows.value = env.maxRows || 1000;
@@ -350,14 +342,6 @@
     el.connectionString.placeholder = '请输入连接字符串';
     el.disabledKeywords.value = (env.disabledKeywords || []).join(', ');
     el.productionWarning.classList.toggle('hidden', !env.isProduction);
-  }
-
-  function bindAudit() {
-    const audit = state.config.audit || {};
-    el.auditEnabled.checked = Boolean(audit.enabled);
-    el.auditLogPath.value = audit.logPath || 'logs/audit.log';
-    el.auditMaxFileSizeMB.value = audit.maxFileSizeMB || 10;
-    el.auditMaxRetentionDays.value = audit.maxRetentionDays || 30;
   }
 
   function syncFormToState() {
@@ -386,13 +370,6 @@
         .map(item => item.trim())
         .filter(Boolean);
     }
-
-    state.config.audit = {
-      enabled: el.auditEnabled.checked,
-      logPath: el.auditLogPath.value.trim(),
-      maxFileSizeMB: Number(el.auditMaxFileSizeMB.value),
-      maxRetentionDays: Number(el.auditMaxRetentionDays.value)
-    };
   }
 
   function addProject() {
@@ -475,8 +452,7 @@
       const result = await window.adminApi.requestJson('/admin/api/config', {
         method: 'PUT',
         body: JSON.stringify({
-          projects: state.config.projects,
-          audit: state.config.audit
+          projects: state.config.projects
         })
       });
       state.config = result.config;
@@ -494,19 +470,86 @@
       el.projectName, el.projectDisplayName, el.defaultEnvironment,
       el.environmentName, el.environmentDisplayName, el.databaseType,
       el.isProduction, el.maxRows, el.commandTimeout, el.connectionString,
-      el.disabledKeywords, el.auditEnabled, el.auditLogPath,
-      el.auditMaxFileSizeMB, el.auditMaxRetentionDays
+      el.disabledKeywords
     ].forEach(input => input.addEventListener('change', syncFormToState));
+
+    // key → 显示名 自动同步：显示名为空或处于「跟随中」时，输入 key 实时同步；
+    // 用户手动编辑显示名（与 key 不同）后停止跟随，尊重已填值。
+    setupNameSync(el.projectName, el.projectDisplayName);
+    setupNameSync(el.environmentName, el.environmentDisplayName);
 
     el.addProjectBtn.addEventListener('click', addProject);
     el.addEnvironmentBtn.addEventListener('click', addEnvironment);
     el.deleteProjectBtn.addEventListener('click', deleteProject);
     el.deleteEnvironmentBtn.addEventListener('click', deleteEnvironment);
+    el.testConnectionBtn.addEventListener('click', testConnection);
+  }
+
+  /** 测试当前编辑框里的连接（用未保存的值即时验证）。 */
+  async function testConnection() {
+    syncFormToState();
+    const env = activeEnvironment();
+    if (!env) {
+      return;
+    }
+    if (!env.connectionString) {
+      window.adminUi.showToast('请先填写连接字符串', true);
+      return;
+    }
+
+    el.testConnectionBtn.disabled = true;
+    el.testConnectionResult.className = 'connection-test pending';
+    el.testConnectionResult.textContent = '正在测试连接…';
+    el.testConnectionResult.classList.remove('hidden');
+
+    try {
+      const result = await window.adminApi.requestJson('/admin/api/test-connection', {
+        method: 'POST',
+        body: JSON.stringify({
+          databaseType: env.type,
+          connectionString: env.connectionString,
+          timeoutSeconds: 5
+        })
+      });
+      if (result.success) {
+        el.testConnectionResult.className = 'connection-test ok';
+        el.testConnectionResult.textContent = `连接成功（耗时 ${result.elapsedMs} ms）`;
+      } else {
+        el.testConnectionResult.className = 'connection-test fail';
+        const reason = result.error ? `：${result.error}` : '';
+        el.testConnectionResult.textContent = `连接失败${reason}`;
+      }
+    } catch (error) {
+      el.testConnectionResult.className = 'connection-test fail';
+      el.testConnectionResult.textContent = `测试失败：${error.message}`;
+    } finally {
+      el.testConnectionBtn.disabled = false;
+    }
+  }
+
+  /**
+   * 绑定 key → 显示名 的自动同步。
+   * - key 输入时：若显示名为空，或显示名当前等于 key（说明一直在跟随），则同步并标记跟随中。
+   * - 显示名手动编辑时：若内容与 key 不同，则取消跟随标记（用户接管）；若改回等于 key，恢复跟随。
+   * data-auto-synced 标记用于跨多次 key 输入保持「跟随」状态，避免只同步第一个字符。
+   */
+  function setupNameSync(keyInput, displayInput) {
+    keyInput.addEventListener('input', () => {
+      const display = displayInput.value;
+      if (display === '' || displayInput.dataset.autoSynced === '1') {
+        displayInput.value = keyInput.value;
+        displayInput.dataset.autoSynced = '1';
+      }
+    });
+    displayInput.addEventListener('input', () => {
+      // 用户手动改了显示名：与 key 不同则脱离跟随，相同则继续跟随
+      displayInput.dataset.autoSynced = displayInput.value === keyInput.value ? '1' : '0';
+    });
   }
 
   window.adminViews = window.adminViews || {};
   window.adminViews.projects = {
-    title: 'MCP DB Tools Config Admin',
+    title: '项目管理',
     eyebrow: 'Local Admin',
     saveLabel: '保存配置',
 

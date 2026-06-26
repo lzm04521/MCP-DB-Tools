@@ -111,6 +111,84 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
         return result.Success ? Results.Ok(result) : Results.BadRequest(result);
     });
 
+    // 审计日志查询：GET /admin/api/audit-logs?project=&environment=&databaseType=&success=&fromTime=&toTime=&sqlContains=&page=&pageSize=
+    // success 取 true/false，未传或其它值表示不限定。查询参数全部可选。
+    api.MapGet("/audit-logs", (AuditLogger audit,
+        string? project, string? environment, string? databaseType,
+        string? success, string? fromTime, string? toTime, string? sqlContains,
+        int? page, int? pageSize) =>
+    {
+        bool? successFilter = null;
+        if (bool.TryParse(success, out bool parsedSuccess))
+        {
+            successFilter = parsedSuccess;
+        }
+
+        var query = new AuditLogQuery
+        {
+            Project = project,
+            Environment = environment,
+            DatabaseType = databaseType,
+            Success = successFilter,
+            FromTime = fromTime,
+            ToTime = toTime,
+            SqlContains = sqlContains,
+            Page = page ?? 1,
+            PageSize = pageSize ?? 50
+        };
+        return Results.Ok(audit.Query(query));
+    });
+
+    // 审计日志清理：删除指定天数前的记录。days 取 30/60/90 等，由调用方传。
+    api.MapPost("/audit-logs/cleanup", (AuditLogger audit, RestoreBackupRequest request) =>
+    {
+        string name = request.Name ?? string.Empty;
+        if (!int.TryParse(name, out int days) || days <= 0)
+        {
+            return Results.Json(new { error = "清理天数必须为正整数" }, statusCode: StatusCodes.Status400BadRequest);
+        }
+        try
+        {
+            int deleted = audit.DeleteOlderThan(days);
+            return Results.Ok(new { success = true, deleted, days });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+    });
+
+    // 测试连接：用入参连接串即时测试，不落盘、不影响当前配置
+    api.MapPost("/test-connection", async (TestConnectionRequest request, AdminConfigService service, CancellationToken cancellationToken) =>
+        Results.Ok(await service.TestConnectionAsync(request, cancellationToken)));
+
+    // 备份管理：列表 / 下载 / 恢复 / 删除
+    api.MapGet("/backups", (AdminConfigService service) => Results.Ok(service.ListBackups()));
+
+    // 下载备份（流式返回文件，Content-Disposition 触发浏览器下载）
+    api.MapGet("/backups/download", (string? name, AdminConfigService service) =>
+    {
+        string? path = service.GetBackupPath(name ?? string.Empty);
+        if (path is null)
+        {
+            return Results.Json(new { error = "备份不存在" }, statusCode: StatusCodes.Status404NotFound);
+        }
+        Stream stream = File.OpenRead(path);
+        return Results.File(stream, "application/json", fileDownloadName: name);
+    });
+
+    api.MapPost("/backups/restore", async (RestoreBackupRequest request, AdminConfigService service) =>
+    {
+        RestoreResult result = service.RestoreBackup(request.Name);
+        return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+    });
+
+    api.MapPost("/backups/delete", (RestoreBackupRequest request, AdminConfigService service) =>
+    {
+        DeleteBackupResult result = service.DeleteBackup(request.Name);
+        return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+    });
+
     app.Logger.LogInformation("Admin UI: http://127.0.0.1:{Port}/admin", startup.AdminPort);
     if (startup.Mode == RunMode.AdminAndMcp)
     {

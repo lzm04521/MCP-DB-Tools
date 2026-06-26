@@ -126,8 +126,7 @@
         body: JSON.stringify({
           defaultDisabledKeywords: state.config.defaultDisabledKeywords,
           defaultDisabledKeywordsByType: state.config.defaultDisabledKeywordsByType,
-          projects: state.config.projects,
-          audit: state.config.audit
+          projects: state.config.projects
         })
       });
       state.config = result.config;
