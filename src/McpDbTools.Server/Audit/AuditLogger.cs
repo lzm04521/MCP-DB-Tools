@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Threading.Channels;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -31,16 +32,27 @@ public sealed record AuditEntry
 /// <list type="bullet">
 /// <item>全局开启，不再依赖开关配置；db 文件位于 config.json 同目录，文件名 audit.db。</item>
 /// <item>WAL 模式 + busy_timeout：MCP 写入与 Admin 页读取同进程并发安全。</item>
-/// <item>每次写入用独立短连接，参数化 INSERT；写入失败仅记 Error，不影响主流程（沿用既有约定）。</item>
+/// <item>写入异步化：Log 入无界 Channel，单后台消费者串行落盘，彻底消除写锁竞争并避免线程池饥饿。</item>
 /// <item>不自动清理：记录保留至用户在 Admin UI「审计日志」页手动清理为止。</item>
 /// </list>
 /// </para>
 /// </summary>
-public sealed class AuditLogger
+public sealed class AuditLogger : IAsyncDisposable, IDisposable
 {
     private readonly string _connectionString;
     private readonly ILogger<AuditLogger> _logger;
     private int _initialized;
+
+    // 异步写入队列：无界 Channel + 单消费者，保证写入串行，无 SQLite 写锁竞争。
+    private readonly Channel<AuditEntry> _channel = Channel.CreateUnbounded<AuditEntry>(
+        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private readonly CancellationTokenSource _consumerCts = new();
+    private readonly Task _consumerTask;
+    private int _disposed;
+
+    // 已入队 / 已落盘计数：仅供 Flush 同步等待用（测试场景），不参与业务逻辑
+    private long _enqueuedCount;
+    private long _processedCount;
 
     public AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger)
     {
@@ -56,9 +68,12 @@ public sealed class AuditLogger
             Cache = SqliteCacheMode.Shared
         }.ToString();
         _logger = logger;
+
+        // 启动单后台消费者：串行处理队列，串行写库
+        _consumerTask = Task.Run(() => ConsumeAsync(_consumerCts.Token));
     }
 
-    /// <summary>记录一条查询审计。失败仅记 Error，不抛出。</summary>
+    /// <summary>记录一条查询审计。同步签名不变；实际行为为入队，失败仅记 Error，不抛出。</summary>
     public void Log(AuditEntry entry)
     {
         try
@@ -69,6 +84,70 @@ public sealed class AuditLogger
                 entry = entry with { Time = NowUtcIso() };
             }
 
+            // 已 Dispose（如 Host 退出后）则降级同步写入，保证至少一次
+            if (_disposed == 1)
+            {
+                WriteEntryCore(entry);
+                Interlocked.Increment(ref _enqueuedCount);
+                Interlocked.Increment(ref _processedCount);
+                return;
+            }
+
+            // 先递增入队计数再写入：保证 Flush 等待的 target >= 实际写入数
+            Interlocked.Increment(ref _enqueuedCount);
+            if (!_channel.Writer.TryWrite(entry))
+            {
+                // 入队失败（如已 Complete）：回退计数并降级同步写
+                Interlocked.Decrement(ref _enqueuedCount);
+                WriteEntryCore(entry);
+                Interlocked.Increment(ref _enqueuedCount);
+                Interlocked.Increment(ref _processedCount);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 审计写入失败不应影响主流程，但必须上报
+            _logger.LogError(ex, "审计日志入队失败");
+        }
+    }
+
+    /// <summary>后台消费者：从 Channel 读取并串行落盘。</summary>
+    private async Task ConsumeAsync(CancellationToken ct)
+    {
+        try
+        {
+            await foreach (AuditEntry entry in _channel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                try
+                {
+                    WriteEntryCore(entry);
+                }
+                catch (Exception ex)
+                {
+                    // 单条写入失败不影响消费者继续运行
+                    _logger.LogError(ex, "审计日志写入失败");
+                }
+                finally
+                {
+                    Interlocked.Increment(ref _processedCount);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 正常退出
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "审计日志消费者异常退出");
+        }
+    }
+
+    /// <summary>实际的同步写入逻辑（参数化 INSERT）。仅在消费者或降级路径调用，串行执行。</summary>
+    private void WriteEntryCore(AuditEntry entry)
+    {
+        try
+        {
             EnsureInitialized();
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
@@ -316,4 +395,64 @@ public sealed class AuditLogger
 
     /// <summary>构造 UTC ISO 8601 时间戳（避免在热路径反复构造格式化字符串）。</summary>
     public static string NowUtcIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 关闭写入队列并等待消费者排空，保证 Dispose 后审计已落盘。带 5 秒软超时。
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1)
+        {
+            return;
+        }
+        _channel.Writer.TryComplete();
+        try
+        {
+            await Task.WhenAny(_consumerTask, Task.Delay(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+        }
+        catch
+        {
+            // 排空等待异常忽略，避免 Dispose 抛出
+        }
+        _consumerCts.Cancel();
+        _consumerCts.Dispose();
+    }
+
+    /// <summary>同步版排空（供同步测试与 Host 同步释放路径）。</summary>
+    public void Dispose()
+    {
+        if (Interlocked.CompareExchange(ref _disposed, 1, 0) == 1)
+        {
+            return;
+        }
+        _channel.Writer.TryComplete();
+        try
+        {
+            _consumerTask.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch
+        {
+            // 排空等待异常忽略
+        }
+        _consumerCts.Cancel();
+        _consumerCts.Dispose();
+    }
+
+    /// <summary>
+    /// 等待当前已入队记录全部落盘，但不关闭消费者。
+    /// 供测试在 Log 后、Query 前同步排空用；生产代码不需要调用。
+    /// </summary>
+    public void Flush()
+    {
+        if (_disposed == 1)
+        {
+            return;
+        }
+        long target = Interlocked.Read(ref _enqueuedCount);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (Interlocked.Read(ref _processedCount) < target && sw.ElapsedMilliseconds < 5000)
+        {
+            Thread.Sleep(10);
+        }
+    }
 }

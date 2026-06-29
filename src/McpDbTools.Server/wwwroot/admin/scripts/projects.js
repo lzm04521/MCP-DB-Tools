@@ -161,6 +161,36 @@
                     required
                   />
                 </label>
+                <label>
+                  <span>最大并发查询数</span>
+                  <input
+                    id="maxConcurrency"
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="留空用全局默认（8）"
+                  />
+                </label>
+                <label>
+                  <span>连接池上限</span>
+                  <input
+                    id="maxPoolSize"
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="留空用全局默认（100）"
+                  />
+                </label>
+                <label>
+                  <span>建连超时（秒）</span>
+                  <input
+                    id="connectTimeoutSeconds"
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="留空用全局默认（15）"
+                  />
+                </label>
               </div>
 
               <label class="full">
@@ -203,6 +233,7 @@
       'testConnectionBtn', 'testConnectionResult',
       'productionWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
       'databaseType', 'isProduction', 'maxRows', 'commandTimeout',
+      'maxConcurrency', 'maxPoolSize', 'connectTimeoutSeconds',
       'connectionString', 'disabledKeywords'
     ];
     const refs = { addProjectBtn: root.getElementById('addProjectBtn') };
@@ -338,6 +369,9 @@
     el.isProduction.checked = Boolean(env.isProduction);
     el.maxRows.value = env.maxRows || 1000;
     el.commandTimeout.value = env.commandTimeout || 30;
+    el.maxConcurrency.value = env.maxConcurrency || '';
+    el.maxPoolSize.value = env.maxPoolSize || '';
+    el.connectTimeoutSeconds.value = env.connectTimeoutSeconds || '';
     el.connectionString.value = env.connectionString || '';
     el.connectionString.placeholder = '请输入连接字符串';
     el.disabledKeywords.value = (env.disabledKeywords || []).join(', ');
@@ -364,6 +398,10 @@
       env.isProduction = el.isProduction.checked;
       env.maxRows = Number(el.maxRows.value);
       env.commandTimeout = Number(el.commandTimeout.value);
+      // 0 表示未配置，后端 resolve 时回退全局默认
+      env.maxConcurrency = Number(el.maxConcurrency.value) || 0;
+      env.maxPoolSize = Number(el.maxPoolSize.value) || 0;
+      env.connectTimeoutSeconds = Number(el.connectTimeoutSeconds.value) || 0;
       env.connectionString = window.adminUi.emptyToNull(el.connectionString.value);
       env.disabledKeywords = el.disabledKeywords.value
         .split(',')
@@ -396,6 +434,10 @@
       connectionString: '',
       maxRows: 1000,
       commandTimeout: 30,
+      // 并发/池默认 0 = 未配置，resolve 时回退全局默认
+      maxConcurrency: 0,
+      maxPoolSize: 0,
+      connectTimeoutSeconds: 0,
       disabledKeywords: []
     };
   }
@@ -469,8 +511,9 @@
     [
       el.projectName, el.projectDisplayName, el.defaultEnvironment,
       el.environmentName, el.environmentDisplayName, el.databaseType,
-      el.isProduction, el.maxRows, el.commandTimeout, el.connectionString,
-      el.disabledKeywords
+      el.isProduction, el.maxRows, el.commandTimeout,
+      el.maxConcurrency, el.maxPoolSize, el.connectTimeoutSeconds,
+      el.connectionString, el.disabledKeywords
     ].forEach(input => input.addEventListener('change', syncFormToState));
 
     // key → 显示名 自动同步：显示名为空或处于「跟随中」时，输入 key 实时同步；

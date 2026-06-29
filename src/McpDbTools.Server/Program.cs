@@ -211,6 +211,7 @@ static void ConfigureBusinessServices(IServiceCollection services, IConfiguratio
     services.AddSingleton<ConfigStore>();
     services.AddSingleton<ISqlGuard, SqlGuard>();
     services.AddSingleton<DatabaseProviderFactory>();
+    services.AddSingleton<IQueryConcurrencyLimiter, QueryConcurrencyLimiter>();
     services.AddSingleton<AuditLogger>();
     services.AddSingleton<DbQueryTool>();
     services.AddSingleton<DbListTool>();

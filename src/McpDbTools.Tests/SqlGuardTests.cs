@@ -21,6 +21,10 @@ public class SqlGuardTests
             ConnectionString = "",
             MaxRows = 1000,
             CommandTimeout = 30,
+            MaxPoolSize = 100,
+            ConnectTimeoutSeconds = 15,
+            MaxConcurrency = 8,
+            MaxConcurrencyWaitSeconds = 5,
             DisabledKeywords = set
         };
     }

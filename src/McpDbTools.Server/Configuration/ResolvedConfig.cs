@@ -1,4 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Data.Common;
+using Microsoft.Data.SqlClient;
+using MySqlConnector;
+using Oracle.ManagedDataAccess.Client;
+using DatabaseType = McpDbTools.Server.Configuration.DatabaseType;
 
 namespace McpDbTools.Server.Configuration;
 
@@ -42,6 +47,18 @@ public sealed record ResolvedDatabase
     public required int MaxRows { get; init; }
     public required int CommandTimeout { get; init; }
 
+    /// <summary>连接池上限（已应用全局默认/环境级覆盖）。</summary>
+    public required int MaxPoolSize { get; init; }
+
+    /// <summary>建连超时秒数（已应用全局默认/环境级覆盖）。</summary>
+    public required int ConnectTimeoutSeconds { get; init; }
+
+    /// <summary>该环境最大并发查询数（已应用全局默认/环境级覆盖）。</summary>
+    public required int MaxConcurrency { get; init; }
+
+    /// <summary>超载排队最长等待秒数（来自全局默认，内置默认 5）。</summary>
+    public required int MaxConcurrencyWaitSeconds { get; init; }
+
     /// <summary>
     /// 合并后的阻止关键字集合（大写）。空格关键字如 "BULK INSERT" 保留空格，做子串匹配。
     /// </summary>
@@ -51,8 +68,20 @@ public sealed record ResolvedDatabase
 /// <summary>将三层配置合并为 ResolvedConfig。</summary>
 public static class ResolvedConfigBuilder
 {
+    // 并发与连接池相关内置默认值（全局配置缺失时回退到此）
+    private const int DefaultMaxConcurrency = 8;
+    private const int DefaultMaxConcurrencyWaitSeconds = 5;
+    private const int DefaultMaxPoolSize = 100;
+    private const int DefaultConnectTimeoutSeconds = 15;
+
     public static ResolvedConfig Build(DatabasesConfig raw)
     {
+        // 全局并发/池默认值：未配置或非法 → 内置默认
+        int globalMaxConcurrency = raw.DefaultMaxConcurrency is int mc && mc > 0 ? mc : DefaultMaxConcurrency;
+        int globalWaitSeconds = raw.DefaultMaxConcurrencyWaitSeconds is int w && w > 0 ? w : DefaultMaxConcurrencyWaitSeconds;
+        int globalMaxPoolSize = raw.DefaultMaxPoolSize is int p && p > 0 ? p : DefaultMaxPoolSize;
+        int globalConnectTimeout = raw.DefaultConnectTimeoutSeconds is int t && t > 0 ? t : DefaultConnectTimeoutSeconds;
+
         // 第一层：全局通用。未配置则用内置默认
         IEnumerable<string> global = raw.DefaultDisabledKeywords is { Count: > 0 }
             ? raw.DefaultDisabledKeywords
@@ -86,14 +115,25 @@ public static class ResolvedConfigBuilder
                     }
                 }
 
+                // 环境级覆盖全局默认（<=0 回退全局）
+                int maxPoolSize = db.MaxPoolSize > 0 ? db.MaxPoolSize : globalMaxPoolSize;
+                int connectTimeout = db.ConnectTimeoutSeconds > 0 ? db.ConnectTimeoutSeconds : globalConnectTimeout;
+                int maxConcurrency = db.MaxConcurrency > 0 ? db.MaxConcurrency : globalMaxConcurrency;
+
+                string finalConnectionString = BuildConnectionString(db.ConnectionString, db.Type, maxPoolSize, connectTimeout);
+
                 envs[envName] = new ResolvedDatabase
                 {
                     ProjectName = projectName,
                     Environment = envName,
                     Type = db.Type,
-                    ConnectionString = db.ConnectionString,
+                    ConnectionString = finalConnectionString,
                     MaxRows = db.MaxRows <= 0 ? 1000 : db.MaxRows,
                     CommandTimeout = db.CommandTimeout <= 0 ? 30 : db.CommandTimeout,
+                    MaxPoolSize = maxPoolSize,
+                    ConnectTimeoutSeconds = connectTimeout,
+                    MaxConcurrency = maxConcurrency,
+                    MaxConcurrencyWaitSeconds = globalWaitSeconds,
                     DisabledKeywords = merged
                 };
             }
@@ -110,5 +150,39 @@ public static class ResolvedConfigBuilder
         {
             Projects = new ReadOnlyDictionary<string, ResolvedProject>(projects)
         };
+    }
+
+    /// <summary>
+    /// 用各驱动官方 ConnectionStringBuilder 将连接池与建连超时参数拼接到连接串。
+    /// 仅在解析成功时覆盖；解析失败（畸形串）保留原串，不阻断查询。
+    /// </summary>
+    private static string BuildConnectionString(string raw, DatabaseType type, int maxPoolSize, int connectTimeoutSeconds)
+    {
+        try
+        {
+            DbConnectionStringBuilder b = type switch
+            {
+                DatabaseType.SqlServer => new SqlConnectionStringBuilder(raw),
+                DatabaseType.MySql => new MySqlConnectionStringBuilder(raw),
+                DatabaseType.Oracle => new OracleConnectionStringBuilder(raw),
+                _ => null! // 理论不可达：枚举已覆盖全部类型
+            };
+            // 各驱动的键名不同，统一用字符串索引器写入，避免依赖具体属性名
+            (string poolKey, string timeoutKey) = type switch
+            {
+                DatabaseType.SqlServer => ("Max Pool Size", "Connect Timeout"),
+                DatabaseType.MySql => ("Maximum Pool Size", "Connection Timeout"),
+                DatabaseType.Oracle => ("Max Pool Size", "Connection Timeout"),
+                _ => (string.Empty, string.Empty)
+            };
+            b[poolKey] = maxPoolSize;
+            b[timeoutKey] = connectTimeoutSeconds;
+            return b.ConnectionString;
+        }
+        catch
+        {
+            // 畸形连接串：保留原值，运行时由驱动报错
+            return raw;
+        }
     }
 }

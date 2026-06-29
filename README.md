@@ -1,6 +1,6 @@
 # MCP Database Tools
 
-为 [Claude Code](https://docs.anthropic.com/claude-code) 提供数据库只读访问能力的 MCP (Model Context Protocol) 工具。基于 .NET 8 + 官方 `ModelContextProtocol` SDK，支持 SQL Server、MySQL、Oracle，内置 SQL 安全守卫、多环境配置、配置热重载、审计日志，以及本机 Admin UI 配置维护页面。
+为 [Claude Code](https://docs.anthropic.com/claude-code) 提供数据库只读访问能力的 MCP (Model Context Protocol) 工具。基于 .NET 8 + 官方 `ModelContextProtocol` SDK，支持 SQL Server、MySQL、Oracle，内置 SQL 安全守卫、多环境配置、配置热重载、每环境并发限流、审计日志，以及本机 Admin UI 配置维护页面。
 
 ## 功能特性
 
@@ -8,7 +8,8 @@
 - **多环境项目配置**：同一项目可维护 `dev` / `test` / `prod` 等多个环境，并设置默认环境
 - **SQL 安全守卫**：白名单（只读语句）+ 黑名单（三层合并关键字）双重校验，拦截多语句注入
 - **配置热重载**：修改 `config.json` 即时生效，无需重启 MCP 进程
-- **审计日志**：本地 SQLite（`audit.db`，WAL 模式）全局记录已解析到项目与环境后的查询、SQL 阻止与执行结果，不自动清理（用户不主动删除则一直保留），可在 Admin UI 按字段筛选、分页查看与手动清理
+- **每环境并发限流**：每个 `(project, env)` 独立并发闸门（默认上限 8），超载排队等待，超时返回 `RATE_LIMITED`；连接池上限与建连超时可按环境配置，避免高并发打满连接池导致卡死
+- **审计日志**：本地 SQLite（`audit.db`，WAL 模式）全局记录已解析到项目与环境后的查询、SQL 阻止与执行结果；写入经 Channel 异步串行落盘，避免线程池饥饿；不自动清理（用户不主动删除则一直保留），可在 Admin UI 按字段筛选、分页查看与手动清理
 - **AI 友好返回**：columns 与 rows 分离，rows 用二维数组压缩 token 消耗
 - **本机 Admin UI**：通过浏览器维护 `config.json`，支持直接编辑连接字符串、生产环境保护、测试连接、保存前备份与原子写入；另提供审计日志查看与备份管理
 
@@ -29,6 +30,11 @@ dotnet build
 ```jsonc
 {
   // 审计日志已改为全局开启（本地 audit.db），无需在此配置
+  // 并发与连接池全局默认（可选，未配置时用内置默认，详见下文「并发与连接池」）
+  // "defaultMaxConcurrency": 8,
+  // "defaultMaxConcurrencyWaitSeconds": 5,
+  // "defaultMaxPoolSize": 100,
+  // "defaultConnectTimeoutSeconds": 15,
   "databases": {
     "my-project": {
       "displayName": "示例项目",
@@ -41,6 +47,9 @@ dotnet build
           "connectionString": "Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;",
           "maxRows": 1000,
           "commandTimeout": 30,
+          "maxConcurrency": 8,           // 可选：覆盖全局默认
+          "maxPoolSize": 100,            // 可选：覆盖全局默认
+          "connectTimeoutSeconds": 15,   // 可选：覆盖全局默认
           "disabledKeywords": [],
         },
         "prod": {
@@ -136,7 +145,7 @@ Admin UI 目前支持：
 - 新增、编辑、删除项目；**项目 key 与环境 key 创建后不可修改**（前端置灰 + 后端校验双保险）
 - 新增、编辑、删除环境；设置默认环境
 - 输入 key 时若显示名为空，自动同步相同内容；手动改显示名后停止跟随
-- 维护 `displayName`、`isProduction`、数据库类型、连接字符串、`maxRows`、`commandTimeout`、环境级 `disabledKeywords`
+- 维护 `displayName`、`isProduction`、数据库类型、连接字符串、`maxRows`、`commandTimeout`、环境级 `disabledKeywords`，以及环境级并发/连接池参数 `maxConcurrency`、`maxPoolSize`、`connectTimeoutSeconds`（留空/0 表示用全局默认）
 - 维护全局阻止关键字与按数据库类型追加的阻止关键字（`#/keywords`）
 - **测试连接**：在项目配置页用当前编辑框的连接串即时验证（不落盘，成功/失败带耗时）
 - **审计日志查看**（`#/audit-log`）：按项目/环境/类型/状态/时间/SQL 关键词筛选，项目环境联动下拉，分页（每页 50/100/500/1000/5000），SQL 与错误长文本点击弹窗查看并复制，手动清理 30/60/90 天前记录
@@ -206,15 +215,17 @@ backups/config.20260623-184500-123.json
 
 错误以结构化 JSON 返回，不抛到 MCP 协议层。常见错误码：
 
-| 错误码                  | 说明                             |
-| ----------------------- | -------------------------------- |
-| `PROJECT_NOT_FOUND`     | 项目不存在                       |
-| `ENVIRONMENT_REQUIRED`  | 未指定环境，且项目未配置默认环境 |
-| `ENVIRONMENT_NOT_FOUND` | 环境不存在                       |
-| `SQL_BLOCKED`           | SQL 被安全守卫阻止               |
-| `SQL_PARSE_ERROR`       | SQL 为空或无法识别首关键字       |
-| `QUERY_TIMEOUT`         | 查询超时                         |
-| `QUERY_ERROR`           | 数据库执行错误                   |
+| 错误码                  | 说明                                              |
+| ----------------------- | ------------------------------------------------- |
+| `PROJECT_NOT_FOUND`     | 项目不存在                                        |
+| `ENVIRONMENT_REQUIRED`  | 未指定环境，且项目未配置默认环境                  |
+| `ENVIRONMENT_NOT_FOUND` | 环境不存在                                        |
+| `SQL_BLOCKED`           | SQL 被安全守卫阻止                                |
+| `SQL_PARSE_ERROR`       | SQL 为空或无法识别首关键字                        |
+| `RATE_LIMITED`          | 并发查询数达上限，排队等待超时未获得执行槽位      |
+| `QUERY_CONNECT_TIMEOUT` | 建立数据库连接超时（连接池耗尽或网络不可达）      |
+| `QUERY_TIMEOUT`         | 查询执行超时（超过 `commandTimeout`）             |
+| `QUERY_ERROR`           | 数据库执行错误                                    |
 
 ## 配置文件详解
 
@@ -228,6 +239,11 @@ backups/config.20260623-184500-123.json
     "mysql": ["LOAD DATA", "FLUSH"],
     "oracle": ["FLASHBACK", "PURGE"],
   },
+  // 并发与连接池全局默认（可选，全部缺省时用内置默认 8/5/100/15）
+  "defaultMaxConcurrency": 8,            // 每环境最大并发查询数
+  "defaultMaxConcurrencyWaitSeconds": 5, // 超载排队最长等待秒数
+  "defaultMaxPoolSize": 100,             // 连接池上限
+  "defaultConnectTimeoutSeconds": 15,    // 建立连接超时秒数
   // 审计日志已改为全局开启（本地 audit.db），无需在此配置；残留的 audit 节点会被静默忽略
   "databases": {
     "<项目>": {
@@ -241,6 +257,9 @@ backups/config.20260623-184500-123.json
           "connectionString": "...",
           "maxRows": 1000,
           "commandTimeout": 30,
+          "maxConcurrency": 8,           // 可选：覆盖全局默认（<=0 回退全局）
+          "maxPoolSize": 100,            // 可选：覆盖全局默认
+          "connectTimeoutSeconds": 15,   // 可选：覆盖全局默认
           "disabledKeywords": [],
         },
       },
@@ -259,11 +278,31 @@ backups/config.20260623-184500-123.json
 
 最终阻止列表 = 全局 ∪ 按类型 ∪ 环境。全部转大写去重；下层只能追加，不能缩减上层。
 
+### 并发与连接池
+
+为避免高并发下 `db_query` 因连接池耗尽或线程池饥饿而卡死，提供「每环境并发限流 + 可配置连接池」：
+
+| 配置项 | 全局默认 key | 环境级覆盖 key | 内置默认 |
+| ---- | -------------- | --------------- | ------ |
+| 每环境最大并发查询数 | `defaultMaxConcurrency` | `maxConcurrency` | 8 |
+| 超载排队最长等待秒数 | `defaultMaxConcurrencyWaitSeconds` | —（仅全局） | 5 |
+| 连接池上限 | `defaultMaxPoolSize` | `maxPoolSize` | 100 |
+| 建立连接超时秒数 | `defaultConnectTimeoutSeconds` | `connectTimeoutSeconds` | 15 |
+
+行为：
+
+- 每个 `(project, environment)` 拥有独立的并发闸门（`SemaphoreSlim`），不同环境互不阻塞——慢库不会拖累其他库。
+- 超过上限的查询会排队等待，超过等待秒数未获得槽位则返回 `RATE_LIMITED`。
+- 连接池上限与建连超时会按数据库类型拼接到连接串（SQL Server：`Max Pool Size` / `Connect Timeout`；MySQL：`Maximum Pool Size` / `Connection Timeout`；Oracle：`Max Pool Size` / `Connection Timeout`），并作为建连阶段的兜底超时。
+- 环境级字段 `<=0`（或留空）表示回退全局默认；全局未配置则用内置默认。旧 `config.json` 不写这些字段时行为完全不变。
+- 限流上限的变更支持热重载：修改 `config.json` 后下次查询即按新上限生效。
+
 ### 审计日志
 
 审计日志**全局开启**，记录到本地 SQLite 数据库 `audit.db`，位于 `config.json` 同目录。采用 WAL 模式，MCP 写入与 Admin 页读取可同进程并发。
 
 - 每次成功解析到项目与环境的 `db_query` 调用都会记录一条（含 SQL 被安全守卫阻止、执行成功/失败）
+- 写入经 `Channel<AuditEntry>` 入队、单后台消费者**串行落盘**：查询返回线程不再被 SQLite 写阻塞，避免高并发下线程池饥饿与写锁竞争
 - 不自动清理，用户不主动删除则一直保留；可在 Admin UI「审计日志」页按 30/60/90 天手动清理
 - 项目不存在、环境缺失等早期参数解析错误不会写入审计日志
 
@@ -338,9 +377,9 @@ dotnet publish src/McpDbTools.Server -c Release
 ```text
 src/McpDbTools.Server/
 ├── Admin/             # Admin API DTO、配置读写服务、测试连接、备份管理
-├── Audit/             # 审计日志器（SQLite）+ 查询模型
-├── Configuration/     # 配置模型、热重载、三层关键字合并
-├── Database/          # 三种数据库提供者 + 工厂（含连接测试）
+├── Audit/             # 审计日志器（SQLite + Channel 异步串行写入）+ 查询模型
+├── Configuration/     # 配置模型、热重载、三层关键字合并、并发/池默认解析与连接串拼接
+├── Database/          # 三种数据库提供者 + 工厂（含连接测试）+ 每环境并发限流器
 ├── Security/          # SqlGuard SQL 安全守卫
 ├── Tools/             # db_query / db_list MCP 工具
 ├── wwwroot/admin/     # 静态 Admin UI（SPA：index.html + scripts/*.js + styles/*.css）

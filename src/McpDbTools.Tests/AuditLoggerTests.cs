@@ -54,6 +54,7 @@ public class AuditLoggerTests : IDisposable
                 ElapsedMs = 12,
                 Success = true
             });
+            logger.Flush();
         }
 
         Assert.True(File.Exists(dbPath));
@@ -80,6 +81,7 @@ public class AuditLoggerTests : IDisposable
             logger.Log(MakeEntry("SELECT 1", true, time: Iso(3)));
             logger.Log(MakeEntry("SELECT 2", true, time: Iso(1)));
             logger.Log(MakeEntry("DROP x", false, error: "blocked", time: Iso(2)));
+            logger.Flush();
         }
 
         var page = logger.Query(new AuditLogQuery());
@@ -100,6 +102,7 @@ public class AuditLoggerTests : IDisposable
             logger.Log(MakeEntry("SELECT 1", true, project: "erp"));
             logger.Log(MakeEntry("DROP x", false, project: "erp", error: "blocked"));
             logger.Log(MakeEntry("SELECT 2", true, project: "crm"));
+            logger.Flush();
         }
 
         Assert.Equal(2, logger.Query(new AuditLogQuery { Project = "erp" }).Total);
@@ -118,6 +121,7 @@ public class AuditLoggerTests : IDisposable
             logger.Log(MakeEntry("A", true, time: Iso(5)));
             logger.Log(MakeEntry("B", true, time: Iso(3)));
             logger.Log(MakeEntry("C", true, time: Iso(1)));
+            logger.Flush();
         }
 
         var mid = logger.Query(new AuditLogQuery
@@ -139,6 +143,7 @@ public class AuditLoggerTests : IDisposable
             logger.Log(MakeEntry("select id from orders", true));
             logger.Log(MakeEntry("DELETE FROM t", false, error: "x"));
             logger.Log(MakeEntry("100%off", true));
+            logger.Flush();
         }
 
         Assert.Equal(2, logger.Query(new AuditLogQuery { SqlContains = "select" }).Total);
@@ -158,6 +163,7 @@ public class AuditLoggerTests : IDisposable
                 // 每个 i 用不同的偏移天数，保证时间互不相同、可稳定排序
                 logger.Log(MakeEntry($"SELECT {i}", true, time: Iso(7 - i)));
             }
+            logger.Flush();
         }
 
         var page1 = logger.Query(new AuditLogQuery { Page = 1, PageSize = 3 });
@@ -181,6 +187,7 @@ public class AuditLoggerTests : IDisposable
         using (store)
         {
             logger.Log(MakeEntry("SELECT 1", true));
+            logger.Flush();
         }
 
         // 5000 合法：原值保留
@@ -198,6 +205,7 @@ public class AuditLoggerTests : IDisposable
         {
             logger.Log(new AuditEntry { Project = "p", Sql = "SELECT 'a''b'", Success = true });
             logger.Log(new AuditEntry { Project = "p", Sql = "SELECT 1; DROP x", Success = false, Error = "blocked 'x'" });
+            logger.Flush();
         }
 
         Assert.Equal(2, logger.Query(new AuditLogQuery()).Total);
@@ -215,6 +223,7 @@ public class AuditLoggerTests : IDisposable
             logger.Log(MakeEntry("old", true, time: Iso(10)));   // 10 天前
             logger.Log(MakeEntry("mid", true, time: Iso(4)));    // 4 天前
             logger.Log(MakeEntry("new", true, time: Iso(1)));    // 1 天前
+            logger.Flush();
 
             Assert.Equal(3, logger.Query(new AuditLogQuery()).Total);
 
