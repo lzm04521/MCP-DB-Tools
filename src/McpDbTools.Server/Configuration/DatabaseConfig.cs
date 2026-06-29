@@ -44,6 +44,27 @@ public sealed class DatabaseConfig
     public int CommandTimeout { get; init; } = 30;
 
     /// <summary>
+    /// 连接池上限。&lt;=0 表示未配置，回退到全局 defaultMaxPoolSize（内置默认 100）。
+    /// 解析阶段拼接到各驱动的连接串（SQL Server: Max Pool Size；MySQL: Maximum Pool Size；Oracle: Max Pool Size）。
+    /// </summary>
+    [JsonPropertyName("maxPoolSize")]
+    public int MaxPoolSize { get; init; }
+
+    /// <summary>
+    /// 建立连接的超时（秒）。&lt;=0 表示未配置，回退到全局 defaultConnectTimeoutSeconds（内置默认 15）。
+    /// 解析阶段拼接到各驱动的连接串；同时作为 ExecuteQueryAsync.OpenAsync 的 CTS 兜底超时。
+    /// </summary>
+    [JsonPropertyName("connectTimeoutSeconds")]
+    public int ConnectTimeoutSeconds { get; init; }
+
+    /// <summary>
+    /// 该环境最大并发查询数。&lt;=0 表示未配置，回退到全局 defaultMaxConcurrency（内置默认 8）。
+    /// 由 QueryConcurrencyLimiter 在运行时强制。
+    /// </summary>
+    [JsonPropertyName("maxConcurrency")]
+    public int MaxConcurrency { get; init; }
+
+    /// <summary>
     /// 第三层：项目额外阻止关键字，叠加到全局与按类型默认之上。
     /// 仅可追加，不能缩减上层阻止集合。
     /// </summary>
@@ -88,6 +109,22 @@ public sealed class DatabasesConfig
     /// <summary>第二层：按数据库类型追加的阻止关键字。未配置时为空。</summary>
     [JsonPropertyName("defaultDisabledKeywordsByType")]
     public Dictionary<DatabaseType, List<string>>? DefaultDisabledKeywordsByType { get; init; }
+
+    /// <summary>每环境最大并发查询数的全局默认值。未配置时内置默认 8。</summary>
+    [JsonPropertyName("defaultMaxConcurrency")]
+    public int? DefaultMaxConcurrency { get; init; }
+
+    /// <summary>超载排队最长等待秒数的全局默认值。未配置时内置默认 5。</summary>
+    [JsonPropertyName("defaultMaxConcurrencyWaitSeconds")]
+    public int? DefaultMaxConcurrencyWaitSeconds { get; init; }
+
+    /// <summary>连接池上限的全局默认值。未配置时内置默认 100。</summary>
+    [JsonPropertyName("defaultMaxPoolSize")]
+    public int? DefaultMaxPoolSize { get; init; }
+
+    /// <summary>建立连接超时秒数的全局默认值。未配置时内置默认 15。</summary>
+    [JsonPropertyName("defaultConnectTimeoutSeconds")]
+    public int? DefaultConnectTimeoutSeconds { get; init; }
 
     /// <summary>项目名 → 项目配置（含多环境）。JSON 节点名为 databases。</summary>
     [JsonPropertyName("databases")]

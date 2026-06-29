@@ -18,13 +18,15 @@ public sealed class DbQueryTool
     private readonly ISqlGuard _sqlGuard;
     private readonly DatabaseProviderFactory _providerFactory;
     private readonly AuditLogger _audit;
+    private readonly IQueryConcurrencyLimiter _limiter;
 
-    public DbQueryTool(ConfigStore configStore, ISqlGuard sqlGuard, DatabaseProviderFactory providerFactory, AuditLogger audit)
+    public DbQueryTool(ConfigStore configStore, ISqlGuard sqlGuard, DatabaseProviderFactory providerFactory, AuditLogger audit, IQueryConcurrencyLimiter limiter)
     {
         _configStore = configStore;
         _sqlGuard = sqlGuard;
         _providerFactory = providerFactory;
         _audit = audit;
+        _limiter = limiter;
     }
 
     /// <summary>
@@ -75,9 +77,20 @@ public sealed class DbQueryTool
             return QueryResult.Fail(project, db.Type.ToString(), guardResult.Reason, guardResult.ErrorCode, environment: env).ToJson();
         }
 
-        // 5. 执行查询
+        // 5. 执行查询（带每环境并发限流）
         IDatabaseProvider provider = _providerFactory.Get(db.Type);
-        QueryResult result = await provider.ExecuteQueryAsync(project, db, sql, maxRows, cancellationToken);
+        QueryResult result;
+        try
+        {
+            // 申请并发槽位：超载排队，超过 MaxConcurrencyWaitSeconds 抛 QueryRateLimitedException
+            await using IAsyncDisposable slot = await _limiter.AcquireAsync(project, env, db, cancellationToken);
+            result = await provider.ExecuteQueryAsync(project, db, sql, maxRows, cancellationToken);
+        }
+        catch (QueryRateLimitedException ex)
+        {
+            _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, ex.Message));
+            return QueryResult.Fail(project, db.Type.ToString(), ex.Message, "RATE_LIMITED", environment: env).ToJson();
+        }
 
         // 6. 审计
         _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, result.RowCount, result.ExecutionTimeMs, result.Success, result.Error));

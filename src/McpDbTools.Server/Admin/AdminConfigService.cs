@@ -102,6 +102,9 @@ public sealed class AdminConfigService
                         ConnectionStringMasked = string.Empty,
                         MaxRows = env.Value.MaxRows,
                         CommandTimeout = env.Value.CommandTimeout,
+                        MaxPoolSize = env.Value.MaxPoolSize,
+                        ConnectTimeoutSeconds = env.Value.ConnectTimeoutSeconds,
+                        MaxConcurrency = env.Value.MaxConcurrency,
                         DisabledKeywords = env.Value.DisabledKeywords.ToList()
                     })
                     .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
@@ -117,6 +120,10 @@ public sealed class AdminConfigService
                 ? config.DefaultDisabledKeywords
                 : DefaultDisabledKeywords.BuiltIn),
             DefaultDisabledKeywordsByType = ToResponseKeywordsByType(config),
+            DefaultMaxConcurrency = config.DefaultMaxConcurrency ?? 0,
+            DefaultMaxConcurrencyWaitSeconds = config.DefaultMaxConcurrencyWaitSeconds ?? 0,
+            DefaultMaxPoolSize = config.DefaultMaxPoolSize ?? 0,
+            DefaultConnectTimeoutSeconds = config.DefaultConnectTimeoutSeconds ?? 0,
             Projects = projects
         };
     }
@@ -208,6 +215,9 @@ public sealed class AdminConfigService
                     ConnectionString = connectionString,
                     MaxRows = env.MaxRows,
                     CommandTimeout = env.CommandTimeout,
+                    MaxPoolSize = env.MaxPoolSize,
+                    ConnectTimeoutSeconds = env.ConnectTimeoutSeconds,
+                    MaxConcurrency = env.MaxConcurrency,
                     DisabledKeywords = env.DisabledKeywords
                         .Select(k => k.Trim())
                         .Where(k => !string.IsNullOrWhiteSpace(k))
@@ -240,6 +250,10 @@ public sealed class AdminConfigService
                     item => item.Key,
                     item => item.Value.ToList())
                 : ToConfigKeywordsByType(request.DefaultDisabledKeywordsByType, errors),
+            DefaultMaxConcurrency = request.DefaultMaxConcurrency ?? current.DefaultMaxConcurrency,
+            DefaultMaxConcurrencyWaitSeconds = request.DefaultMaxConcurrencyWaitSeconds ?? current.DefaultMaxConcurrencyWaitSeconds,
+            DefaultMaxPoolSize = request.DefaultMaxPoolSize ?? current.DefaultMaxPoolSize,
+            DefaultConnectTimeoutSeconds = request.DefaultConnectTimeoutSeconds ?? current.DefaultConnectTimeoutSeconds,
             Projects = projects
         };
     }

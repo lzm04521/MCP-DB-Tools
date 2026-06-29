@@ -37,6 +37,15 @@
   // ══════════════════════════════════════════════════════════════
 
   // ══════════════════════════════════════════════════════════════
+  // 并发与连接池全局默认（可选，未配置时用内置默认，见 doc/concurrency-hardening.md）
+  //   defaultMaxConcurrency            每环境最大并发查询数，内置默认 8
+  //   defaultMaxConcurrencyWaitSeconds 超载排队最长等待秒数，内置默认 5
+  //   defaultMaxPoolSize               连接池上限，内置默认 100
+  //   defaultConnectTimeoutSeconds     建立连接超时秒数，内置默认 15
+  // 单个环境可在其节点下用 maxConcurrency / maxPoolSize / connectTimeoutSeconds 覆盖（值 <=0 表示回退全局默认）。
+  // ══════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════
   // 项目名 → 项目配置（含多环境）
   // 每个项目下：defaultEnvironment 为 db_query 未指定 environment 时的回退环境；
   // environments 为 环境名 → 该环境的数据库配置，环境名自由命名（如 dev/test/prod/xiqing-prod）。
@@ -51,6 +60,10 @@
           "connectionString": "Server=.;Database=ERP;Trusted_Connection=true;TrustServerCertificate=true;",
           "maxRows": 1000,
           "commandTimeout": 30,
+          // 可选：覆盖并发/池默认（省略或 <=0 则用上面的全局默认）
+          // "maxConcurrency": 16,
+          // "maxPoolSize": 50,
+          // "connectTimeoutSeconds": 10,
           "disabledKeywords": []
         }
       }

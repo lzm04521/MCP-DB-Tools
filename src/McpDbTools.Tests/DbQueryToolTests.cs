@@ -35,7 +35,7 @@ public class DbQueryToolTests : IDisposable
             loggerFactory.CreateLogger<ConfigStore>(),
             options);
         var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
-        return new DbQueryTool(store, new SqlGuard(), new DatabaseProviderFactory(), audit);
+        return new DbQueryTool(store, new SqlGuard(), new DatabaseProviderFactory(), audit, new QueryConcurrencyLimiter());
     }
 
     [Fact]

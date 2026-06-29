@@ -72,7 +72,21 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
         try
         {
             await using DbConnection conn = CreateConnection(db.ConnectionString);
-            await conn.OpenAsync(ct);
+
+            // 建连阶段超时兜底：与 TestConnectionAsync 一致，用 CTS 控制建连超时。
+            // 连接池耗尽时 OpenAsync 会卡住，此处避免其卡满驱动默认超时。
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(db.ConnectTimeoutSeconds));
+            try
+            {
+                await conn.OpenAsync(connectCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // 触发的是建连超时 CTS，不是外部取消
+                sw.Stop();
+                return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
+            }
 
             await using DbCommand cmd = conn.CreateCommand();
             cmd.CommandText = sql;
