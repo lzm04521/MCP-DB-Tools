@@ -58,6 +58,15 @@ public Task<string> ListProjects(
 - `db_list(project=" ")` → 等同 `db_list()` → 返回项目索引。
 - `db_list(project="erp-system", environment="")` → 等同 `db_list(project="erp-system")` → 返回该项目全环境。
 
+### 项目存在但无环境的边界
+
+config 中某项目 `environments` 为空字典（`{}`，理论上合法）时：
+
+- `db_list(project="empty-proj")` → **success:true**，返回 `{success:true, projects:[{name:"empty-proj", defaultEnvironment:null, environments:[]}]}`。
+- `db_list(project="empty-proj", environment="any")` → **success:false**，返回 `ENVIRONMENT_NOT_FOUND` + `environments:[]`（空详情数组，与"该项目无环境"事实一致）。
+
+此边界按现有字典查找逻辑自然成立，无需特殊分支。
+
 ### 兜底字段格式不对称说明
 
 | 错误码 | 兜底字段 | 内容 | 对象类型 |
