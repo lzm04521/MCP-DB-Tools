@@ -50,6 +50,22 @@ public Task<string> ListProjects(
 > 上表 `error` 字段为人类可读的中文提示，含可用名列表。`projects`/`environments` 字段为兜底数据，用于 Agent 纠错重试。
 > 判断顺序：先校验 `project`，project 不存在时无论 `environment` 传什么都直接返回 `PROJECT_NOT_FOUND`（environment 无意义）。
 
+### 空白字符串处理（确定性行为）
+
+`project` / `environment` 为 `null` **或空白字符串**（空格、制表符、空串等，经 `string.IsNullOrWhiteSpace` 判断）时，**一律等同未传**。此规则与 `db_query` 现有的环境解析逻辑一致（`DbQueryTool.cs:57`）。即：
+
+- `db_list(project=" ")` → 等同 `db_list()` → 返回项目索引。
+- `db_list(project="erp-system", environment="")` → 等同 `db_list(project="erp-system")` → 返回该项目全环境。
+
+### 兜底字段格式不对称说明
+
+| 错误码 | 兜底字段 | 内容 | 对象类型 |
+|--------|----------|------|----------|
+| `PROJECT_NOT_FOUND` | `projects` | 项目名 | 字符串数组 `["p1","p2"]` |
+| `ENVIRONMENT_NOT_FOUND` | `environments` | 环境 | 详情对象数组 |
+
+两者**故意不对称**：项目名是简单标识，字符串数组足够且最省 token；环境详情含数据库类型、生产标识、连接/超时参数等 Agent 调用 `db_query` 前需要的运行信息，故返回详情而非纯名字（Agent 可从详情对象的 `name` 字段读出环境名）。这是明确的产品决策，不是实现疏漏。
+
 ### 环境详情对象结构（沿用上一轮已实现）
 
 ```
@@ -152,7 +168,7 @@ public Task<string> ListProjects(
 | 文件 | 动作 |
 |------|------|
 | `Database/QueryResult.cs` | 删除 `AvailableProjects` 字段；`Fail` 工厂去掉 `availableProjects` 参数 |
-| `Tools/DbQueryTool.cs` | 三个参数解析失败分支去掉 `availableProjects` 传参，恢复纯错误码返回；`[Description]` 去掉"附带 availableProjects"描述 |
+| `Tools/DbQueryTool.cs` | 三个参数解析失败分支去掉 `availableProjects` 传参，恢复纯错误码返回；`[Description]` 结尾从上一轮的"附带 availableProjects"改为新调用流程提示：「可先用 db_list() 获取项目列表，再 db_list(project=...) 获取环境列表」（与新 db_list 无参不返回 environments 的行为一致，避免误导 Agent） |
 | `Tests/DbQueryToolTests.cs` | 去掉 `AssertHasAvailableProjects` 辅助方法与 `SqlBlocked_DoesNotIncludeAvailableProjects` 反向测试；三个错误测试恢复纯 errorCode 断言 |
 | `README.md` | `db_query` 错误段去掉"参数解析失败附带 availableProjects"说明 |
 
