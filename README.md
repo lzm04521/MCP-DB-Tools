@@ -105,7 +105,7 @@ dotnet build
 }
 ```
 
-重启 Claude Code 后，可先调用 `db_list` 查看可用项目与环境，再调用 `db_query` 执行只读查询。
+重启 Claude Code 后，可先调用 `db_list` 查看可用项目（不传参数），再用 `db_list(project=...)` 查看该项目环境，最后调用 `db_query` 执行只读查询。
 
 ## 运行模式
 
@@ -166,17 +166,74 @@ backups/config.20260623-184500-123.json
 
 ### db_list
 
-列出当前配置中所有项目及其环境，建议在查询前先调用。
+列出数据库项目与环境，**按需加载**避免环境多时返回数据量过大。建议在查询前调用。
 
-返回 JSON 示例：
+| 参数          | 类型   | 必填 | 说明                                                                                       |
+| ------------- | ------ | ---- | ------------------------------------------------------------------------------------------ |
+| `project`     | string | 否   | 项目名。不传则返回所有项目名索引（轻量，不含环境）；传则返回该项目环境详情                  |
+| `environment` | string | 否   | 环境名。配合 `project` 使用：传则只返回该单环境详情；单独传（不传 `project`）无意义         |
+
+空白字符串等同未传。返回 JSON 含 `success` 字段。行为矩阵：
+
+| project | environment | 返回 |
+|---------|-------------|------|
+| 不传    | —           | `{success:true, projects:[{name, defaultEnvironment}]}` —— **项目索引，不含环境** |
+| 传（存在） | 不传     | `{success:true, projects:[{name, defaultEnvironment, environments:[全环境详情]}]}` |
+| 传（存在） | 传（存在）| `{success:true, projects:[{name, defaultEnvironment, environments:[单环境详情]}]}` |
+| 传（存在） | 传（不存在）| `{success:false, errorCode:"ENVIRONMENT_NOT_FOUND", environments:[该项目全环境详情]}` |
+| 传（不存在）| 任意      | `{success:false, errorCode:"PROJECT_NOT_FOUND", availableProjects:[项目名数组]}` |
+
+环境详情对象：`{name, type, isProduction, maxRows, maxConcurrency, maxPoolSize, connectTimeoutSeconds, commandTimeout}`，含数据库类型、生产标识、行数上限与并发/连接池/超时配置，便于 Agent 按库类型组织 SQL、在生产环境查询时谨慎操作。
+
+**推荐调用流程**：
+
+1. `db_list()` → 拿到所有项目名（轻量）。
+2. `db_list(project="xxx")` → 拿到该项目全部环境详情。
+3. 如已知环境：`db_list(project="xxx", environment="yyy")` → 拿到单环境详情（最轻）。
+4. 任一步传错：错误响应直接回显 `availableProjects`（项目名数组）或 `environments`（该项目环境详情数组），可直接据此重试。
+
+不传 project 示例（首次发现）：
 
 ```json
 {
+  "success": true,
+  "projects": [
+    { "name": "my-project", "defaultEnvironment": "test" }
+  ]
+}
+```
+
+传 project 示例（该项目全环境详情）：
+
+```json
+{
+  "success": true,
   "projects": [
     {
       "name": "my-project",
       "defaultEnvironment": "test",
-      "environments": ["test", "prod"]
+      "environments": [
+        {
+          "name": "test",
+          "type": "sqlserver",
+          "isProduction": false,
+          "maxRows": 1000,
+          "maxConcurrency": 8,
+          "maxPoolSize": 100,
+          "connectTimeoutSeconds": 15,
+          "commandTimeout": 30
+        },
+        {
+          "name": "prod",
+          "type": "sqlserver",
+          "isProduction": true,
+          "maxRows": 500,
+          "maxConcurrency": 8,
+          "maxPoolSize": 100,
+          "connectTimeoutSeconds": 15,
+          "commandTimeout": 30
+        }
+      ]
     }
   ]
 }

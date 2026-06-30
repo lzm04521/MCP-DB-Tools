@@ -38,7 +38,7 @@ public sealed class DbQueryTool
     /// 可用 db_list 工具列出所有项目及其环境。
     /// </summary>
     [McpServerTool(Name = "db_query")]
-    [Description("在指定项目的指定环境上执行只读 SQL 查询。project 为项目名(对应 config.json 中 databases 配置)，environment 为环境名(如 dev/test/prod，可选；未传时使用项目的 defaultEnvironment)，sql 为查询语句(仅允许只读操作)，limit 为可选的最大返回行数。返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。可先用 db_list 列出所有项目与环境。")]
+    [Description("在指定项目的指定环境上执行只读 SQL 查询。project 为项目名(对应 config.json 中 databases 配置)，environment 为环境名(如 dev/test/prod，可选；未传时使用项目的 defaultEnvironment)，sql 为查询语句(仅允许只读操作)，limit 为可选的最大返回行数。返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。可先用 db_list() 获取项目列表，再 db_list(project=...) 获取环境详情。")]
     public async Task<string> ExecuteQuery(
         string project,
         string sql,
