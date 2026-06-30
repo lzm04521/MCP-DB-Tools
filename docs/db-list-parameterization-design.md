@@ -45,10 +45,11 @@ public Task<string> ListProjects(
 | 传（存在） | 不传 | true | `{success:true, projects:[{name, defaultEnvironment, environments:[全环境详情]}]}` |
 | 传（存在） | 传（存在） | true | `{success:true, projects:[{name, defaultEnvironment, environments:[单环境详情]}]}` |
 | 传（存在） | 传（不存在） | false | `{success:false, errorCode:"ENVIRONMENT_NOT_FOUND", error, environments:[**该项目全环境详情**]}` |
-| 传（不存在） | 任意 | false | `{success:false, errorCode:"PROJECT_NOT_FOUND", error, projects:[**"p1","p2"**]}` —— 项目名字符串数组 |
+| 传（不存在） | 任意 | false | `{success:false, errorCode:"PROJECT_NOT_FOUND", error, availableProjects:[**"p1","p2"**]}` —— 项目名字符串数组 |
 
-> 上表 `error` 字段为人类可读的中文提示，含可用名列表。`projects`/`environments` 字段为兜底数据，用于 Agent 纠错重试。
+> 上表 `error` 字段为人类可读的中文提示，含可用名列表。`availableProjects`/`environments` 字段为兜底数据，用于 Agent 纠错重试。
 > 判断顺序：先校验 `project`，project 不存在时无论 `environment` 传什么都直接返回 `PROJECT_NOT_FOUND`（environment 无意义）。
+> 字段命名：成功响应的 `projects` 是**对象数组**；错误兜底用独立字段 `availableProjects`（**字符串数组**）避免类型冲突；环境兜底复用 `environments`（详情对象数组），因成功响应无顶层 `environments` 字段，不冲突。
 
 ### 空白字符串处理（确定性行为）
 
@@ -61,10 +62,11 @@ public Task<string> ListProjects(
 
 | 错误码 | 兜底字段 | 内容 | 对象类型 |
 |--------|----------|------|----------|
-| `PROJECT_NOT_FOUND` | `projects` | 项目名 | 字符串数组 `["p1","p2"]` |
+| `PROJECT_NOT_FOUND` | `availableProjects` | 项目名 | 字符串数组 `["p1","p2"]` |
 | `ENVIRONMENT_NOT_FOUND` | `environments` | 环境 | 详情对象数组 |
 
 两者**故意不对称**：项目名是简单标识，字符串数组足够且最省 token；环境详情含数据库类型、生产标识、连接/超时参数等 Agent 调用 `db_query` 前需要的运行信息，故返回详情而非纯名字（Agent 可从详情对象的 `name` 字段读出环境名）。这是明确的产品决策，不是实现疏漏。
+兜底字段名 `availableProjects` 与成功响应的 `projects`（对象数组）区分，避免 Agent 用同一字段名解析两种类型。
 
 ### 环境详情对象结构（沿用上一轮已实现）
 
@@ -144,7 +146,7 @@ public Task<string> ListProjects(
   "success": false,
   "errorCode": "PROJECT_NOT_FOUND",
   "error": "项目不存在: nope。可用项目: erp-system, crm-mysql",
-  "projects": ["erp-system", "crm-mysql"]
+  "availableProjects": ["erp-system", "crm-mysql"]
 }
 ```
 
@@ -183,13 +185,13 @@ public Task<string> ListProjects(
 当前 `ProjectListBuilder` 只有一个 `BuildProjects`（总返回带环境详情的完整结构），不符合"按需加载"。重构为正交方法：
 
 ```
-BuildProjectIndex(config)            → [{name, defaultEnvironment}]         // 不带环境，项目索引（无参/兜底）
+BuildProjectIndex(config)            → [{name, defaultEnvironment}]         // 不带环境，项目索引（无参）
 BuildProjectWithEnvironments(proj)   → {name, defaultEnvironment, environments:[详情]}  // 单项目全环境
 BuildSingleEnvironment(proj, envKey) → {name, defaultEnvironment, environments:[单详情]}  // 单项目单环境
-BuildProjectNameList(config)         → ["p1","p2"]                          // 兜底：项目名字符串数组
+BuildProjectNameList(config)         → ["p1","p2"]                          // 兜底：项目名字符串数组（用于 availableProjects）
 BuildEnvironmentDetails(proj)        → [{详情},...]                         // 兜底：该项目全环境详情
 SerializeSuccess(...)                → 统一序列化 {success:true, projects:[...]}
-SerializeFail(...)                   → 统一序列化 {success:false, errorCode, error, + 兜底字段}
+SerializeFail(...)                   → 统一序列化 {success:false, errorCode, error, availableProjects|environments}
 ```
 
 `BuildEnvironment`（单个环境详情对象，已在上一轮实现）保留并被上述方法复用。
@@ -198,7 +200,7 @@ SerializeFail(...)                   → 统一序列化 {success:false, errorCo
 
 - 成功与错误响应都带 `success`（true/false）。
 - 错误响应复用与 `db_query` 一致的字段：`success`、`errorCode`、`error`。
-- 兜底数据字段按内容命名：项目兜底用 `projects`（字符串数组），环境兜底用 `environments`（详情对象数组）。
+- 兜底数据字段：项目兜底用 `availableProjects`（**字符串数组**，与成功响应的 `projects` 对象数组区分），环境兜底用 `environments`（详情对象数组，成功响应无此顶层字段，不冲突）。
 - 错误响应通过 `ProjectListBuilder.SerializeFail` 统一构造，保证字段顺序与格式稳定。
 
 ## 十、契约变化与兼容性
@@ -218,9 +220,23 @@ SerializeFail(...)                   → 统一序列化 {success:false, errorCo
   - 恢复 `DbQueryToolTests` 为纯 errorCode 断言。
   - 其余测试（SqlGuard、ConcurrencyLimiter 等）保持通过。
 
-## 十二、Agent 使用流程（推荐话术写入 Description）
+## 十二、Agent 使用流程与 Description 文案
+
+### db_list 的 [Description] 完整文案（实现时直接采用）
+
+```
+"列出数据库项目与环境，按需加载避免返回过多数据。project 可选：不传则返回所有项目名索引(轻量，不含环境)；传项目名则返回该项目全部环境详情；同时传 environment 则返回单环境详情。environment 可选：配合 project 使用，单独传(不传 project)无意义。空白字符串等同未传。项目不存在时返回 PROJECT_NOT_FOUND 并附带 availableProjects(项目名数组)；环境不存在时返回 ENVIRONMENT_NOT_FOUND 并附带该项目 environments(环境详情数组)。返回 JSON 含 success 字段。"
+```
+
+### db_query 的 [Description] 结尾（回退后采用）
+
+```
+"...返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。可先用 db_list() 获取项目列表，再 db_list(project=...) 获取环境详情。"
+```
+
+### 推荐 Agent 调用流程
 
 1. 第一次：`db_list()` → 拿到所有项目名（轻量）。
 2. 选定项目：`db_list(project="xxx")` → 拿到该项目全部环境详情（含类型、生产标识、连接/超时参数）。
 3. 如已知环境：`db_list(project="xxx", environment="yyy")` → 拿到单环境详情（最轻）。
-4. 任一步传错：错误响应直接回显可用项目名或该项目环境详情，可直接据此重试，无需额外往返。
+4. 任一步传错：错误响应直接回显 `availableProjects` 或该项目 `environments`，可直接据此重试，无需额外往返。
