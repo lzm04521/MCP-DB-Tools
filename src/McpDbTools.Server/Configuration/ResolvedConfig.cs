@@ -42,6 +42,9 @@ public sealed record ResolvedDatabase
     /// <summary>所属环境名（如 dev/test/prod/xiqing-prod）。</summary>
     public required string Environment { get; init; }
 
+    /// <summary>是否生产环境。供 db_list 展示给 Agent，便于在生产环境查询时谨慎操作。</summary>
+    public required bool IsProduction { get; init; }
+
     public required DatabaseType Type { get; init; }
     public required string ConnectionString { get; init; }
     public required int MaxRows { get; init; }
@@ -126,6 +129,7 @@ public static class ResolvedConfigBuilder
                 {
                     ProjectName = projectName,
                     Environment = envName,
+                    IsProduction = db.IsProduction,
                     Type = db.Type,
                     ConnectionString = finalConnectionString,
                     MaxRows = db.MaxRows <= 0 ? 1000 : db.MaxRows,

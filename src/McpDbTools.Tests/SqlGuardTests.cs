@@ -17,6 +17,7 @@ public class SqlGuardTests
         {
             ProjectName = "test",
             Environment = "test",
+            IsProduction = false,
             Type = type,
             ConnectionString = "",
             MaxRows = 1000,
