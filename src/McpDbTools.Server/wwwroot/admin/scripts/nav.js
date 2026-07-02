@@ -7,7 +7,8 @@
     { id: 'projects', label: '项目配置' },
     { id: 'keywords', label: '全局关键字' },
     { id: 'audit-log', label: '审计日志' },
-    { id: 'backups', label: '备份管理' }
+    { id: 'backups', label: '备份管理' },
+    { id: 'settings', label: '全局设置' }
   ];
 
   let container = null;

@@ -14,9 +14,7 @@
     pageSize: 50,
     result: null,
     // 项目/环境联动下拉所需配置（从 /admin/api/config 拉取，只用于填充下拉项）
-    config: null,
-    // 清理天数（跨分页渲染保持用户选择，默认 30）
-    cleanupDays: 30
+    config: null
   };
   let el = null; // mount 后填充
 
@@ -394,29 +392,6 @@
     el.pager.appendChild(info);
     el.pager.appendChild(next);
     el.pager.appendChild(sizeWrap);
-
-    // 清理旧记录控件：放分页栏最右侧（远离顶部刷新，避免误点）
-    const cleanupWrap = document.createElement('div');
-    cleanupWrap.className = 'cleanup-control pager-cleanup';
-    const cleanupDays = document.createElement('select');
-    for (const d of [30, 60, 90]) {
-      const opt = document.createElement('option');
-      opt.value = String(d);
-      opt.textContent = `清理 ${d} 天前`;
-      if (d === state.cleanupDays) {
-        opt.selected = true;
-      }
-      cleanupDays.appendChild(opt);
-    }
-    cleanupDays.addEventListener('change', () => { state.cleanupDays = Number(cleanupDays.value); });
-    const cleanupBtn = document.createElement('button');
-    cleanupBtn.type = 'button';
-    cleanupBtn.className = 'button danger subtle';
-    cleanupBtn.textContent = '清理';
-    cleanupBtn.addEventListener('click', cleanupOldLogs);
-    cleanupWrap.appendChild(cleanupDays);
-    cleanupWrap.appendChild(cleanupBtn);
-    el.pager.appendChild(cleanupWrap);
   }
 
   /** 通用文本弹窗：展示标题 + 完整文本，供 SQL 与错误信息复用，便于查看与复制。 */
@@ -470,34 +445,6 @@
       el.filterFromTime, el.filterToTime, el.filterSqlContains].forEach(input => {
       input.addEventListener('change', syncFiltersToState);
     });
-  }
-
-  /** 删除指定天数前的审计记录（30/60/90 天）。二次确认，避免误删。 */
-  async function cleanupOldLogs() {
-    const days = state.cleanupDays;
-    const ok = await window.adminUi.confirmAction(
-      '清理审计日志',
-      `确定删除 ${days} 天前的所有审计记录吗？此操作不可恢复。`
-    );
-    if (!ok) {
-      return;
-    }
-
-    window.adminUi.setBusy(true);
-    try {
-      const result = await window.adminApi.requestJson('/admin/api/audit-logs/cleanup', {
-        method: 'POST',
-        body: JSON.stringify({ name: String(days) })
-      });
-      window.adminUi.showToast(`已删除 ${result.deleted} 条 ${days} 天前的记录`);
-      // 清理后重新查询当前页（可能当前页已被清空，回到第一页更稳妥）
-      state.page = 1;
-      await search(false);
-    } catch (error) {
-      window.adminUi.showToast(error.message, true);
-    } finally {
-      window.adminUi.setBusy(false);
-    }
   }
 
   window.adminViews = window.adminViews || {};
