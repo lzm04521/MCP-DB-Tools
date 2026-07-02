@@ -70,6 +70,9 @@ audit.log*
 *.bak
 *.backup
 
+# 运行时生成的配置备份目录（Admin UI 每次保存自动产生）
+src/McpDbTools.Server/backups/
+
 # 本地配置与密钥文件
 .env
 .env.*
@@ -82,6 +85,8 @@ appsettings.*.local.json
 
 # 本地数据库/缓存文件
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.cache

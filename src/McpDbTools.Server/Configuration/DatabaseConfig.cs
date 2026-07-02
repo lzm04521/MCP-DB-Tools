@@ -126,6 +126,13 @@ public sealed class DatabasesConfig
     [JsonPropertyName("defaultConnectTimeoutSeconds")]
     public int? DefaultConnectTimeoutSeconds { get; init; }
 
+    /// <summary>
+    /// 运维清理设置（审计日志/备份自动清理）。缺省时为 null，按内置默认（全部关闭）处理。
+    /// 保存 projects/keywords 时由后端 ToConfig 原样透传，不会被全量替换丢失。
+    /// </summary>
+    [JsonPropertyName("maintenance")]
+    public MaintenanceConfig? Maintenance { get; init; }
+
     /// <summary>项目名 → 项目配置（含多环境）。JSON 节点名为 databases。</summary>
     [JsonPropertyName("databases")]
     public Dictionary<string, ProjectConfig> Projects { get; init; } = new();

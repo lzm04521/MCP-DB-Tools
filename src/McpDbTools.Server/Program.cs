@@ -6,6 +6,7 @@ using McpDbTools.Server.Admin;
 using McpDbTools.Server.Audit;
 using McpDbTools.Server.Configuration;
 using McpDbTools.Server.Database;
+using McpDbTools.Server.Maintenance;
 using McpDbTools.Server.Security;
 using McpDbTools.Server.Tools;
 using Microsoft.AspNetCore.Builder;
@@ -54,6 +55,8 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
     ConfigureLogging(builder.Logging);
     ConfigureBusinessServices(builder.Services, builder.Configuration);
     builder.Services.AddSingleton<AdminConfigService>();
+    // 运维清理后台服务：依赖 AdminConfigService，仅在 Admin/混合模式注册（D2 决策：方案 a）
+    builder.Services.AddHostedService<MaintenanceHostedService>();
     builder.Services.ConfigureHttpJsonOptions(options =>
     {
         options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -111,6 +114,22 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
         return result.Success ? Results.Ok(result) : Results.BadRequest(result);
     });
 
+    // 全局设置（maintenance 节点）：独立读写，只改 maintenance，不触碰 projects/keywords。
+    // 复用 api 组的 session cookie 鉴权 filter（见上方 AddEndpointFilter）。
+    api.MapGet("/maintenance", (AdminConfigService service) => Results.Ok(service.GetMaintenance()));
+    api.MapPut("/maintenance", async (MaintenanceSettingsRequest request, AdminConfigService service, CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            MaintenanceSettingsResponse result = await service.SaveMaintenanceAsync(request, cancellationToken);
+            return Results.Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+    });
+
     // 审计日志查询：GET /admin/api/audit-logs?project=&environment=&databaseType=&success=&fromTime=&toTime=&sqlContains=&page=&pageSize=
     // success 取 true/false，未传或其它值表示不限定。查询参数全部可选。
     api.MapGet("/audit-logs", (AuditLogger audit,
@@ -150,6 +169,25 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
         try
         {
             int deleted = audit.DeleteOlderThan(days);
+            return Results.Ok(new { success = true, deleted, days });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+    });
+
+    // 备份文件清理：删除指定天数前的备份（按文件最后写入时间判断）。供全局设置页手动清理使用。
+    api.MapPost("/backups/cleanup", (AdminConfigService service, RestoreBackupRequest request) =>
+    {
+        string name = request.Name ?? string.Empty;
+        if (!int.TryParse(name, out int days) || days <= 0)
+        {
+            return Results.Json(new { error = "清理天数必须为正整数" }, statusCode: StatusCodes.Status400BadRequest);
+        }
+        try
+        {
+            int deleted = service.DeleteBackupsOlderThan(days);
             return Results.Ok(new { success = true, deleted, days });
         }
         catch (ArgumentException ex)

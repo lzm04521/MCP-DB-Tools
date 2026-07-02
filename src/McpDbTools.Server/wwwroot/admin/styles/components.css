@@ -563,3 +563,84 @@ input[readonly] {
   overflow: auto;
   user-select: all;
 }
+
+/* ============ 全局设置页（紧凑布局） ============ */
+.settings-shell {
+  gap: 16px; /* 卡片间距比默认 24px 更紧凑 */
+}
+
+.settings-card {
+  padding: 16px 20px; /* 比默认 22px 更紧凑 */
+}
+
+.settings-card .muted {
+  margin: 4px 0 14px;
+}
+
+/* 开关 + 保留天数横排同行 */
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.settings-row .switch-row {
+  margin: 0;
+}
+
+/* 保留天数输入：限定宽度，不占满整行 */
+.retention-field {
+  grid-template-columns: auto minmax(90px, 140px);
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.retention-field input {
+  width: 100%;
+}
+
+/* 手动清理行：标签 + 天数下拉 + 按钮 紧凑同行 */
+.manual-cleanup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(216, 222, 232, 0.7);
+}
+
+.manual-cleanup__label {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-foreground);
+}
+
+.manual-cleanup select {
+  width: auto;
+  min-height: 38px;
+  padding: 7px 10px;
+}
+
+.manual-cleanup .button {
+  min-height: 38px;
+  padding: 8px 16px;
+}
+
+@media (max-width: 600px) {
+  .settings-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .manual-cleanup {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .manual-cleanup select,
+  .manual-cleanup .button {
+    width: 100%;
+  }
+}

@@ -72,7 +72,7 @@ public sealed class AdminConfigService
             return new AdminSaveResult { Success = false, Errors = errors };
         }
 
-        string backupName = await WriteConfigAtomicallyAsync(next, cancellationToken);
+        string backupName = await WriteAtomicallyAsync(next, cancellationToken);
         return new AdminSaveResult
         {
             Success = true,
@@ -254,6 +254,8 @@ public sealed class AdminConfigService
             DefaultMaxConcurrencyWaitSeconds = request.DefaultMaxConcurrencyWaitSeconds ?? current.DefaultMaxConcurrencyWaitSeconds,
             DefaultMaxPoolSize = request.DefaultMaxPoolSize ?? current.DefaultMaxPoolSize,
             DefaultConnectTimeoutSeconds = request.DefaultConnectTimeoutSeconds ?? current.DefaultConnectTimeoutSeconds,
+            // maintenance 节点独立保存：保存 projects/keywords 时原样透传，避免全量替换丢失
+            Maintenance = current.Maintenance,
             Projects = projects
         };
     }
@@ -317,7 +319,11 @@ public sealed class AdminConfigService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
 
-    private async Task<string> WriteConfigAtomicallyAsync(DatabasesConfig config, CancellationToken cancellationToken)
+    /// <summary>
+    /// 原子写入 config.json：写临时文件 → 校验 → 备份当前配置 → 替换。
+    /// 供 SaveConfigAsync 与 SaveMaintenanceAsync 共用，保证两处落盘一致。
+    /// </summary>
+    private async Task<string> WriteAtomicallyAsync(DatabasesConfig config, CancellationToken cancellationToken)
     {
         string directory = Path.GetDirectoryName(_configPath) ?? AppContext.BaseDirectory;
         Directory.CreateDirectory(directory);
@@ -444,6 +450,119 @@ public sealed class AdminConfigService
         {
             return new DeleteBackupResult { Success = false, Error = ex.Message };
         }
+    }
+
+    // ============ 全局设置（maintenance 节点）============
+
+    /// <summary>
+    /// 读取当前 maintenance 配置。节点缺失（null）时返回内置默认（全部关闭、保留 30 天）。
+    /// </summary>
+    public MaintenanceSettingsResponse GetMaintenance()
+    {
+        MaintenanceConfig m = _configStore.Current.Maintenance ?? MaintenanceConfig.Default;
+        return ToMaintenanceResponse(m);
+    }
+
+    /// <summary>
+    /// 保存 maintenance 配置（仅替换 maintenance 节点，不动 projects/keywords）。
+    /// <para>校验：任一开关开启时对应天数必须 &gt; 0，否则抛 ArgumentException（由调用方包装为 400）。</para>
+    /// </summary>
+    public async Task<MaintenanceSettingsResponse> SaveMaintenanceAsync(
+        MaintenanceSettingsRequest request, CancellationToken cancellationToken)
+    {
+        ValidateRetentionDays(request.AuditLogAutoCleanup, request.AuditLogRetentionDays, "审计日志");
+        ValidateRetentionDays(request.BackupAutoCleanup, request.BackupRetentionDays, "备份");
+
+        DatabasesConfig current = _configStore.Current;
+        // DatabasesConfig 是 sealed class（非 record），手动重建：除 maintenance 外其余字段从 current 透传
+        DatabasesConfig next = new()
+        {
+            DefaultDisabledKeywords = current.DefaultDisabledKeywords,
+            DefaultDisabledKeywordsByType = current.DefaultDisabledKeywordsByType,
+            DefaultMaxConcurrency = current.DefaultMaxConcurrency,
+            DefaultMaxConcurrencyWaitSeconds = current.DefaultMaxConcurrencyWaitSeconds,
+            DefaultMaxPoolSize = current.DefaultMaxPoolSize,
+            DefaultConnectTimeoutSeconds = current.DefaultConnectTimeoutSeconds,
+            Maintenance = new MaintenanceConfig
+            {
+                AuditLogAutoCleanup = request.AuditLogAutoCleanup,
+                AuditLogRetentionDays = NormalizeRetentionDays(request.AuditLogRetentionDays),
+                BackupAutoCleanup = request.BackupAutoCleanup,
+                BackupRetentionDays = NormalizeRetentionDays(request.BackupRetentionDays)
+            },
+            Projects = current.Projects
+        };
+        await WriteAtomicallyAsync(next, cancellationToken);
+        return ToMaintenanceResponse(next.Maintenance!);
+    }
+
+    /// <summary>开关开启时校验天数 &gt; 0；关闭时不校验（天数可能任意值，忽略不生效）。</summary>
+    private static void ValidateRetentionDays(bool enabled, int days, string label)
+    {
+        if (enabled && days <= 0)
+        {
+            throw new ArgumentException($"{label}自动清理已启用，保留天数必须大于 0。");
+        }
+    }
+
+    /// <summary>归一化天数：非法（&lt;=0）值回退到内置默认 30。</summary>
+    private static int NormalizeRetentionDays(int days)
+        => days > 0 ? days : MaintenanceConfig.DefaultRetentionDays;
+
+    private static MaintenanceSettingsResponse ToMaintenanceResponse(MaintenanceConfig m) => new()
+    {
+        AuditLogAutoCleanup = m.AuditLogAutoCleanup,
+        AuditLogRetentionDays = m.AuditLogRetentionDays > 0 ? m.AuditLogRetentionDays : MaintenanceConfig.DefaultRetentionDays,
+        BackupAutoCleanup = m.BackupAutoCleanup,
+        BackupRetentionDays = m.BackupRetentionDays > 0 ? m.BackupRetentionDays : MaintenanceConfig.DefaultRetentionDays
+    };
+
+    // ============ 备份自动清理（供 MaintenanceHostedService 调用）============
+
+    /// <summary>
+    /// 删除早于指定天数的备份文件，返回删除数量。
+    /// <para>按文件 LastWriteTimeUtc 判断；单文件删除失败跳过（记录但不中断），保证整体清理完成。</para>
+    /// <para>与手动 DeleteBackup 不同，这里不返回每个文件的结果，仅供后台服务批量清理。</para>
+    /// </summary>
+    public int DeleteBackupsOlderThan(int days)
+    {
+        if (days <= 0)
+        {
+            throw new ArgumentException("保留天数必须大于 0。", nameof(days));
+        }
+        if (!Directory.Exists(_backupDirectory))
+        {
+            return 0;
+        }
+
+        DateTime cutoff = DateTime.UtcNow.AddDays(-days);
+        int deleted = 0;
+        foreach (string file in Directory.EnumerateFiles(_backupDirectory, "config.*.json"))
+        {
+            string name = Path.GetFileName(file);
+            if (!IsSafeBackupName(name))
+            {
+                continue;
+            }
+            try
+            {
+                FileInfo info = new(file);
+                if (info.LastWriteTimeUtc < cutoff)
+                {
+                    File.Delete(file);
+                    deleted++;
+                }
+            }
+            catch (IOException)
+            {
+                // 单文件并发占用（如正在下载/恢复），跳过本次，下次清理周期重试
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // 权限问题跳过，不影响其它文件
+            }
+        }
+        return deleted;
     }
 
     /// <summary>备份文件名安全校验：必须形如 config.{时间戳}.json，禁止路径穿越。</summary>
