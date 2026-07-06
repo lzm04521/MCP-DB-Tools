@@ -122,7 +122,7 @@ public class ConfigMergeTests
         ResolvedDatabase db = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["prod"];
 
         Assert.Equal(1000, db.MaxRows);
-        Assert.Equal(30, db.CommandTimeout);
+        Assert.Equal(600, db.CommandTimeout);
     }
 
     [Fact]
@@ -199,7 +199,7 @@ public class ConfigMergeTests
     [Fact]
     public void ConcurrencyAndPool_FallbackToBuiltin_WhenNotConfigured()
     {
-        // 全局默认与环境级均未配置 → 回退内置默认（并发 8 / 等待 5 / 池 100 / 建连 15）
+        // 全局默认与环境级均未配置 → 回退内置默认（并发 10 / 等待 5 / 池 100 / 建连 60）
         var raw = new DatabasesConfig
         {
             Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
@@ -216,10 +216,10 @@ public class ConfigMergeTests
 
         ResolvedDatabase db = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["prod"];
 
-        Assert.Equal(8, db.MaxConcurrency);
+        Assert.Equal(10, db.MaxConcurrency);
         Assert.Equal(5, db.MaxConcurrencyWaitSeconds);
         Assert.Equal(100, db.MaxPoolSize);
-        Assert.Equal(15, db.ConnectTimeoutSeconds);
+        Assert.Equal(60, db.ConnectTimeoutSeconds);
     }
 
     [Fact]

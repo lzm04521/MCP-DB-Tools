@@ -14,7 +14,7 @@ public sealed class AdminConfigResponse
     [JsonPropertyName("defaultDisabledKeywordsByType")]
     public Dictionary<string, List<string>> DefaultDisabledKeywordsByType { get; init; } = new();
 
-    /// <summary>每环境最大并发查询数的全局默认值。0/未配置表示用内置默认 8。</summary>
+    /// <summary>每环境最大并发查询数的全局默认值。0/未配置表示用内置默认 10。</summary>
     [JsonPropertyName("defaultMaxConcurrency")]
     public int DefaultMaxConcurrency { get; init; }
 
@@ -26,7 +26,7 @@ public sealed class AdminConfigResponse
     [JsonPropertyName("defaultMaxPoolSize")]
     public int DefaultMaxPoolSize { get; init; }
 
-    /// <summary>建立连接超时秒数的全局默认值。0/未配置表示用内置默认 15。</summary>
+    /// <summary>建立连接超时秒数的全局默认值。0/未配置表示用内置默认 60。</summary>
     [JsonPropertyName("defaultConnectTimeoutSeconds")]
     public int DefaultConnectTimeoutSeconds { get; init; }
 
@@ -104,7 +104,7 @@ public sealed class AdminEnvironmentDto
     public int MaxRows { get; init; } = 1000;
 
     [JsonPropertyName("commandTimeout")]
-    public int CommandTimeout { get; init; } = 30;
+    public int CommandTimeout { get; init; } = 600;
 
     /// <summary>连接池上限。0 表示未配置，回退全局默认。</summary>
     [JsonPropertyName("maxPoolSize")]

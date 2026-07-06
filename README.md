@@ -258,11 +258,11 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
     "mysql": ["LOAD DATA", "FLUSH"],
     "oracle": ["FLASHBACK", "PURGE"]
   },
-  // 并发与连接池全局默认（缺省时用内置默认 8/5/100/15）
-  "defaultMaxConcurrency": 8,
+  // 并发与连接池全局默认（缺省时用内置默认 10/5/100/60）
+  "defaultMaxConcurrency": 10,
   "defaultMaxConcurrencyWaitSeconds": 5,
   "defaultMaxPoolSize": 100,
-  "defaultConnectTimeoutSeconds": 15,
+  "defaultConnectTimeoutSeconds": 60,
   // 运维清理（缺省时全部关闭，由 Admin UI「全局设置」维护）
   "maintenance": {
     "auditLogAutoCleanup": false,
@@ -281,10 +281,10 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
           "type": "sqlserver|mysql|oracle",
           "connectionString": "...",
           "maxRows": 1000,
-          "commandTimeout": 30,
-          "maxConcurrency": 8,           // 可选，覆盖全局（<=0 回退全局）
+          "commandTimeout": 600,
+          "maxConcurrency": 10,           // 可选，覆盖全局（<=0 回退全局）
           "maxPoolSize": 100,
-          "connectTimeoutSeconds": 15,
+          "connectTimeoutSeconds": 60,
           "disabledKeywords": []
         }
       }
@@ -311,10 +311,10 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 | 配置项 | 全局默认 key | 环境级覆盖 | 内置默认 |
 | ------ | ------------ | ---------- | -------- |
-| 每环境最大并发查询数 | `defaultMaxConcurrency` | `maxConcurrency` | 8 |
+| 每环境最大并发查询数 | `defaultMaxConcurrency` | `maxConcurrency` | 10 |
 | 超载排队最长等待秒数 | `defaultMaxConcurrencyWaitSeconds` | —（仅全局） | 5 |
 | 连接池上限 | `defaultMaxPoolSize` | `maxPoolSize` | 100 |
-| 建立连接超时秒数 | `defaultConnectTimeoutSeconds` | `connectTimeoutSeconds` | 15 |
+| 建立连接超时秒数 | `defaultConnectTimeoutSeconds` | `connectTimeoutSeconds` | 60 |
 
 - 每个 `(project, environment)` 独立并发闸门，慢库不拖累其它环境；超限排队，等待超时返回 `RATE_LIMITED`。
 - 连接池上限与建连超时按数据库类型拼接到连接串（如 SQL Server 的 `Max Pool Size` / `Connect Timeout`），并作为建连兜底超时。

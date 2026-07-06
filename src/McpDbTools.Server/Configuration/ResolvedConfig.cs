@@ -72,10 +72,10 @@ public sealed record ResolvedDatabase
 public static class ResolvedConfigBuilder
 {
     // 并发与连接池相关内置默认值（全局配置缺失时回退到此）
-    private const int DefaultMaxConcurrency = 8;
+    private const int DefaultMaxConcurrency = 10;
     private const int DefaultMaxConcurrencyWaitSeconds = 5;
     private const int DefaultMaxPoolSize = 100;
-    private const int DefaultConnectTimeoutSeconds = 15;
+    private const int DefaultConnectTimeoutSeconds = 60;
 
     public static ResolvedConfig Build(DatabasesConfig raw)
     {
@@ -133,7 +133,7 @@ public static class ResolvedConfigBuilder
                     Type = db.Type,
                     ConnectionString = finalConnectionString,
                     MaxRows = db.MaxRows <= 0 ? 1000 : db.MaxRows,
-                    CommandTimeout = db.CommandTimeout <= 0 ? 30 : db.CommandTimeout,
+                    CommandTimeout = db.CommandTimeout <= 0 ? 600 : db.CommandTimeout,
                     MaxPoolSize = maxPoolSize,
                     ConnectTimeoutSeconds = connectTimeout,
                     MaxConcurrency = maxConcurrency,

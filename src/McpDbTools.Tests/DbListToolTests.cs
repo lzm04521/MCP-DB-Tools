@@ -84,13 +84,13 @@ public class DbListToolTests : IDisposable
         Assert.Equal(10, testEnv.GetProperty("connectTimeoutSeconds").GetInt32());
         Assert.Equal(20, testEnv.GetProperty("commandTimeout").GetInt32());
 
-        // prod 环境：默认值回退（maxConcurrency/maxPoolSize/connectTimeoutSeconds 未配置 → 全局内置默认 8/100/15）
+        // prod 环境：默认值回退（maxConcurrency/maxPoolSize/connectTimeoutSeconds 未配置 → 全局内置默认 10/100/60）
         JsonElement prodEnv = envs.EnumerateArray().First(e => e.GetProperty("name").GetString() == "prod");
         Assert.Equal("sqlserver", prodEnv.GetProperty("type").GetString());
         Assert.True(prodEnv.GetProperty("isProduction").GetBoolean());
-        Assert.Equal(8, prodEnv.GetProperty("maxConcurrency").GetInt32());
+        Assert.Equal(10, prodEnv.GetProperty("maxConcurrency").GetInt32());
         Assert.Equal(100, prodEnv.GetProperty("maxPoolSize").GetInt32());
-        Assert.Equal(15, prodEnv.GetProperty("connectTimeoutSeconds").GetInt32());
+        Assert.Equal(60, prodEnv.GetProperty("connectTimeoutSeconds").GetInt32());
     }
 
     // ───────── 行为 3：传 project + environment（均存在）→ 单环境详情 ─────────

@@ -168,7 +168,7 @@
                     type="number"
                     min="0"
                     step="1"
-                    placeholder="留空用全局默认（8）"
+                    placeholder="留空用全局默认（10）"
                   />
                 </label>
                 <label>
@@ -188,7 +188,7 @@
                     type="number"
                     min="0"
                     step="1"
-                    placeholder="留空用全局默认（15）"
+                    placeholder="留空用全局默认（60）"
                   />
                 </label>
               </div>
@@ -243,6 +243,18 @@
     return refs;
   }
 
+  /**
+   * 统一的「Key(显示名)」展示文本。
+   * - 有 displayName：返回 `Key(DisplayName)`，二者均转义。
+   * - 无 displayName：只返回 Key，不加空括号。
+   * 用于左侧项目列表、环境 tabs、默认环境下拉，保证三处一致。
+   */
+  function formatKeyLabel(key, displayName, fallback = '未命名') {
+    const safeKey = window.adminUi.escapeHtml(key || fallback);
+    const name = displayName ? String(displayName).trim() : '';
+    return name ? `${safeKey}(${window.adminUi.escapeHtml(name)})` : safeKey;
+  }
+
   function activeProject() {
     return state.config?.projects[state.selectedProject] || null;
   }
@@ -294,7 +306,7 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `project-item${index === state.selectedProject ? ' active' : ''}`;
-      button.innerHTML = `<strong>${window.adminUi.escapeHtml(project.displayName || project.name || '未命名项目')}</strong><span>默认环境：${window.adminUi.escapeHtml(project.defaultEnvironment || '未设置')} · ${project.environments.length} 个环境</span>`;
+      button.innerHTML = `<strong>${formatKeyLabel(project.name, project.displayName, '未命名项目')}</strong><span>默认环境：${window.adminUi.escapeHtml(project.defaultEnvironment || '未设置')} · ${project.environments.length} 个环境</span>`;
       button.addEventListener('click', () => {
         syncFormToState();
         state.selectedProject = index;
@@ -323,7 +335,9 @@
     project.environments.forEach(env => {
       const option = document.createElement('option');
       option.value = env.name;
-      option.textContent = env.name;
+      // 显示「Key(显示名)」，与左侧/环境 tabs 保持一致
+      const name = env.displayName ? String(env.displayName).trim() : '';
+      option.textContent = name ? `${env.name}(${name})` : env.name;
       el.defaultEnvironment.appendChild(option);
     });
     el.defaultEnvironment.value = project.defaultEnvironment || '';
@@ -336,7 +350,7 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `env-tab${index === state.selectedEnvironment ? ' active' : ''}`;
-      button.innerHTML = `<strong>${window.adminUi.escapeHtml(env.displayName || env.name || '未命名环境')}${env.isProduction ? ' ⚠' : ''}</strong><span>${window.adminUi.escapeHtml(env.type)} · maxRows ${env.maxRows}</span>`;
+      button.innerHTML = `<strong>${formatKeyLabel(env.name, env.displayName, '未命名环境')}${env.isProduction ? ' ⚠' : ''}</strong><span>${window.adminUi.escapeHtml(env.type)} · maxRows ${env.maxRows}</span>`;
       button.addEventListener('click', () => {
         syncFormToState();
         state.selectedEnvironment = index;
@@ -368,7 +382,7 @@
     el.databaseType.value = env.type || 'sqlserver';
     el.isProduction.checked = Boolean(env.isProduction);
     el.maxRows.value = env.maxRows || 1000;
-    el.commandTimeout.value = env.commandTimeout || 30;
+    el.commandTimeout.value = env.commandTimeout || 600;
     el.maxConcurrency.value = env.maxConcurrency || '';
     el.maxPoolSize.value = env.maxPoolSize || '';
     el.connectTimeoutSeconds.value = env.connectTimeoutSeconds || '';
@@ -433,7 +447,7 @@
       type: 'sqlserver',
       connectionString: '',
       maxRows: 1000,
-      commandTimeout: 30,
+      commandTimeout: 600,
       // 并发/池默认 0 = 未配置，resolve 时回退全局默认
       maxConcurrency: 0,
       maxPoolSize: 0,

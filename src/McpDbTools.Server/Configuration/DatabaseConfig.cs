@@ -39,9 +39,9 @@ public sealed class DatabaseConfig
     [JsonPropertyName("maxRows")]
     public int MaxRows { get; init; } = 1000;
 
-    /// <summary>命令执行超时（秒），默认 30。</summary>
+    /// <summary>命令执行超时（秒），默认 600。</summary>
     [JsonPropertyName("commandTimeout")]
-    public int CommandTimeout { get; init; } = 30;
+    public int CommandTimeout { get; init; } = 600;
 
     /// <summary>
     /// 连接池上限。&lt;=0 表示未配置，回退到全局 defaultMaxPoolSize（内置默认 100）。
@@ -51,14 +51,14 @@ public sealed class DatabaseConfig
     public int MaxPoolSize { get; init; }
 
     /// <summary>
-    /// 建立连接的超时（秒）。&lt;=0 表示未配置，回退到全局 defaultConnectTimeoutSeconds（内置默认 15）。
+    /// 建立连接的超时（秒）。&lt;=0 表示未配置，回退到全局 defaultConnectTimeoutSeconds（内置默认 60）。
     /// 解析阶段拼接到各驱动的连接串；同时作为 ExecuteQueryAsync.OpenAsync 的 CTS 兜底超时。
     /// </summary>
     [JsonPropertyName("connectTimeoutSeconds")]
     public int ConnectTimeoutSeconds { get; init; }
 
     /// <summary>
-    /// 该环境最大并发查询数。&lt;=0 表示未配置，回退到全局 defaultMaxConcurrency（内置默认 8）。
+    /// 该环境最大并发查询数。&lt;=0 表示未配置，回退到全局 defaultMaxConcurrency（内置默认 10）。
     /// 由 QueryConcurrencyLimiter 在运行时强制。
     /// </summary>
     [JsonPropertyName("maxConcurrency")]
@@ -110,7 +110,7 @@ public sealed class DatabasesConfig
     [JsonPropertyName("defaultDisabledKeywordsByType")]
     public Dictionary<DatabaseType, List<string>>? DefaultDisabledKeywordsByType { get; init; }
 
-    /// <summary>每环境最大并发查询数的全局默认值。未配置时内置默认 8。</summary>
+    /// <summary>每环境最大并发查询数的全局默认值。未配置时内置默认 10。</summary>
     [JsonPropertyName("defaultMaxConcurrency")]
     public int? DefaultMaxConcurrency { get; init; }
 
@@ -122,7 +122,7 @@ public sealed class DatabasesConfig
     [JsonPropertyName("defaultMaxPoolSize")]
     public int? DefaultMaxPoolSize { get; init; }
 
-    /// <summary>建立连接超时秒数的全局默认值。未配置时内置默认 15。</summary>
+    /// <summary>建立连接超时秒数的全局默认值。未配置时内置默认 60。</summary>
     [JsonPropertyName("defaultConnectTimeoutSeconds")]
     public int? DefaultConnectTimeoutSeconds { get; init; }
 
