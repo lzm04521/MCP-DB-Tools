@@ -20,6 +20,10 @@ public sealed class MaintenanceSettingsResponse
 
     [JsonPropertyName("backupRetentionDays")]
     public int BackupRetentionDays { get; init; } = MaintenanceConfig.DefaultRetentionDays;
+
+    /// <summary>是否记录查询结果到审计子表。默认关闭。</summary>
+    [JsonPropertyName("auditRecordResults")]
+    public bool AuditRecordResults { get; init; }
 }
 
 /// <summary>全局设置页保存请求。天数校验：开关开启时必须 &gt; 0。</summary>
@@ -36,6 +40,10 @@ public sealed class MaintenanceSettingsRequest
 
     [JsonPropertyName("backupRetentionDays")]
     public int BackupRetentionDays { get; init; } = MaintenanceConfig.DefaultRetentionDays;
+
+    /// <summary>是否记录查询结果到审计子表。默认关闭。</summary>
+    [JsonPropertyName("auditRecordResults")]
+    public bool AuditRecordResults { get; init; }
 }
 
 /// <summary>手动清理审计日志结果（复用现有 /admin/api/audit-logs/cleanup 契约）。</summary>

@@ -92,13 +92,17 @@ public sealed class DbQueryTool
             return QueryResult.Fail(project, db.Type.ToString(), ex.Message, "RATE_LIMITED", environment: env).ToJson();
         }
 
-        // 6. 审计
-        _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, result.RowCount, result.ExecutionTimeMs, result.Success, result.Error));
+        // 6. 审计（开关开启且成功时，记录查询结果到子表）
+        MaintenanceConfig maintenance = _configStore.Current.Maintenance ?? MaintenanceConfig.Default;
+        string? resultJson = (maintenance.AuditRecordResults && result.Success)
+            ? AuditLogger.SerializeResult(result)
+            : null;
+        _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, result.RowCount, result.ExecutionTimeMs, result.Success, result.Error, resultJson));
 
         return result.ToJson();
     }
 
-    private static AuditEntry MakeEntry(string project, string environment, string dbType, string sql, int rowCount, long elapsedMs, bool success, string? error) => new()
+    private static AuditEntry MakeEntry(string project, string environment, string dbType, string sql, int rowCount, long elapsedMs, bool success, string? error, string? resultJson = null) => new()
     {
         Time = AuditLogger.NowUtcIso(),
         Project = project,
@@ -108,6 +112,7 @@ public sealed class DbQueryTool
         RowCount = rowCount,
         ElapsedMs = elapsedMs,
         Success = success,
-        Error = success ? null : error
+        Error = success ? null : error,
+        ResultJson = resultJson
     };
 }

@@ -1,9 +1,11 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using McpDbTools.Server.Configuration;
+using McpDbTools.Server.Database;
 
 namespace McpDbTools.Server.Audit;
 
@@ -23,6 +25,9 @@ public sealed record AuditEntry
     public long ElapsedMs { get; init; }
     public bool Success { get; init; }
     public string? Error { get; init; }
+
+    /// <summary>查询结果 JSON（{"columns":[...],"rows":[[...]]}）。null 表示不记录（开关关 / 失败查询）。</summary>
+    public string? ResultJson { get; init; }
 }
 
 /// <summary>
@@ -167,6 +172,24 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             command.Parameters.AddWithValue("@success", entry.Success ? 1 : 0);
             command.Parameters.AddWithValue("@error", (object?)entry.Error ?? DBNull.Value);
             command.ExecuteNonQuery();
+
+            // 主表写入成功后，若有结果 JSON，用同一连接写入子表（audit_id = 主表自增 id）。
+            // 子表写入失败不影响主表记录（主表已落盘）；失败由外层 catch 记日志，查询时 GetResultJson 返回 null。
+            if (!string.IsNullOrEmpty(entry.ResultJson))
+            {
+                // 用 SQL 取主表自增 id（Microsoft.Data.Sqlite 8 的 LastInsertRowId 属性在此 binding 不可直接访问）
+                long auditId;
+                using (var idCmd = connection.CreateCommand())
+                {
+                    idCmd.CommandText = "SELECT last_insert_rowid()";
+                    auditId = (long)idCmd.ExecuteScalar()!;
+                }
+                using var resultCmd = connection.CreateCommand();
+                resultCmd.CommandText = "INSERT OR REPLACE INTO audit_log_result(audit_id, result_json) VALUES (@auditId, @json)";
+                resultCmd.Parameters.AddWithValue("@auditId", auditId);
+                resultCmd.Parameters.AddWithValue("@json", entry.ResultJson);
+                resultCmd.ExecuteNonQuery();
+            }
         }
         catch (Exception ex)
         {
@@ -324,13 +347,29 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         string cutoff = DateTime.UtcNow.AddDays(-days)
             .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
         using var connection = OpenConnection();
+
+        // 先删子表（主表里仍存在且过期的 id 对应行）
+        using var resultCmd = connection.CreateCommand();
+        resultCmd.CommandText = "DELETE FROM audit_log_result WHERE audit_id IN (SELECT id FROM audit_log WHERE time < @cutoff)";
+        resultCmd.Parameters.AddWithValue("@cutoff", cutoff);
+        int resultDeleted = resultCmd.ExecuteNonQuery();
+
+        // 再删主表
         using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM audit_log WHERE time < @cutoff";
         command.Parameters.AddWithValue("@cutoff", cutoff);
         int deleted = command.ExecuteNonQuery();
-        if (deleted > 0)
+
+        // 孤儿兜底：清掉主表已不存在的子表行（幂等，清历史意外产生的孤儿）
+        using var orphanCmd = connection.CreateCommand();
+        orphanCmd.CommandText = "DELETE FROM audit_log_result WHERE audit_id NOT IN (SELECT id FROM audit_log)";
+        int orphanDeleted = orphanCmd.ExecuteNonQuery();
+
+        if (deleted > 0 || resultDeleted > 0 || orphanDeleted > 0)
         {
-            _logger.LogInformation("审计日志手动清理：删除 {Count} 条 {Days} 天前的记录", deleted, days);
+            _logger.LogInformation(
+                "审计日志清理：主表 {Main} 条、子表 {Result} 条、孤儿 {Orphan} 条（{Days} 天前）",
+                deleted, resultDeleted, orphanDeleted, days);
         }
         return deleted;
     }
@@ -371,6 +410,20 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                 using var indexProject = connection.CreateCommand();
                 indexProject.CommandText = "CREATE INDEX IF NOT EXISTS idx_audit_project ON audit_log(project)";
                 indexProject.ExecuteNonQuery();
+
+                // 查询结果子表（1:1 关联 audit_log.id）。建表幂等，新老库通吃，无需迁移框架。
+                using var resultTable = connection.CreateCommand();
+                resultTable.CommandText = """
+                    CREATE TABLE IF NOT EXISTS audit_log_result (
+                        audit_id    INTEGER PRIMARY KEY,
+                        result_json TEXT NOT NULL
+                    )
+                    """;
+                resultTable.ExecuteNonQuery();
+
+                using var indexResult = connection.CreateCommand();
+                indexResult.CommandText = "CREATE INDEX IF NOT EXISTS idx_audit_result_id ON audit_log_result(audit_id)";
+                indexResult.ExecuteNonQuery();
             }
             catch (Exception ex)
             {
@@ -395,6 +448,36 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
 
     /// <summary>构造 UTC ISO 8601 时间戳（避免在热路径反复构造格式化字符串）。</summary>
     public static string NowUtcIso() => DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// 把 QueryResult 序列化为 {"columns":[...],"rows":[[...]]} JSON。
+    /// <para>与 QueryResult.ToJson 保持一致的 options：CamelCase + 中文不转义，前端字段可对齐。</para>
+    /// </summary>
+    public static string SerializeResult(QueryResult r)
+    {
+        return JsonSerializer.Serialize(new { columns = r.Columns, rows = r.Rows }, SResultOptions);
+    }
+
+    private static readonly JsonSerializerOptions SResultOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    /// <summary>
+    /// 读取指定审计记录的查询结果 JSON。供 Admin 详情 API 懒加载使用。
+    /// <para>返回 null 表示子表无该记录（老记录、失败查询、或开关关闭时记录）。</para>
+    /// </summary>
+    public string? GetResultJson(long auditId)
+    {
+        EnsureInitialized();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT result_json FROM audit_log_result WHERE audit_id = @auditId";
+        command.Parameters.AddWithValue("@auditId", auditId);
+        object? raw = command.ExecuteScalar();
+        return raw == null ? null : (string)raw;
+    }
 
     /// <summary>
     /// 关闭写入队列并等待消费者排空，保证 Dispose 后审计已落盘。带 5 秒软超时。

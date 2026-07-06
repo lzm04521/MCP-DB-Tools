@@ -94,6 +94,120 @@ public class DbQueryToolTests : IDisposable
         Assert.Equal("prod", doc.RootElement.GetProperty("environment").GetString());
     }
 
+    /// <summary>Stub provider：返回预设的 QueryResult，用于验证审计是否记录结果（绕过真实数据库）。</summary>
+    private sealed class StubProvider : IDatabaseProvider
+    {
+        private readonly QueryResult _result;
+        public StubProvider(QueryResult result, DatabaseType type)
+        {
+            _result = result;
+            DatabaseType = type;
+        }
+        public DatabaseType DatabaseType { get; }
+        public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
+            => Task.FromResult(_result);
+        public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
+            => Task.FromResult<(bool, long, string?)>((true, 0, null));
+    }
+
+    /// <summary>构造带开关控制 + stub provider 的工具：switchOn 控制 AuditRecordResults。</summary>
+    private (DbQueryTool tool, AuditLogger audit) CreateToolWithSwitch(bool switchOn, QueryResult stubResult)
+    {
+        string configPath = Path.Combine(_tempDir, "config.json");
+        string maintenance = switchOn
+            ? "\"maintenance\":{\"auditRecordResults\":true}"
+            : "\"maintenance\":{\"auditRecordResults\":false}";
+        string json = "{\"databases\":{\"erp\":{\"defaultEnvironment\":\"prod\",\"environments\":{\"prod\":{\"type\":\"sqlserver\",\"connectionString\":\"cs\"}}}}," + maintenance + "}";
+        File.WriteAllText(configPath, json);
+
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
+        // stub provider 只挂 sqlserver 类型
+        var factory = new DatabaseProviderFactory(
+            new Dictionary<DatabaseType, IDatabaseProvider>
+            {
+                [DatabaseType.SqlServer] = new StubProvider(stubResult, DatabaseType.SqlServer)
+            });
+        return (new DbQueryTool(store, new SqlGuard(), factory, audit, new QueryConcurrencyLimiter()), audit);
+    }
+
+    [Fact]
+    public async Task DbQuery_LogsResult_WhenSwitchOn()
+    {
+        var stubOk = new QueryResult
+        {
+            Success = true,
+            Columns = new List<string> { "id", "name" },
+            Rows = new List<object?[]> { new object?[] { 1, "a" } },
+            RowCount = 1
+        };
+        var (tool, audit) = CreateToolWithSwitch(true, stubOk);
+        using (audit)
+        {
+            await tool.ExecuteQuery("erp", "SELECT id, name FROM t");
+            audit.Flush();
+
+            // 验证主表有记录 + 子表有 result_json
+            var page = audit.Query(new AuditLogQuery());
+            AuditEntry entry = Assert.Single(page.Items);
+            Assert.True(entry.Success);
+            string? resultJson = audit.GetResultJson(entry.Id);
+            Assert.NotNull(resultJson);
+            Assert.Contains("\"columns\"", resultJson);
+            Assert.Contains("\"rows\"", resultJson);
+            Assert.Contains("id", resultJson);
+        }
+    }
+
+    [Fact]
+    public async Task DbQuery_SkipsResult_WhenSwitchOff()
+    {
+        var stubOk = new QueryResult
+        {
+            Success = true,
+            Columns = new List<string> { "id" },
+            Rows = new List<object?[]> { new object?[] { 1 } },
+            RowCount = 1
+        };
+        var (tool, audit) = CreateToolWithSwitch(false, stubOk);
+        using (audit)
+        {
+            await tool.ExecuteQuery("erp", "SELECT id FROM t");
+            audit.Flush();
+
+            var page = audit.Query(new AuditLogQuery());
+            AuditEntry entry = Assert.Single(page.Items);
+            Assert.True(entry.Success);
+            // 开关关 → 子表无记录
+            Assert.Null(audit.GetResultJson(entry.Id));
+        }
+    }
+
+    [Fact]
+    public async Task DbQuery_SkipsResult_WhenFailed()
+    {
+        // 开关 on，但 provider 返回失败 → 不记录结果
+        var stubFail = new QueryResult
+        {
+            Success = false,
+            Error = "boom",
+            ErrorCode = "X"
+        };
+        var (tool, audit) = CreateToolWithSwitch(true, stubFail);
+        using (audit)
+        {
+            await tool.ExecuteQuery("erp", "SELECT 1");
+            audit.Flush();
+
+            var page = audit.Query(new AuditLogQuery());
+            AuditEntry entry = Assert.Single(page.Items);
+            Assert.False(entry.Success);
+            Assert.Null(audit.GetResultJson(entry.Id));
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }

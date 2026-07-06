@@ -1,4 +1,7 @@
+using System.Runtime.CompilerServices;
 using McpDbTools.Server.Configuration;
+
+[assembly: InternalsVisibleTo("McpDbTools.Tests")]
 
 namespace McpDbTools.Server.Database;
 
@@ -18,6 +21,12 @@ public sealed class DatabaseProviderFactory
             [DatabaseType.MySql] = new MySqlProvider(),
             [DatabaseType.Oracle] = new OracleProvider()
         };
+    }
+
+    /// <summary>测试用：允许注入 stub provider，绕过真实数据库连接。</summary>
+    internal DatabaseProviderFactory(IReadOnlyDictionary<DatabaseType, IDatabaseProvider> providers)
+    {
+        _providers = providers;
     }
 
     /// <summary>按数据库类型获取提供者。未知类型抛异常（错误必须暴露）。</summary>

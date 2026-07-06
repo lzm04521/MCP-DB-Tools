@@ -105,3 +105,6 @@ $RECYCLE.BIN/
 *.7z
 
 CLAUDE.md
+
+docs/*
+doc/*

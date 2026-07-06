@@ -29,6 +29,10 @@ public sealed class MaintenanceConfig
     [JsonPropertyName("backupRetentionDays")]
     public int BackupRetentionDays { get; init; } = DefaultRetentionDays;
 
+    /// <summary>是否记录查询结果到 audit_log_result 子表。默认关闭。开启后请关注 audit.db 体积。</summary>
+    [JsonPropertyName("auditRecordResults")]
+    public bool AuditRecordResults { get; init; }
+
     /// <summary>返回内置默认配置（全部关闭、保留 30 天），供 maintenance 节点缺失时回退。</summary>
     public static MaintenanceConfig Default => new();
 }

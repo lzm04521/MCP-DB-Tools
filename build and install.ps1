@@ -440,10 +440,40 @@ if ($useScheduledTask) {
 }
 Stop-ProcessesByExecutablePath -ExecutablePath $exePath
 
+# 发布前清理安装目录:全量替换,避免旧版本文件残留与新版本混存
+# (dotnet publish 是覆盖语义,不会删除旧文件;旧 dll/exe/wwwroot 可能残留导致加载到错误版本)
+# 保留:config.json(用户配置)、audit.db* / *.db(审计数据)、backups/(备份目录)
 $configBackupPath = $null
 if (Test-Path $configPath) {
     $configBackupPath = Join-Path ([System.IO.Path]::GetTempPath()) ("McpDbTools.config.{0}.json" -f [guid]::NewGuid())
     Copy-Item -Path $configPath -Destination $configBackupPath -Force
+}
+
+# 把 audit.db*、backups 目录也暂存到临时区,清理后还原(避免审计历史与备份丢失)
+$dataBackupRoot = $null
+$dataFilesToKeep = @()
+Get-ChildItem -Path $installDirFull -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like "audit.db*" -or $_.Name -like "*.db" } |
+    ForEach-Object { $dataFilesToKeep += $_.FullName }
+$dataDirToKeep = Join-Path $installDirFull "backups"
+$hasBackupsDir = Test-Path $dataDirToKeep
+
+if ($dataFilesToKeep.Count -gt 0 -or $hasBackupsDir) {
+    $dataBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("McpDbTools.data.{0}" -f [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $dataBackupRoot -Force | Out-Null
+    foreach ($dbFile in $dataFilesToKeep) {
+        Copy-Item -Path $dbFile -Destination $dataBackupRoot -Force
+    }
+    if ($hasBackupsDir) {
+        Copy-Item -Path $dataDirToKeep -Destination $dataBackupRoot -Recurse -Force
+    }
+}
+
+# 清空安装目录下除 config.json 外的所有内容
+Get-ChildItem -Path $installDirFull -Force -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.Name -ne "config.json") {
+        Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 try {
@@ -463,10 +493,24 @@ try {
     if ($configBackupPath) {
         Copy-Item -Path $configBackupPath -Destination $configPath -Force
     }
+    if ($dataBackupRoot) {
+        # 还原 audit.db* / *.db
+        Get-ChildItem -Path $dataBackupRoot -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "audit.db*" -or $_.Name -like "*.db" } |
+            ForEach-Object { Copy-Item -Path $_.FullName -Destination $installDirFull -Force }
+        # 还原 backups 目录
+        $backedUpBackups = Join-Path $dataBackupRoot "backups"
+        if (Test-Path $backedUpBackups) {
+            Copy-Item -Path $backedUpBackups -Destination $installDirFull -Recurse -Force
+        }
+    }
 }
 finally {
     if ($configBackupPath -and (Test-Path $configBackupPath)) {
         Remove-Item -Path $configBackupPath -Force
+    }
+    if ($dataBackupRoot -and (Test-Path $dataBackupRoot)) {
+        Remove-Item -Path $dataBackupRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

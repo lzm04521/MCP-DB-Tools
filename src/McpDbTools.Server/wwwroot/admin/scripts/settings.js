@@ -40,6 +40,14 @@
             </label>
           </div>
 
+          <div class="settings-row">
+            <label class="switch-row">
+              <input id="auditRecordResults" type="checkbox" />
+              <span>记录查询结果</span>
+            </label>
+            <p class="muted hint-inline">关闭时仅记录行数；开启后同时保存完整查询结果到子表，结果集可能很大，请关注 audit.db 体积。</p>
+          </div>
+
           <div class="manual-cleanup">
             <span class="manual-cleanup__label">手动清理</span>
             <select id="auditCleanupDays">
@@ -83,7 +91,7 @@
 
   function collectElements(root) {
     const ids = [
-      'auditLogAutoCleanup', 'auditLogRetentionDays', 'auditCleanupDays', 'auditCleanupBtn',
+      'auditLogAutoCleanup', 'auditLogRetentionDays', 'auditRecordResults', 'auditCleanupDays', 'auditCleanupBtn',
       'backupAutoCleanup', 'backupRetentionDays', 'backupCleanupDays', 'backupCleanupBtn'
     ];
     const refs = {};
@@ -113,6 +121,7 @@
     }
     el.auditLogAutoCleanup.checked = Boolean(state.settings.auditLogAutoCleanup);
     el.auditLogRetentionDays.value = state.settings.auditLogRetentionDays || 30;
+    el.auditRecordResults.checked = Boolean(state.settings.auditRecordResults);
     el.backupAutoCleanup.checked = Boolean(state.settings.backupAutoCleanup);
     el.backupRetentionDays.value = state.settings.backupRetentionDays || 30;
     updateRetentionDisabled();
@@ -131,6 +140,7 @@
     }
     state.settings.auditLogAutoCleanup = el.auditLogAutoCleanup.checked;
     state.settings.auditLogRetentionDays = Number(el.auditLogRetentionDays.value) || 30;
+    state.settings.auditRecordResults = el.auditRecordResults.checked;
     state.settings.backupAutoCleanup = el.backupAutoCleanup.checked;
     state.settings.backupRetentionDays = Number(el.backupRetentionDays.value) || 30;
   }
@@ -153,6 +163,7 @@
         body: JSON.stringify({
           auditLogAutoCleanup: state.settings.auditLogAutoCleanup,
           auditLogRetentionDays: state.settings.auditLogRetentionDays,
+          auditRecordResults: state.settings.auditRecordResults,
           backupAutoCleanup: state.settings.backupAutoCleanup,
           backupRetentionDays: state.settings.backupRetentionDays
         })

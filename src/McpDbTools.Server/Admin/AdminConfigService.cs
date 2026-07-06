@@ -488,7 +488,8 @@ public sealed class AdminConfigService
                 AuditLogAutoCleanup = request.AuditLogAutoCleanup,
                 AuditLogRetentionDays = NormalizeRetentionDays(request.AuditLogRetentionDays),
                 BackupAutoCleanup = request.BackupAutoCleanup,
-                BackupRetentionDays = NormalizeRetentionDays(request.BackupRetentionDays)
+                BackupRetentionDays = NormalizeRetentionDays(request.BackupRetentionDays),
+                AuditRecordResults = request.AuditRecordResults
             },
             Projects = current.Projects
         };
@@ -514,7 +515,8 @@ public sealed class AdminConfigService
         AuditLogAutoCleanup = m.AuditLogAutoCleanup,
         AuditLogRetentionDays = m.AuditLogRetentionDays > 0 ? m.AuditLogRetentionDays : MaintenanceConfig.DefaultRetentionDays,
         BackupAutoCleanup = m.BackupAutoCleanup,
-        BackupRetentionDays = m.BackupRetentionDays > 0 ? m.BackupRetentionDays : MaintenanceConfig.DefaultRetentionDays
+        BackupRetentionDays = m.BackupRetentionDays > 0 ? m.BackupRetentionDays : MaintenanceConfig.DefaultRetentionDays,
+        AuditRecordResults = m.AuditRecordResults
     };
 
     // ============ 备份自动清理（供 MaintenanceHostedService 调用）============

@@ -1,5 +1,6 @@
 using McpDbTools.Server.Audit;
 using McpDbTools.Server.Configuration;
+using McpDbTools.Server.Database;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -260,6 +261,124 @@ public class AuditLoggerTests : IDisposable
         Success = success,
         Error = success ? null : error
     };
+
+    /// <summary>构造带 ResultJson 的成功 AuditEntry，专供子表写入测试。</summary>
+    private static AuditEntry MakeEntryWithResult(string sql, string resultJson, string? time = null) => new()
+    {
+        Time = time ?? AuditLogger.NowUtcIso(),
+        Project = "p",
+        Environment = "prod",
+        DatabaseType = "SqlServer",
+        Sql = sql,
+        RowCount = 3,
+        ElapsedMs = 10,
+        Success = true,
+        ResultJson = resultJson
+    };
+
+    // ============ 查询结果记录（audit_log_result 子表）============
+
+    [Fact]
+    public void SerializeResult_ProducesExpectedShape()
+    {
+        // columns + rows(含 null，模拟 provider 读取时已把 DBNull 转为 null 的真实路径)
+        // → JSON 结构正确，字段名 camelCase，null 保持 JSON null
+        var result = new QueryResult
+        {
+            Columns = new List<string> { "a", "b" },
+            Rows = new List<object?[]> { new object?[] { 1, null } }
+        };
+        string json = AuditLogger.SerializeResult(result);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        Assert.Equal("a", root.GetProperty("columns")[0].GetString());
+        Assert.Equal("b", root.GetProperty("columns")[1].GetString());
+        Assert.Equal(1, root.GetProperty("rows")[0][0].GetInt32());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("rows")[0][1].ValueKind);
+    }
+
+    [Fact]
+    public void Log_WritesResultJson_WhenProvided()
+    {
+        var (store, logger, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntryWithResult("SELECT 1", "{\"columns\":[\"x\"],\"rows\":[]}"));
+            logger.Flush();
+        }
+
+        // 经 Query 拿到 id，再经 GetResultJson 验证子表落盘
+        var page = logger.Query(new AuditLogQuery());
+        AuditEntry entry = Assert.Single(page.Items);
+        Assert.Equal("{\"columns\":[\"x\"],\"rows\":[]}", logger.GetResultJson(entry.Id));
+    }
+
+    [Fact]
+    public void Log_SkipsResultTable_WhenResultJsonNull()
+    {
+        var (store, logger, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));   // MakeEntry 不带 ResultJson → null
+            logger.Flush();
+        }
+
+        var page = logger.Query(new AuditLogQuery());
+        AuditEntry entry = Assert.Single(page.Items);
+        // 子表无该记录 → GetResultJson 返回 null
+        Assert.Null(logger.GetResultJson(entry.Id));
+    }
+
+    [Fact]
+    public void GetResultJson_ReturnsJson_WhenExists()
+    {
+        var (store, logger, _) = Create();
+        const string payload = "{\"columns\":[\"id\"],\"rows\":[[1],[2]]}";
+        using (store)
+        {
+            logger.Log(MakeEntryWithResult("SELECT id FROM t", payload));
+            logger.Flush();
+        }
+
+        long id = logger.Query(new AuditLogQuery()).Items[0].Id;
+        // 逐字节相等
+        Assert.Equal(payload, logger.GetResultJson(id));
+    }
+
+    [Fact]
+    public void GetResultJson_ReturnsNull_WhenMissing()
+    {
+        var (store, logger, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));
+            logger.Flush();
+        }
+
+        // 老/未写入场景：返回 null（老记录、失败查询、开关关）
+        Assert.Null(logger.GetResultJson(99999L));
+    }
+
+    [Fact]
+    public void DeleteOlderThan_RemovesBothTables_NoOrphans()
+    {
+        var (store, logger, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntryWithResult("old", "{\"columns\":[],\"rows\":[]}", time: Iso(10)));
+            logger.Log(MakeEntryWithResult("new", "{\"columns\":[],\"rows\":[]}", time: Iso(1)));
+            logger.Flush();
+
+            int deleted = logger.DeleteOlderThan(5);
+            Assert.Equal(1, deleted);
+
+            var after = logger.Query(new AuditLogQuery { PageSize = 100 });
+            Assert.Equal(1, after.Total);
+            Assert.Equal("new", after.Items[0].Sql);
+            // new 的子表数据应保留
+            Assert.Equal("{\"columns\":[],\"rows\":[]}", logger.GetResultJson(after.Items[0].Id));
+        }
+    }
 
     public void Dispose()
     {

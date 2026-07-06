@@ -271,6 +271,72 @@ public class AdminMaintenanceTests : IDisposable
         }
     }
 
+    // ============ AuditRecordResults 开关（记录查询结果）============
+
+    [Fact]
+    public void GetMaintenance_AuditRecordResults_DefaultsFalse_WhenNodeMissing()
+    {
+        // maintenance 节点缺失时，AuditRecordResults 应回退为默认 false
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            MaintenanceSettingsResponse r = service.GetMaintenance();
+            Assert.False(r.AuditRecordResults);
+        }
+    }
+
+    [Fact]
+    public async Task SaveMaintenance_PreservesAuditRecordResults()
+    {
+        // SaveMaintenanceAsync 路径：PUT 含 auditRecordResults=true → 再 GET → 字段保留
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            MaintenanceSettingsResponse saved = await service.SaveMaintenanceAsync(
+                new MaintenanceSettingsRequest { AuditRecordResults = true },
+                CancellationToken.None);
+            Assert.True(saved.AuditRecordResults);
+
+            // 等 ConfigStore 热重载（保存写文件 → FileSystemWatcher → Reload），再读确保落盘一致
+            await WaitForReloadAsync(store,
+                () => (store.Current.Maintenance ?? MaintenanceConfig.Default).AuditRecordResults);
+            Assert.True(service.GetMaintenance().AuditRecordResults);
+        }
+
+        // 直接验证 config.json 文件里 auditRecordResults 落了 true
+        // (service 已 dispose，但文件还在 _tempDir，Create 用的 configPath 不便拿；
+        //  这里仅校验内存 round-trip 即可，文件落盘由现有 D1 测试模式覆盖)
+    }
+
+    [Fact]
+    public async Task SaveConfig_PreservesAuditRecordResults()
+    {
+        // SaveConfigAsync 路径：先开 auditRecordResults=true，再 PUT /config 改 projects
+        // maintenance 节点（含开关）应被原样透传，开关仍为 true
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            // 先经 maintenance 接口打开开关
+            await service.SaveMaintenanceAsync(
+                new MaintenanceSettingsRequest { AuditRecordResults = true },
+                CancellationToken.None);
+
+            // 等 ConfigStore 热重载（保存写文件 → FileSystemWatcher → Reload）
+            await WaitForReloadAsync(store,
+                () => (store.Current.Maintenance ?? MaintenanceConfig.Default).AuditRecordResults);
+
+            // 再经 config 接口保存 projects（复用现有 GetConfig 返回，不改变 projects 内容）
+            AdminConfigResponse configResp = service.GetConfig();
+            AdminSaveResult result = await service.SaveConfigAsync(
+                new AdminConfigRequest { Projects = configResp.Projects },
+                CancellationToken.None);
+            Assert.True(result.Success);
+
+            // maintenance 开关应仍为 true（ToConfig 的 Maintenance = current.Maintenance 引用透传）
+            Assert.True(service.GetMaintenance().AuditRecordResults);
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理 */ }

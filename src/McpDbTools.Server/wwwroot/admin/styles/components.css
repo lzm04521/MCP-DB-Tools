@@ -544,8 +544,22 @@ input[readonly] {
 
 /* ============ SQL 详情弹窗 ============ */
 .sql-dialog {
-  width: min(820px, calc(100vw - 32px));
+  width: min(1200px, calc(100vw - 32px));
   max-height: calc(100dvh - 64px);
+}
+
+/* 仅在打开时启用 flex 列布局:
+   不能直接给 .sql-dialog 设 display:flex,否则会覆盖 <dialog> 默认的
+   :not([open]){display:none},导致关闭后弹窗仍然可见、点关闭无效。 */
+.sql-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.sql-dialog[open] > form {
+  min-width: 0;   /* flex 子项默认 min-width:auto,会被内容撑开;显式归 0 切断撑开传播 */
+  display: flex;
+  flex-direction: column;
 }
 
 .sql-content {
@@ -562,6 +576,107 @@ input[readonly] {
   max-height: 60vh;
   overflow: auto;
   user-select: all;
+}
+
+/* ============ 审计弹窗：查询结果区 ============ */
+.result-section {
+  min-width: 0;   /* flex 子项:切断内部 max-content 表格向上撑开传播 */
+  margin-top: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+/* 标题「查询结果」:左边主题色条 + 加粗强调,与正文 SQL 区形成视觉层次 */
+.result-title {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-accent);
+}
+
+.result-title::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  margin-right: 8px;
+  background: var(--color-accent);
+  border-radius: 2px;
+}
+
+.result-status {
+  color: var(--color-subtle);
+  font-size: 12px;
+}
+
+.result-table-wrap {
+  max-height: 60vh;
+  /* 固定为容器宽度,不被内部 max-content 表格撑开;
+     width:100% + display:block 配合 table 的 width:max-content 触发横向滚动。 */
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.result-table {
+  /* 列少时填满容器(min-width:100%),列多或内容宽时按内容撑开(width:max-content),
+     由 .result-table-wrap 的 overflow:auto 提供横向滚动。 */
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.result-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f1f5f9;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.result-table tbody td {
+  padding: 4px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;   /* 宽内容自然撑宽列,不截断;hover 看 title 全文 */
+}
+
+.result-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.result-table td.row-num {
+  color: var(--color-subtle);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  width: 3rem;
+}
+
+.result-table td.null-cell {
+  color: var(--color-subtle);
+  font-style: italic;
+}
+
+.result-table td.cell-long {
+  /* 标记长文本单元格,hover 有 title 看全;不强制换行,保持自然撑列 + 横向滚动的自适应行为 */
+  cursor: help;
+}
+
+.hint-inline {
+  margin: 0;
+  font-size: 12px;
 }
 
 /* ============ 全局设置页（紧凑布局） ============ */

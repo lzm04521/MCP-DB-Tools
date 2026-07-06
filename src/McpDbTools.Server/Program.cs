@@ -158,6 +158,16 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
         return Results.Ok(audit.Query(query));
     });
 
+    // 审计日志查询结果（懒加载）：按主表 id 拉取子表 result_json。
+    // 子表无数据（老记录/失败查询/开关关闭时记录）返回 404。
+    api.MapGet("/audit-logs/{id:long}/result", (long id, AuditLogger audit) =>
+    {
+        string? json = audit.GetResultJson(id);
+        return json is null
+            ? Results.NotFound()
+            : Results.Ok(new { resultJson = json });
+    });
+
     // 审计日志清理：删除指定天数前的记录。days 取 30/60/90 等，由调用方传。
     api.MapPost("/audit-logs/cleanup", (AuditLogger audit, RestoreBackupRequest request) =>
     {

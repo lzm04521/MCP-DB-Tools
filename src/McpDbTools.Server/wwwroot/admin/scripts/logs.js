@@ -17,6 +17,7 @@
     config: null
   };
   let el = null; // mount 后填充
+  let resultLoadToken = 0; // 查询结果懒加载的竞态 token（每次 openSqlDetail 自增，过期响应丢弃）
 
   function template() {
     return `
@@ -112,6 +113,15 @@
             <button id="copySqlBtn" type="button" class="button secondary">复制</button>
           </div>
           <pre id="sqlDialogContent" class="sql-content"></pre>
+          <div id="resultSection" class="result-section" hidden>
+            <div class="result-header">
+              <span class="result-title">查询结果</span>
+              <span id="resultStatus" class="result-status"></span>
+            </div>
+            <div class="result-table-wrap">
+              <table id="resultTable" class="result-table"></table>
+            </div>
+          </div>
           <div class="dialog-actions">
             <button value="close" type="submit" class="button secondary">关闭</button>
           </div>
@@ -126,7 +136,8 @@
       'filterFromTime', 'filterToTime', 'filterSqlContains',
       'searchBtn', 'resetBtn', 'refreshBtn',
       'resultMeta', 'auditBody', 'pager',
-      'sqlDialog', 'sqlDialogTitle', 'sqlDialogContent', 'copySqlBtn'
+      'sqlDialog', 'sqlDialogTitle', 'sqlDialogContent', 'copySqlBtn',
+      'resultSection', 'resultStatus', 'resultTable'
     ];
     const refs = {};
     for (const id of ids) {
@@ -323,10 +334,10 @@
       <td class="cell-error"><span class="error-preview">${errorPreview ? window.adminUi.escapeHtml(errorPreview) : ''}</span></td>
     `;
 
-    // 点击 SQL 单元格弹出完整 SQL，便于查看与复制
+    // 点击 SQL 单元格弹出完整 SQL + 查询结果（懒加载）
     if (entry.sql) {
       const sqlCell = tr.querySelector('.cell-sql');
-      sqlCell.addEventListener('click', () => openText('查询语句', entry.sql));
+      sqlCell.addEventListener('click', () => openSqlDetail(entry));
       sqlCell.classList.add('clickable');
     }
     // 点击错误单元格弹出完整错误信息（长文本友好查看）
@@ -396,9 +407,105 @@
 
   /** 通用文本弹窗：展示标题 + 完整文本，供 SQL 与错误信息复用，便于查看与复制。 */
   function openText(title, text) {
+    el.resultSection.hidden = true;          // 错误点击路径：不露出结果区
     el.sqlDialogTitle.textContent = title || '详情';
     el.sqlDialogContent.textContent = text || '';
     el.sqlDialog.showModal();
+  }
+
+  /** 打开 SQL 详情弹窗并懒加载查询结果。entry.success 为布尔。 */
+  function openSqlDetail(entry) {
+    // 清空上一次残留（表格/状态/显隐）
+    el.resultTable.innerHTML = '';
+    el.resultStatus.textContent = '';
+    el.resultSection.hidden = true;
+
+    el.sqlDialogTitle.textContent = '查询语句';
+    el.sqlDialogContent.textContent = entry.sql || '';
+    el.sqlDialog.showModal();
+
+    if (entry.success !== true) {
+      // 失败查询：不加载结果
+      return;
+    }
+
+    el.resultSection.hidden = false;
+    el.resultStatus.textContent = '加载中…';
+    const myToken = ++resultLoadToken;
+    loadResult(entry.id, myToken);
+  }
+
+  /** 拉取 result_json 并渲染表格。myToken 用于竞态保护（过期响应丢弃）。 */
+  async function loadResult(auditId, myToken) {
+    let data;
+    try {
+      data = await window.adminApi.requestJson(`/admin/api/audit-logs/${auditId}/result`);
+    } catch (err) {
+      if (myToken !== resultLoadToken) return;   // 已被新请求取代
+      if (err && err.status === 404) {
+        el.resultStatus.textContent = '该记录无查询结果（老记录或未开启结果记录）';
+      } else {
+        el.resultStatus.textContent = '加载失败';
+      }
+      return;
+    }
+    if (myToken !== resultLoadToken) return;     // 已被新请求取代
+
+    let parsed;
+    try {
+      parsed = JSON.parse(data.resultJson);
+    } catch {
+      el.resultStatus.textContent = '结果解析失败';
+      return;
+    }
+    renderResultTable(parsed);
+    el.resultStatus.textContent = `共 ${parsed.rows.length} 行`;
+  }
+
+  /** 渲染结果表格：行号列 + columns 表头 + rows 表体。 */
+  function renderResultTable(data) {
+    const table = el.resultTable;
+    table.innerHTML = '';
+
+    const thead = document.createElement('thead');
+    const headTr = document.createElement('tr');
+    const numTh = document.createElement('th');
+    numTh.textContent = '#';
+    headTr.appendChild(numTh);
+    for (const col of data.columns) {
+      const th = document.createElement('th');
+      th.textContent = col;
+      headTr.appendChild(th);
+    }
+    thead.appendChild(headTr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    let idx = 1;
+    for (const row of data.rows) {
+      const tr = document.createElement('tr');
+      const numTd = document.createElement('td');
+      numTd.className = 'row-num';
+      numTd.textContent = String(idx++);
+      tr.appendChild(numTd);
+      for (const val of row) {
+        const td = document.createElement('td');
+        if (val === null || val === undefined) {
+          td.className = 'null-cell';
+          td.textContent = 'NULL';
+        } else {
+          const s = String(val);
+          td.textContent = s;
+          td.title = s;
+          if (s.length > 50) {
+            td.classList.add('cell-long');
+          }
+        }
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
   }
 
   async function copySql() {
@@ -436,6 +543,13 @@
     el.resetBtn.addEventListener('click', resetFilters);
     el.refreshBtn.addEventListener('click', () => search(false));
     el.copySqlBtn.addEventListener('click', copySql);
+
+    // 弹窗关闭后（点关闭 / ESC）清空结果区，避免下次打开残留
+    el.sqlDialog.addEventListener('close', () => {
+      el.resultTable.innerHTML = '';
+      el.resultStatus.textContent = '';
+      el.resultSection.hidden = true;
+    });
 
     // 项目联动：选中项目后环境下拉只列该项目下的环境
     el.filterProject.addEventListener('change', onProjectChange);
