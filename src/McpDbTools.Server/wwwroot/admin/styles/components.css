@@ -558,8 +558,20 @@ input[readonly] {
 
 .sql-dialog[open] > form {
   min-width: 0;   /* flex 子项默认 min-width:auto,会被内容撑开;显式归 0 切断撑开传播 */
+  min-height: 0;  /* 切断垂直撑开传播,让 form 高度被 dialog 的 max-height 钳制 */
   display: flex;
   flex-direction: column;
+  /* 注意:此处不能加 overflow:hidden。
+     form 的子项(.card-title 内的复制按钮)在 hover 时有 transform:translateY(-1px),
+     会瞬时超出 form 顶/右边界 1px;若 form 设 overflow:hidden 会裁掉按钮边缘,
+     视觉上表现为「按钮被弹窗边框遮挡」。高度约束改由 dialog 的 max-height +
+     各滚动区(.sql-content/.result-table-wrap)的 overflow:auto 承担。 */
+}
+
+/* 标题行 + 关闭按钮行固定不收缩,始终可见 */
+.sql-dialog[open] > form > .card-title,
+.sql-dialog[open] > form > .dialog-actions {
+  flex-shrink: 0;
 }
 
 .sql-content {
@@ -573,17 +585,24 @@ input[readonly] {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 60vh;
+  max-height: 40vh;  /* 固定上限,给下方结果区留出可见空间;超长内部滚动 */
   overflow: auto;
   user-select: all;
+  flex-shrink: 0;   /* 不被压缩,保持自身的 max-height 上限 */
 }
 
 /* ============ 审计弹窗：查询结果区 ============ */
 .result-section {
   min-width: 0;   /* flex 子项:切断内部 max-content 表格向上撑开传播 */
+  min-height: 0;  /* 切断垂直撑开传播,允许内部 table-wrap 滚动而非撑高弹窗 */
   margin-top: 16px;
   border-top: 1px solid var(--color-border);
   padding-top: 12px;
+  /* 弹性填充弹窗剩余高度:SQL 区固定后,结果区吃掉剩余空间 */
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .result-header {
@@ -592,6 +611,7 @@ input[readonly] {
   align-items: center;
   margin-bottom: 8px;
   font-size: 13px;
+  flex-shrink: 0;   /* 表头固定,长结果在下方 wrap 内滚动 */
 }
 
 /* 标题「查询结果」:左边主题色条 + 加粗强调,与正文 SQL 区形成视觉层次 */
@@ -619,7 +639,10 @@ input[readonly] {
 }
 
 .result-table-wrap {
-  max-height: 60vh;
+  /* 吃掉 result-section 剩余高度,内部表格超长在此滚动,不向上撑高弹窗 */
+  flex: 1 1 auto;
+  min-height: 80px;     /* 给一个最小可见高度,避免结果极少时表格被挤没 */
+  max-height: 40vh;     /* 兜底上限,极端长结果也不会独占整个弹窗高度 */
   /* 固定为容器宽度,不被内部 max-content 表格撑开;
      width:100% + display:block 配合 table 的 width:max-content 触发横向滚动。 */
   width: 100%;
