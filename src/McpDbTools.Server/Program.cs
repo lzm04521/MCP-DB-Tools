@@ -248,10 +248,14 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
 
 static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration)
 {
-    // 配置：默认读取程序目录 config.json，可通过环境变量 ConfigStore__ConfigPath 或 appsettings.json 覆盖
+    // 配置：数据目录由 DataDirectoryResolver 集中解析，统一确定 config.json / audit.db / backups 位置。
+    // 解析优先级：环境变量 ConfigStore__ConfigPath > %USERPROFILE%\.mcpdbtools > exe 同目录。
+    // 这样无论以何种账户（当前用户 / LocalSystem）启动，程序自身都能定位到一致的数据目录，
+    // 不依赖外部脚本配置环境变量。
     services.Configure<ConfigStoreOptions>(options =>
     {
-        options.ConfigPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        string dataDir = DataDirectoryResolver.Resolve();
+        options.ConfigPath = Path.Combine(dataDir, "config.json");
     });
     services.Configure<ConfigStoreOptions>(configuration.GetSection("ConfigStore"));
 

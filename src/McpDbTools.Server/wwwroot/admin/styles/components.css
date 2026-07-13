@@ -605,6 +605,12 @@ input[readonly] {
   overflow: hidden;
 }
 
+/* 显式 display:flex 会覆盖 [hidden] 的 UA 默认 display:none,导致 hidden 属性失效;
+   错误信息弹窗和失败查询路径依赖 hidden 隐藏结果区,此处补回优先级。 */
+.result-section[hidden] {
+  display: none;
+}
+
 .result-header {
   display: flex;
   justify-content: space-between;

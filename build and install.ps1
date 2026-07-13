@@ -6,7 +6,13 @@ param(
     [string]$McpScope = "user",
     [string]$AdminServiceName = "McpDbTools.Admin",
     [string]$AdminTaskName = "McpDbTools.Admin",
-    [switch]$PauseOnExit
+    [switch]$PauseOnExit,
+    # 以下参数由提权前的交互式询问结果填充，提权后跳过对应询问
+    [switch]$Confirmed,
+    [int]$AdminPortParam = 0,
+    # UseScheduledTaskParam: "yes" / "no" / "ask"（ask 表示未决定，需要交互询问）
+    [ValidateSet("yes", "no", "ask")]
+    [string]$UseScheduledTaskParam = "ask"
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,7 +70,8 @@ function Restart-AsAdministrator {
         [Parameter(Mandatory = $true)]
         [string]$ScriptPath,
         [Parameter(Mandatory = $true)]
-        [string]$WorkingDirectory
+        [string]$WorkingDirectory,
+        [hashtable]$Choices = @{}
     )
 
     if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
@@ -84,8 +91,18 @@ function Restart-AsAdministrator {
         (ConvertTo-PowerShellLiteral $AdminServiceName),
         "-AdminTaskName",
         (ConvertTo-PowerShellLiteral $AdminTaskName),
+        "-Confirmed",
         "-PauseOnExit"
     )
+
+    # 把提权前的交互式选择透传给提权后的进程，避免重复询问
+    if ($Choices.ContainsKey("AdminPort") -and $Choices.AdminPort -gt 0) {
+        $commandParts += @("-AdminPortParam", ($Choices.AdminPort.ToString()))
+    }
+    if ($Choices.ContainsKey("UseScheduledTask")) {
+        $commandParts += @("-UseScheduledTaskParam", (ConvertTo-PowerShellLiteral $Choices.UseScheduledTask))
+    }
+
     $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(($commandParts -join " ")))
     $powerShellPath = Resolve-PowerShellHostPath
 
@@ -136,6 +153,55 @@ function Read-UseScheduledTaskFallback {
         "否" { return $false }
         default { throw "无效输入: $inputValue。请输入 Y 或 n。" }
     }
+}
+
+function Confirm-InstallDir {
+    param([string]$Dir)
+
+    # 显示关键部署信息，等用户确认后再提权，避免 UAC 弹窗后才发现路径不对
+    Write-Host ""
+    Write-Host "================ 部署计划 ================"
+    Write-Host "  安装目录: $Dir"
+    Write-Host "  数据目录: $(Join-Path $env:ProgramData 'McpDbTools')  (config.json / audit.db / backups)"
+    Write-Host "  MCP 名称: $McpName (作用域: $McpScope)"
+    if ($AdminServiceName) { Write-Host "  服务/任务名: $AdminServiceName" }
+    Write-Host "=========================================="
+    $inputValue = Read-Host "确认按以上计划部署？[Y/n]"
+
+    if ([string]::IsNullOrWhiteSpace($inputValue)) {
+        return $true
+    }
+
+    switch ($inputValue.Trim().ToLowerInvariant()) {
+        "y" { return $true }
+        "yes" { return $true }
+        "是" { return $true }
+        "n" { return $false }
+        "no" { return $false }
+        "否" { return $false }
+        default { throw "无效输入: $inputValue。请输入 Y 或 n。" }
+    }
+}
+
+function Read-InteractiveChoices {
+    # 提权前完成所有交互式询问，返回一个 hashtable 供提权命令拼装
+    $choices = @{}
+
+    # 1. nssm 探测 + 计划任务回退询问（只决定是否用计划任务；nssm 存在与否由管理员进程再次探测）
+    $nssmCommand = Get-Command nssm -ErrorAction SilentlyContinue
+    if ($null -eq $nssmCommand) {
+        $useTask = Read-UseScheduledTaskFallback
+        $choices.UseScheduledTask = if ($useTask) { "yes" } else { "no" }
+    }
+    else {
+        # 有 nssm：不需要问计划任务，管理员进程走 nssm 分支
+        $choices.UseScheduledTask = "no"
+    }
+
+    # 2. Admin 端口（nssm 或计划任务都用到；nssm 已存在服务的情况除外，管理员进程会判断）
+    $choices.AdminPort = Read-AdminPort
+
+    return $choices
 }
 
 function Invoke-CheckedCommand {
@@ -269,6 +335,124 @@ function Remove-ExistingAdminTask {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
+function Move-LegacyData {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDir,
+        [Parameter(Mandatory = $true)]
+        [string]$DataDir
+    )
+
+    # 若目标已存在 config.json 或 audit.db，视为已迁移过，直接跳过（幂等）
+    $alreadyMigrated = (Test-Path (Join-Path $DataDir "config.json")) -or
+                       (Test-Path (Join-Path $DataDir "audit.db"))
+    if ($alreadyMigrated) {
+        Write-Host "数据目录已存在用户数据，跳过迁移: $DataDir"
+        return
+    }
+
+    # 旧数据可能来自两个位置：
+    # 1. 旧版本：安装目录（exe 同目录）下的 config.json / audit.db* / backups
+    # 2. 之前用 %USERPROFILE%\.mcpdbtools 的失败尝试残留（向前兼容）
+    $legacySources = @($SourceDir)
+    $userProfileDataDir = Join-Path $env:USERPROFILE ".mcpdbtools"
+    if ((Test-Path $userProfileDataDir) -and ($userProfileDataDir -ne $SourceDir)) {
+        $legacySources += $userProfileDataDir
+    }
+
+    $moved = $false
+    New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
+
+    foreach ($source in $legacySources) {
+        $legacyConfig = Join-Path $source "config.json"
+        $legacyDbFiles = @(Get-ChildItem -Path $source -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "audit.db*" -or $_.Name -like "*.db" })
+        $legacyBackupsDir = Join-Path $source "backups"
+        $hasLegacyBackups = Test-Path $legacyBackupsDir
+
+        if (-not (Test-Path $legacyConfig) -and $legacyDbFiles.Count -eq 0 -and -not $hasLegacyBackups) {
+            continue
+        }
+
+        if (-not $moved) {
+            Write-Host "迁移旧版用户数据到: $DataDir"
+        }
+
+        if (Test-Path $legacyConfig) {
+            # 若目标已有同名文件（来自更早的源），跳过
+            $destConfig = Join-Path $DataDir "config.json"
+            if (-not (Test-Path $destConfig)) {
+                Move-Item -Path $legacyConfig -Destination $DataDir -Force
+                Write-Host "  config.json ($source) -> $DataDir"
+            }
+        }
+
+        foreach ($dbFile in $legacyDbFiles) {
+            $destDb = Join-Path $DataDir $dbFile.Name
+            if (-not (Test-Path $destDb)) {
+                Move-Item -Path $dbFile.FullName -Destination $DataDir -Force
+                Write-Host "  $($dbFile.Name) ($source) -> $DataDir"
+            }
+        }
+
+        if ($hasLegacyBackups) {
+            # backups 目录整个移动；若目标已有则合并
+            $destBackups = Join-Path $DataDir "backups"
+            if (-not (Test-Path $destBackups)) {
+                Move-Item -Path $legacyBackupsDir -Destination $DataDir -Force
+                Write-Host "  backups\ ($source) -> $DataDir"
+            }
+            else {
+                # 合并：逐个复制不存在的备份文件
+                Copy-Item -Path (Join-Path $legacyBackupsDir "*") -Destination $destBackups -Force -ErrorAction SilentlyContinue
+                Remove-Item -Path $legacyBackupsDir -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "  backups\ ($source) -> $DataDir (合并)"
+            }
+        }
+        $moved = $true
+    }
+
+    if (-not $moved) {
+        Write-Host "未发现旧版用户数据，无需迁移。"
+    }
+}
+
+function Set-DataDirectoryAcl {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DataDir
+    )
+
+    # ProgramData 子目录默认 ACL 有时只允许创建者修改。显式给 Users 组读写权限，
+    # 保证 LocalSystem 服务与当前用户进程都能读写同一份数据。
+    if (-not (Test-Path $DataDir)) {
+        return
+    }
+
+    try {
+        $acl = Get-Acl -Path $DataDir
+        # 检查是否已有 Users 组的写权限，避免重复添加
+        $existing = $acl.Access | Where-Object {
+            $_.IdentityReference.Value -eq "BUILTIN\Users" -and
+            ($_.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Modify) -ne 0
+        }
+        if ($null -eq $existing) {
+            $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+                "BUILTIN\Users",
+                [System.Security.AccessControl.FileSystemRights]::Modify,
+                [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
+                [System.Security.AccessControl.PropagationFlags]::None,
+                [System.Security.AccessControl.AccessControlType]::Allow)
+            $acl.AddAccessRule($rule)
+            Set-Acl -Path $DataDir -AclObject $acl
+            Write-Host "已授权 Users 组对数据目录的读写权限: $DataDir"
+        }
+    }
+    catch {
+        Write-Host "警告：设置数据目录 ACL 失败（不影响 LocalSystem 访问，但可能影响普通用户进程写入）: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 function Install-ClaudeMcp {
     param(
         [Parameter(Mandatory = $true)]
@@ -333,6 +517,9 @@ function Install-NssmAdminService {
         $Port.ToString()
     )
     Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "AppDirectory", $WorkingDirectory)
+    # 服务以默认的 LocalSystem 账户运行即可。数据目录在 %ProgramData%\McpDbTools（跨用户共享），
+    # LocalSystem 与当前用户进程（MCP/Claude）都能读写同一份数据。
+    # C# 端 DataDirectoryResolver 会自动解析到该目录，无需任何环境变量或账户配置。
     Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "DisplayName", "McpDbTools Admin UI")
     Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "Description", "McpDbTools Admin UI: http://127.0.0.1:$Port/admin")
     Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "Start", "SERVICE_AUTO_START")
@@ -371,10 +558,40 @@ function Install-AdminScheduledTask {
 }
 
 $scriptRoot = Split-Path -Parent $PSCommandPath
+
+# 无论是否管理员，首次运行（未带 -Confirmed）都先确认安装目录，避免误部署
+if (-not $Confirmed) {
+    $ok = Confirm-InstallDir -Dir $InstallDir
+    if (-not $ok) {
+        Write-Host "已取消。请使用 -InstallDir 指定其它目录后重试。"
+        return
+    }
+}
+
 if (-not (Test-IsAdministrator)) {
-    $restarted = Restart-AsAdministrator -ScriptPath $PSCommandPath -WorkingDirectory $scriptRoot
+    # 提权前完成所有交互式询问（端口、承载方式），把答案随提权命令透传给管理员进程
+    $choices = @{}
+    if (-not $Confirmed) {
+        $choices = Read-InteractiveChoices
+    }
+    else {
+        # 已通过命令行参数提供，直接透传
+        if ($AdminPortParam -gt 0) { $choices.AdminPort = $AdminPortParam }
+        if ($UseScheduledTaskParam -ne "ask") { $choices.UseScheduledTask = $UseScheduledTaskParam }
+    }
+
+    $restarted = Restart-AsAdministrator -ScriptPath $PSCommandPath -WorkingDirectory $scriptRoot -Choices $choices
     if ($restarted) {
         return
+    }
+}
+else {
+    # 已是管理员（直接以管理员运行，或提权后的子进程）
+    # 若未通过提权前的交互拿到端口/承载方式，此处补问
+    if (-not $Confirmed) {
+        $choices = Read-InteractiveChoices
+        if ($choices.ContainsKey("AdminPort")) { $AdminPortParam = $choices.AdminPort }
+        if ($choices.ContainsKey("UseScheduledTask")) { $UseScheduledTaskParam = $choices.UseScheduledTask }
     }
 }
 
@@ -382,7 +599,10 @@ try {
 $projectPath = Join-Path $scriptRoot "src\McpDbTools.Server\McpDbTools.Server.csproj"
 $installDirFull = [System.IO.Path]::GetFullPath($InstallDir)
 $exePath = Join-Path $installDirFull "McpDbTools.Server.exe"
-$configPath = Join-Path $installDirFull "config.json"
+# 用户数据目录（config.json / audit.db / backups）独立于程序目录，便于升级时全量替换安装目录。
+# 使用 %ProgramData%\McpDbTools：Windows 跨用户共享数据目录，LocalSystem 服务与当前用户进程都能读写。
+# C# 端 DataDirectoryResolver 以同优先级解析。
+$dataDir = Join-Path $env:ProgramData "McpDbTools"
 $runtimeIdentifier = Resolve-RuntimeIdentifier
 
 if (-not (Test-Path $projectPath)) {
@@ -404,14 +624,30 @@ $useNssm = $null -ne $nssmCommand
 $hasExistingNssmService = $useNssm -and (Test-WindowsServiceExists -ServiceName $AdminServiceName)
 $useScheduledTask = $false
 if (-not $useNssm) {
-    $useScheduledTask = Read-UseScheduledTaskFallback
+    # 优先用提权前传入的选择，缺省时才交互询问
+    if ($UseScheduledTaskParam -eq "yes") {
+        $useScheduledTask = $true
+    }
+    elseif ($UseScheduledTaskParam -eq "no") {
+        $useScheduledTask = $false
+    }
+    else {
+        $useScheduledTask = Read-UseScheduledTaskFallback
+    }
 }
 $adminPort = $null
 if (-not $hasExistingNssmService -and ($useNssm -or $useScheduledTask)) {
-    $adminPort = Read-AdminPort
+    # 优先用提权前传入的端口，缺省时才交互询问
+    if ($AdminPortParam -gt 0) {
+        $adminPort = $AdminPortParam
+    }
+    else {
+        $adminPort = Read-AdminPort
+    }
 }
 
 Write-Host "发布目录: $installDirFull"
+Write-Host "数据目录: $dataDir"
 Write-Host "Claude Code MCP: $McpName ($McpScope)"
 if ($hasExistingNssmService) {
     Write-Host "检测到 Admin UI 已使用 NSSM 安装服务: $AdminServiceName"
@@ -440,43 +676,20 @@ if ($useScheduledTask) {
 }
 Stop-ProcessesByExecutablePath -ExecutablePath $exePath
 
-# 发布前清理安装目录:全量替换,避免旧版本文件残留与新版本混存
-# (dotnet publish 是覆盖语义,不会删除旧文件;旧 dll/exe/wwwroot 可能残留导致加载到错误版本)
-# 保留:config.json(用户配置)、audit.db* / *.db(审计数据)、backups/(备份目录)
-$configBackupPath = $null
-if (Test-Path $configPath) {
-    $configBackupPath = Join-Path ([System.IO.Path]::GetTempPath()) ("McpDbTools.config.{0}.json" -f [guid]::NewGuid())
-    Copy-Item -Path $configPath -Destination $configBackupPath -Force
-}
+# 升级迁移：把旧版（exe 同目录，或之前 %USERPROFILE%\.mcpdbtools）的用户数据搬到独立数据目录。
+# 必须在服务停止、文件释放后执行。幂等：目标已有数据则跳过。
+New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+Move-LegacyData -SourceDir $installDirFull -DataDir $dataDir
+# 确保数据目录 ACL 允许 LocalSystem 服务与普通用户进程都读写
+Set-DataDirectoryAcl -DataDir $dataDir
 
-# 把 audit.db*、backups 目录也暂存到临时区,清理后还原(避免审计历史与备份丢失)
-$dataBackupRoot = $null
-$dataFilesToKeep = @()
-Get-ChildItem -Path $installDirFull -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like "audit.db*" -or $_.Name -like "*.db" } |
-    ForEach-Object { $dataFilesToKeep += $_.FullName }
-$dataDirToKeep = Join-Path $installDirFull "backups"
-$hasBackupsDir = Test-Path $dataDirToKeep
-
-if ($dataFilesToKeep.Count -gt 0 -or $hasBackupsDir) {
-    $dataBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("McpDbTools.data.{0}" -f [guid]::NewGuid())
-    New-Item -ItemType Directory -Path $dataBackupRoot -Force | Out-Null
-    foreach ($dbFile in $dataFilesToKeep) {
-        Copy-Item -Path $dbFile -Destination $dataBackupRoot -Force
-    }
-    if ($hasBackupsDir) {
-        Copy-Item -Path $dataDirToKeep -Destination $dataBackupRoot -Recurse -Force
-    }
-}
-
-# 清空安装目录下除 config.json 外的所有内容
-Get-ChildItem -Path $installDirFull -Force -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($_.Name -ne "config.json") {
-        Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
+# 阶段 1: 先 publish 到独立临时目录,确认构建成功后再动安装目录。
+# 这样 dotnet publish 失败(编码、编译错误等)时,安装目录完全不受影响。
+# 用户数据（config.json / audit.db / backups）已迁移到独立数据目录，不在安装目录下，
+# 因此阶段 2 可以无条件全量替换安装目录，无需任何备份/还原。
+$publishStagingDir = Join-Path ([System.IO.Path]::GetTempPath()) ("McpDbTools.publish.{0}" -f [guid]::NewGuid())
 try {
+    Write-Host "构建到临时目录: $publishStagingDir"
     Invoke-CheckedCommand -FilePath $dotnetCommand.Source -Arguments @(
         "publish",
         $projectPath,
@@ -487,30 +700,34 @@ try {
         "--self-contained",
         "true",
         "-o",
-        $installDirFull
+        $publishStagingDir
     )
 
-    if ($configBackupPath) {
-        Copy-Item -Path $configBackupPath -Destination $configPath -Force
+    $stagedExePath = Join-Path $publishStagingDir "McpDbTools.Server.exe"
+    if (-not (Test-Path $stagedExePath)) {
+        throw "发布产物中未找到服务程序: $stagedExePath"
     }
-    if ($dataBackupRoot) {
-        # 还原 audit.db* / *.db
-        Get-ChildItem -Path $dataBackupRoot -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like "audit.db*" -or $_.Name -like "*.db" } |
-            ForEach-Object { Copy-Item -Path $_.FullName -Destination $installDirFull -Force }
-        # 还原 backups 目录
-        $backedUpBackups = Join-Path $dataBackupRoot "backups"
-        if (Test-Path $backedUpBackups) {
-            Copy-Item -Path $backedUpBackups -Destination $installDirFull -Recurse -Force
+
+    # 阶段 2: publish 已成功,全量替换安装目录。
+    # 防御性清理：万一迁移漏了（如手动放进来的旧数据），删除残留的 audit.db*/backups，
+    # 避免新版本读到安装目录下的旧数据（用户数据目录已分离）。
+    Get-ChildItem -Path $installDirFull -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.Name -like "audit.db*" -or $_.Name -like "*.db" -or $_.Name -eq "backups" -or $_.Name -eq "config.json") {
+            Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+    # 清空安装目录下所有内容
+    Get-ChildItem -Path $installDirFull -Force -ErrorAction SilentlyContinue | ForEach-Object {
+        Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # 将 publish 产物复制到安装目录
+    Copy-Item -Path (Join-Path $publishStagingDir "*") -Destination $installDirFull -Recurse -Force
 }
 finally {
-    if ($configBackupPath -and (Test-Path $configBackupPath)) {
-        Remove-Item -Path $configBackupPath -Force
-    }
-    if ($dataBackupRoot -and (Test-Path $dataBackupRoot)) {
-        Remove-Item -Path $dataBackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    # 清理 publish 临时目录(成功失败都清理)
+    if ($publishStagingDir -and (Test-Path $publishStagingDir)) {
+        Remove-Item -Path $publishStagingDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -551,6 +768,7 @@ else {
 
 Write-Host ""
 Write-Host "部署完成。"
+Write-Host "数据目录: $dataDir (config.json / audit.db / backups)"
 if (-not $hasExistingNssmService -and ($useNssm -or $useScheduledTask)) {
     Write-Host "Admin UI: http://127.0.0.1:$adminPort/admin"
 }

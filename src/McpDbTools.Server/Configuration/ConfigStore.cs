@@ -38,7 +38,8 @@ public sealed class ConfigStore : IDisposable
         // 启动时即加载——文件缺失时使用空配置；解析失败仍必须暴露，不吞错
         _current = Load();
 
-        _watcher = new FileSystemWatcher(Path.GetDirectoryName(_configPath)!, Path.GetFileName(_configPath))
+        // FileSystemWatcher 监听数据目录下的 config.json
+        _watcher = new FileSystemWatcher(DataDirectoryResolver.Resolve(_configPath), Path.GetFileName(_configPath))
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
             EnableRaisingEvents = true

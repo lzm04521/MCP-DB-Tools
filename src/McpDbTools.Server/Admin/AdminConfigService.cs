@@ -26,8 +26,9 @@ public sealed class AdminConfigService
         _configStore = configStore;
         _providerFactory = providerFactory;
         _configPath = Path.GetFullPath(options.Value.ConfigPath);
-        string directory = Path.GetDirectoryName(_configPath) ?? AppContext.BaseDirectory;
-        _backupDirectory = Path.Combine(directory, "backups");
+        // backups 目录放在集中解析的数据目录下，尊重 DI 中 ConfigPath 的目录（测试/显式覆盖场景）
+        string dataDir = DataDirectoryResolver.Resolve(options.Value.ConfigPath);
+        _backupDirectory = Path.Combine(dataDir, "backups");
         _jsonOptions = new JsonSerializerOptions
         {
             WriteIndented = true,
@@ -325,8 +326,8 @@ public sealed class AdminConfigService
     /// </summary>
     private async Task<string> WriteAtomicallyAsync(DatabasesConfig config, CancellationToken cancellationToken)
     {
-        string directory = Path.GetDirectoryName(_configPath) ?? AppContext.BaseDirectory;
-        Directory.CreateDirectory(directory);
+        // 临时文件、备份目录都放在集中解析的数据目录下，尊重 _configPath 的目录
+        string directory = DataDirectoryResolver.EnsureExists(_configPath);
 
         string tempPath = Path.Combine(directory, "config.tmp.json");
         string json = JsonSerializer.Serialize(config, _jsonOptions);
@@ -339,7 +340,7 @@ public sealed class AdminConfigService
             throw new InvalidDataException("临时配置文件反序列化结果为空。");
         }
 
-        string backupDirectory = Path.Combine(directory, "backups");
+        string backupDirectory = _backupDirectory;
         Directory.CreateDirectory(backupDirectory);
         string backupName = $"config.{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}.json";
         string backupPath = Path.Combine(backupDirectory, backupName);

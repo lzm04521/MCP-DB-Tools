@@ -56,7 +56,7 @@ dotnet build
 }
 ```
 
-> 程序默认读取**程序目录**下的 `config.json`，可用环境变量 `ConfigStore__ConfigPath` 覆盖。文件不存在时空配置启动，可后续通过 Admin UI 补齐。开发时若用源码目录下的 config.json，需显式设置该环境变量。
+> 程序默认读取 `%ProgramData%\McpDbTools\config.json`（Windows 跨用户共享数据目录，与程序目录分离便于升级；LocalSystem 服务与当前用户进程共享同一份数据），可用环境变量 `ConfigStore__ConfigPath` 覆盖。文件不存在时空配置启动，可后续通过 Admin UI 补齐。开发时若用源码目录下的 config.json，需显式设置该环境变量。
 
 ### 接入 MCP 客户端
 
@@ -88,7 +88,7 @@ Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 J
 }
 ```
 
-发布后推荐直接运行 exe，并将 `config.json` 放在 exe 同目录（无需再传 `ConfigStore__ConfigPath`）：
+发布后推荐直接运行 exe（程序默认读取 `%ProgramData%\McpDbTools\config.json`，无需传 `ConfigStore__ConfigPath`）：
 
 ```json
 {
@@ -116,7 +116,7 @@ args = ["run", "--project", "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/McpDbT
 ConfigStore__ConfigPath = "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json"
 ```
 
-发布后直接运行 exe（`config.json` 放在 exe 同目录）：
+发布后直接运行 exe（程序默认读取 `%ProgramData%\McpDbTools\config.json`）：
 
 ```toml
 [mcp_servers.db-tools]
@@ -322,7 +322,7 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 ### 审计日志
 
-审计日志**全局开启**，记录到 `config.json` 同目录的 `audit.db`（SQLite，WAL 模式），MCP 写入与 Admin 读取可同进程并发。
+审计日志**全局开启**，记录到 `%ProgramData%\McpDbTools\audit.db`（SQLite，WAL 模式，与 config.json 同目录），MCP 写入与 Admin 读取可同进程并发。
 
 - 每次成功解析到项目与环境的 `db_query` 都会记录一条（含被阻止与执行失败）；早期参数解析错误（项目/环境不存在）不入库。
 - 写入经 Channel 入队、单消费者串行落盘，避免高并发下线程池饥饿与写锁竞争。
@@ -344,15 +344,18 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 ## 发布与部署
 
-发布到固定目录，让 MCP 与 Admin UI 共享同一个 `config.json`：
+发布到固定目录，程序与用户数据分离（MCP 与 Admin UI 共享同一份用户数据）：
 
 ```text
-D:\Tools\McpDbTools\
+D:\Tools\McpDbTools\                # 安装目录（程序文件，升级时可全量替换）
 ├── McpDbTools.Server.exe
-├── config.json
-├── audit.db              # 审计日志（首次写入自动创建）
-├── backups\              # 配置备份（保存自动生成）
-└── wwwroot\admin\        # SPA 静态资源
+├── wwwroot\admin\                  # SPA 静态资源
+└── ...
+
+%ProgramData%\McpDbTools\            # 用户数据目录（跨用户共享，与程序目录分离）
+├── config.json                     # 配置
+├── audit.db                        # 审计日志（首次写入自动创建）
+└── backups\                        # 配置备份（保存自动生成）
 ```
 
 ```bash

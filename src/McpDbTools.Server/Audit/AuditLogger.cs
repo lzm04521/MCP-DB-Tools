@@ -61,9 +61,8 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
 
     public AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger)
     {
-        string configPath = Path.GetFullPath(options.Value.ConfigPath);
-        string dir = Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory;
-        Directory.CreateDirectory(dir);
+        // audit.db 放在集中解析的数据目录下，尊重 DI 中 ConfigPath 的目录（测试/显式覆盖场景）
+        string dir = DataDirectoryResolver.EnsureExists(options.Value.ConfigPath);
         string dbPath = Path.Combine(dir, "audit.db");
         // SQLite 通过连接字符串里的数据源定位文件；WAL/busy_timeout 在每次连接初始化时设置
         _connectionString = new SqliteConnectionStringBuilder
