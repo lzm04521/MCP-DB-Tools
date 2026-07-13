@@ -56,7 +56,7 @@ dotnet build
 }
 ```
 
-> 程序默认读取 `%ProgramData%\McpDbTools\config.json`（Windows 跨用户共享数据目录，与程序目录分离便于升级；LocalSystem 服务与当前用户进程共享同一份数据），可用环境变量 `ConfigStore__ConfigPath` 覆盖。文件不存在时空配置启动，可后续通过 Admin UI 补齐。开发时若用源码目录下的 config.json，需显式设置该环境变量。
+> 程序默认读取 `%ProgramData%\McpDbTools\config.json`（Windows 跨用户共享数据目录，与程序目录分离便于升级；LocalSystem 服务与当前用户进程共享同一份数据），可用环境变量 `ConfigStore__ConfigPath` 覆盖。**首次部署后，config.json 位于 `%ProgramData%\McpDbTools\`，不在 exe 同目录**——请通过 Admin UI 维护，或直接编辑该文件。文件不存在时空配置启动，可后续通过 Admin UI 补齐。开发时若用源码目录下的 config.json，需显式设置该环境变量。
 
 ### 接入 MCP 客户端
 
@@ -344,7 +344,9 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 ## 发布与部署
 
-发布到固定目录，程序与用户数据分离（MCP 与 Admin UI 共享同一份用户数据）：
+### 目录结构
+
+程序与用户数据物理分离，升级时安装目录可全量替换、用户数据不丢失：
 
 ```text
 D:\Tools\McpDbTools\                # 安装目录（程序文件，升级时可全量替换）
@@ -358,11 +360,71 @@ D:\Tools\McpDbTools\                # 安装目录（程序文件，升级时可
 └── backups\                        # 配置备份（保存自动生成）
 ```
 
+数据目录选用 `%ProgramData%\McpDbTools`（Windows 跨用户共享数据目录），保证 **LocalSystem 服务**（Admin UI 默认承载方式）与**当前用户进程**（Claude/Codex 调用的 MCP server）读写同一份数据。部署脚本会自动给 Users 组授予 Modify 权限。
+
+> 数据目录由 `DataDirectoryResolver` 集中解析，优先级：调用方传入 > 环境变量 `ConfigStore__ConfigPath` > `%ProgramData%\McpDbTools` > exe 同目录。多数情况下无需关心，默认值即可。
+
+### 一键部署（推荐）
+
+仓库根目录的 [`build and install.ps1`](build and install.ps1) 完成"构建 → 停服 → 迁移数据 → 替换文件 → 安装自启动 → 注册 MCP"全流程：
+
+```powershell
+.\build and install.ps1
+```
+
+脚本行为：
+
+1. **提权前确认**：显示安装目录、数据目录、MCP 名称等部署计划，输入 `Y` 后才触发 UAC 提权
+2. **交互式询问**（提权前完成，答案透传给提权进程）：Admin UI 端口（默认 `61123`）；未安装 [nssm](https://nssm.cc) 时是否用计划任务承载
+3. **构建**：`dotnet publish` 到临时目录，失败时安装目录完全不受影响
+4. **数据迁移**：把旧版数据（exe 同目录 或 `%USERPROFILE%\.mcpdbtools`）搬到 `%ProgramData%\McpDbTools`，幂等
+5. **全量替换安装目录**：用户数据已分离，可无条件清空安装目录后复制新产物
+6. **自启动安装**：有 nssm 则装 Windows 服务（`SERVICE_AUTO_START`），否则按选择装计划任务
+7. **注册 MCP**：`claude mcp add` 把 Server 注册到 Claude Code（默认作用域 `user`）
+
+常用参数：
+
+| 参数 | 默认值 | 说明 |
+| ---- | ------ | ---- |
+| `-InstallDir` | `E:\Software\FreeInstall\Mcp-db-Tools` | 安装目录 |
+| `-McpName` | `db-tools` | 注册到 Claude Code 的 MCP 名称 |
+| `-McpScope` | `user` | MCP 作用域：`local` / `user` / `project` |
+| `-AdminServiceName` | `McpDbTools.Admin` | NSSM 服务名 / 计划任务名 |
+| `-PauseOnExit` | 关 | 结束时暂停等待回车（便于查看管理员窗口输出） |
+
+示例：
+
+```powershell
+# 自定义安装目录与 MCP 作用域
+.\build and install.ps1 -InstallDir D:\Tools\McpDbTools -McpScope local
+
+# 当前已是管理员，跳过 UAC 直接部署
+powershell -Verb RunAs -Command ".\build and install.ps1"
+```
+
+### 手动发布
+
+如不走部署脚本（例如远程机器、便携部署）：
+
 ```bash
 dotnet publish src/McpDbTools.Server -c Release
 ```
 
-生产环境 MCP 客户端配置不加 Admin 参数，避免 Agent 通过 MCP 进程修改配置。Admin 服务单独运行：`McpDbTools.Server.exe --admin-only --admin-port 5123`。
+发布产物拷到目标目录后，首次运行会自动在 `%ProgramData%\McpDbTools` 创建数据目录与空配置。也可用环境变量 `ConfigStore__ConfigPath` 指定自定义路径。
+
+### Admin UI 自启动
+
+生产环境推荐 Admin UI 单独承载，**不**在 MCP 客户端配置里加 `--admin` 参数（避免 Agent 通过 MCP 进程修改配置）：
+
+```bash
+# 前台运行（调试）
+McpDbTools.Server.exe --admin-only --admin-port 5123
+
+# 后台服务（推荐，部署脚本已自动安装）
+# 或手工用 nssm：
+nssm install McpDbTools.Admin "D:\Tools\McpDbTools\McpDbTools.Server.exe" --admin-only --admin-port 61123
+nssm start McpDbTools.Admin
+```
 
 ## 开发
 
@@ -383,7 +445,7 @@ dotnet publish src/McpDbTools.Server -c Release
 src/McpDbTools.Server/
 ├── Admin/             # Admin API、配置读写、测试连接、备份管理、全局设置
 ├── Audit/             # 审计日志（SQLite + Channel 异步串行写入）
-├── Configuration/     # 配置模型、热重载、三层关键字合并、连接串拼接
+├── Configuration/     # 配置模型、热重载、三层关键字合并、连接串拼接、DataDirectoryResolver 数据目录解析
 ├── Database/          # 三种数据库 provider + 工厂 + 每环境并发限流器
 ├── Maintenance/       # 运维清理后台服务（审计日志/备份自动清理）
 ├── Security/          # SqlGuard SQL 安全守卫
