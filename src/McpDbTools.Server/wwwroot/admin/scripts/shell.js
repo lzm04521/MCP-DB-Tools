@@ -23,10 +23,17 @@
     confirmDialog: document.getElementById('confirmDialog'),
     confirmTitle: document.getElementById('confirmTitle'),
     confirmMessage: document.getElementById('confirmMessage'),
-    confirmOkBtn: document.getElementById('confirmOkBtn')
+    confirmOkBtn: document.getElementById('confirmOkBtn'),
+    unsavedDialog: document.getElementById('unsavedDialog'),
+    unsavedTitle: document.getElementById('unsavedTitle'),
+    unsavedMessage: document.getElementById('unsavedMessage'),
+    unsavedSaveBtn: document.getElementById('unsavedSaveBtn')
   });
 
   let current = null; // 当前已 mount 的视图对象
+  // dirty 离开拦截：用户取消切换时把 hash 改回原值，避免再触发 hashchange
+  let currentHash = '';
+  let isSwitching = false; // 标记正在处理切换，避免改回 hash 时再次进入流程
 
   /** 从 location.hash 解析当前视图 id，无效时回退默认视图。 */
   function parseHash() {
@@ -57,6 +64,27 @@
       return;
     }
 
+    // 离开拦截：当前视图若实现了 confirmLeave，先征询未保存修改。
+    // - 'cancel' / false：用户要留在当前视图。需要把 hash 改回，让地址栏与新状态一致。
+    // - 'clean' / 'proceed' / true：继续切换。
+    if (current && typeof current.confirmLeave === 'function') {
+      let proceed = true;
+      try {
+        const result = await current.confirmLeave();
+        proceed = result !== 'cancel';
+      } catch (error) {
+        console.error('confirmLeave 出错：', error);
+      }
+      if (!proceed) {
+        // hash 已被用户改掉，需改回；isSwitching 防止 onHashChange 二次进入
+        if (location.hash !== currentHash) {
+          isSwitching = true;
+          location.hash = currentHash;
+        }
+        return;
+      }
+    }
+
     if (current && typeof current.onLeave === 'function') {
       try {
         current.onLeave();
@@ -67,6 +95,7 @@
 
     dom.view.innerHTML = '';
     current = next;
+    currentHash = location.hash;
 
     if (typeof next.mount === 'function') {
       next.mount(dom.view);
@@ -81,12 +110,74 @@
   }
 
   function onHashChange() {
+    if (isSwitching) {
+      isSwitching = false;
+      return;
+    }
     switchTo(parseHash());
   }
 
+  /**
+   * 闲置超时提示：用户在 SPA 内停止输入/点击超过阈值后，若有未保存修改则弹窗。
+   * - 任意 input/click/keydown 重置计时器。
+   * - 仅触发一次提示；用户处理后再开始新一轮计时。
+   * - 阈值默认 60 秒，可由 IDLE_PROMPT_SECONDS 全局变量覆盖。
+   */
+  const IDLE_PROMPT_SECONDS = Math.max(15, Number(window.IDLE_PROMPT_SECONDS) || 60);
+  let idleTimer = 0;
+  function scheduleIdlePrompt() {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(async () => {
+      idleTimer = 0;
+      const view = current;
+      if (!view || typeof view.isDirty !== 'function' || !view.isDirty()) {
+        scheduleIdlePrompt();
+        return;
+      }
+      // 仅提示，不强制离开：用户选保存就保存，选丢弃就回滚，取消则继续编辑。
+      try {
+        await view.confirmLeave();
+      } catch (error) {
+        console.error('闲置提示 confirmLeave 出错：', error);
+      }
+      scheduleIdlePrompt();
+    }, IDLE_PROMPT_SECONDS * 1000);
+  }
+
+  function resetIdleTimer() {
+    if (idleTimer) {
+      scheduleIdlePrompt();
+    }
+  }
+
+  // 浏览器关闭/刷新：原生 beforeunload，由浏览器自己渲染文案；只在 dirty 时拦截。
+  window.addEventListener('beforeunload', event => {
+    if (current && typeof current.isDirty === 'function' && current.isDirty()) {
+      event.preventDefault();
+      event.returnValue = ''; // Chrome/Firefox 触发原生提示所必需
+    }
+  });
+
+  ['input', 'click', 'keydown', 'change'].forEach(type => {
+    document.addEventListener(type, resetIdleTimer, { passive: true });
+  });
+
   // 顶栏全局按钮：委托给当前视图
-  dom.reloadBtn.addEventListener('click', () => {
-    if (current && typeof current.reload === 'function') {
+  dom.reloadBtn.addEventListener('click', async () => {
+    if (!current) {
+      return;
+    }
+    // 重新加载会丢弃未保存修改，dirty 时同样走 confirmLeave：用户选「丢弃」继续 reload，
+    // 选「保存」先保存再 reload，选「取消」中止。
+    if (typeof current.confirmLeave === 'function') {
+      const result = await current.confirmLeave();
+      if (result === 'cancel') {
+        return;
+      }
+    }
+    if (typeof current.reload === 'function') {
       current.reload();
     }
   });
@@ -104,6 +195,8 @@
   } else {
     onHashChange();
   }
+  // 启动 idle 提示计时器（用户操作或保存后会重置）
+  scheduleIdlePrompt();
 
   window.adminShell = {
     /** 供视图在 config 加载完成后回填顶栏 configPath。 */

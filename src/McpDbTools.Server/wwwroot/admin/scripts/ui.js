@@ -10,7 +10,11 @@
     confirmDialog: null,
     confirmTitle: null,
     confirmMessage: null,
-    confirmOkBtn: null
+    confirmOkBtn: null,
+    unsavedDialog: null,
+    unsavedTitle: null,
+    unsavedMessage: null,
+    unsavedSaveBtn: null
   };
 
   // 每个 toast 独立的计时器，避免相互覆盖
@@ -54,6 +58,31 @@
     dialog.returnValue = '';
     return new Promise(resolve => {
       dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'), { once: true });
+      dialog.showModal();
+    });
+  }
+
+  /**
+   * 未保存提示：三选一弹窗。
+   * @returns {'save'|'discard'|'cancel'} save=保存并继续；discard=丢弃修改并继续；cancel=取消操作，留在当前页。
+   * 需先 mount unsavedDialog / unsavedTitle / unsavedMessage / unsavedSaveBtn。
+   */
+  function confirmSaveDiscard(title = '有未保存的修改', message = '当前配置已修改但尚未保存，是否保存？', saveText = '保存') {
+    const dialog = refs.unsavedDialog;
+    if (!dialog) {
+      // fallback：原生 confirm 仅能两选一，将「不保存」与「取消」合并为「不保存」
+      const ok = window.confirm(`${title}\n\n${message}\n（确定=保存并继续，取消=留在页面）`);
+      return Promise.resolve(ok ? 'save' : 'cancel');
+    }
+    refs.unsavedTitle.textContent = title;
+    refs.unsavedMessage.textContent = message;
+    refs.unsavedSaveBtn.textContent = saveText;
+    dialog.returnValue = '';
+    return new Promise(resolve => {
+      dialog.addEventListener('close', () => {
+        const value = dialog.returnValue || 'cancel';
+        resolve(value === 'save' ? 'save' : (value === 'discard' ? 'discard' : 'cancel'));
+      }, { once: true });
       dialog.showModal();
     });
   }
@@ -120,6 +149,7 @@
     mount,
     showToast,
     confirmAction,
+    confirmSaveDiscard,
     setBusy,
     escapeHtml,
     uniqueName,

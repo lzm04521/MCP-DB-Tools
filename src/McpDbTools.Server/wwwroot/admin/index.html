@@ -56,6 +56,26 @@
       </form>
     </dialog>
 
+    <!-- 未保存提示：三选一弹窗（保存 / 不保存 / 取消）。
+         与 confirmDialog 独立，避免破坏现有删除确认等调用。 -->
+    <dialog id="unsavedDialog" class="dialog">
+      <form method="dialog">
+        <h2 id="unsavedTitle">有未保存的修改</h2>
+        <p id="unsavedMessage">当前配置已修改但尚未保存，是否保存？</p>
+        <div class="dialog-actions">
+          <button value="cancel" type="submit" class="button secondary">
+            取消（留在页面）
+          </button>
+          <button value="discard" type="submit" class="button ghost">
+            不保存
+          </button>
+          <button id="unsavedSaveBtn" value="save" type="submit" class="button primary">
+            保存
+          </button>
+        </div>
+      </form>
+    </dialog>
+
     <script src="./scripts/admin-api.js"></script>
     <script src="./scripts/ui.js"></script>
     <script src="./scripts/nav.js"></script>

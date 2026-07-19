@@ -70,6 +70,10 @@ audit.log*
 *.bak
 *.backup
 
+# 本地测试与浏览器自动化临时目录（勿提交）
+.test-runtime/
+.playwright-mcp/
+
 # 运行时生成的配置备份目录（Admin UI 每次保存自动产生）
 src/McpDbTools.Server/backups/
 

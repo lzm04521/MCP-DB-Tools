@@ -12,6 +12,39 @@
   };
   let el = null; // mount 后填充
 
+  // dirty 追踪：保存最近一次「已落库」的 projects 快照（JSON 字符串）。
+  // syncFormToState 后比较当前 projects 与快照，不同即视为有未保存修改。
+  // markClean 在 loadConfig 成功、saveConfig 成功、用户主动「丢弃」回滚后调用。
+  let savedProjectsSnapshot = '';
+
+  function markClean() {
+    if (state.config) {
+      savedProjectsSnapshot = JSON.stringify(state.config.projects);
+    }
+  }
+
+  function isDirty() {
+    if (!state.config) {
+      return false;
+    }
+    syncFormToState();
+    return JSON.stringify(state.config.projects) !== savedProjectsSnapshot;
+  }
+
+  /** 回滚到上次保存的 projects 快照（用户选「丢弃」时调用）。 */
+  function restoreSnapshot() {
+    if (!state.config || !savedProjectsSnapshot) {
+      return;
+    }
+    try {
+      state.config.projects = JSON.parse(savedProjectsSnapshot);
+      state.selectedProject = Math.min(state.selectedProject, Math.max(0, state.config.projects.length - 1));
+      state.selectedEnvironment = Math.min(state.selectedEnvironment, Math.max(0, (state.config.projects[state.selectedProject]?.environments.length || 1) - 1));
+    } catch (error) {
+      console.error('回滚未保存修改失败：', error);
+    }
+  }
+
   function template() {
     return `
       <div class="shell">
@@ -117,16 +150,34 @@
               </div>
 
               <div class="grid two">
-                <label>
+                <!-- 环境 key：自定义 combobox（input + 下拉按钮 + 浮层）。
+                     原生 datalist 在 Chrome/Edge 单击不展开且 showPicker() 无效，故自实现。
+                     仅新建态可编辑时显示下拉；已保存环境 readonly 时只保留 input。
+                     外层不用 <label>，避免点击下拉项时 label 把 click 转发给 input 触发重开。 -->
+                <div class="field envkey-combobox">
                   <span>环境 key *</span>
-                  <input
-                    id="environmentName"
-                    type="text"
-                    required
-                    autocomplete="off"
-                  />
-                  <small id="environmentNameHelp">创建后不可修改。</small>
-                </label>
+                  <div class="combobox-wrap">
+                    <input
+                      id="environmentName"
+                      type="text"
+                      required
+                      autocomplete="off"
+                      placeholder="Test / Prod / 自定义"
+                      aria-autocomplete="list"
+                      aria-expanded="false"
+                      aria-controls="environmentKeyList"
+                    />
+                    <button
+                      id="environmentKeyToggle"
+                      type="button"
+                      class="combobox-toggle"
+                      tabindex="-1"
+                      aria-label="展开环境 key 建议"
+                    >▾</button>
+                    <ul id="environmentKeyList" class="combobox-list hidden" role="listbox"></ul>
+                  </div>
+                  <small id="environmentNameHelp">创建后不可修改。可下拉选 Test/Prod，或直接输入自定义值。</small>
+                </div>
                 <label>
                   <span>显示名</span>
                   <input
@@ -232,6 +283,7 @@
       'environmentTabs', 'environmentEditor', 'deleteEnvironmentBtn',
       'testConnectionBtn', 'testConnectionResult',
       'productionWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
+      'environmentKeyToggle', 'environmentKeyList',
       'databaseType', 'isProduction', 'maxRows', 'commandTimeout',
       'maxConcurrency', 'maxPoolSize', 'connectTimeoutSeconds',
       'connectionString', 'disabledKeywords'
@@ -271,6 +323,7 @@
       state.selectedProject = Math.min(state.selectedProject, Math.max(0, state.config.projects.length - 1));
       state.selectedEnvironment = 0;
       render();
+      markClean();
       window.adminShell.setConfigPath(`config: ${state.config.configPath}`);
       window.adminUi.showToast('配置已加载');
     } catch (error) {
@@ -372,6 +425,9 @@
     const envLocked = Boolean(env.originalName);
     el.environmentName.readOnly = envLocked;
     el.environmentName.classList.toggle('readonly-field', envLocked);
+    // 已保存环境 readonly：隐藏 ▾ 下拉按钮与浮层，避免误操作
+    el.environmentKeyToggle.classList.toggle('hidden', envLocked);
+    el.environmentKeyList.classList.add('hidden');
     el.environmentNameHelp.textContent = envLocked
       ? '创建后不可修改（已持久化）。'
       : '创建后不可修改。';
@@ -390,6 +446,8 @@
     el.connectionString.placeholder = '请输入连接字符串';
     el.disabledKeywords.value = (env.disabledKeywords || []).join(', ');
     el.productionWarning.classList.toggle('hidden', !env.isProduction);
+    // 切换到已存在环境时重置交互标记：用户尚未在新上下文里手动改过生产开关
+    resetEnvInteractionMarks();
   }
 
   function syncFormToState() {
@@ -513,12 +571,41 @@
       });
       state.config = result.config;
       render();
+      markClean();
       window.adminUi.showToast(`保存成功，备份：${result.backupName}`);
+      return true;
     } catch (error) {
       window.adminUi.showToast(error.message, true);
+      return false;
     } finally {
       window.adminUi.setBusy(false);
     }
+  }
+
+  /**
+   * 离开前提示（由 shell / onbeforeunload / 闲置定时器调用）。
+   * - 无未保存修改：返回 'clean'，调用方继续后续动作。
+   * - 有修改：弹三选一对话框。
+   *   - save：调用 saveConfig；保存成功返回 'proceed'，失败返回 'cancel'（留在页面）。
+   *   - discard：回滚到快照，返回 'proceed'。
+   *   - cancel：返回 'cancel'，调用方应中止后续动作。
+   * @returns {Promise<'clean'|'proceed'|'cancel'>}
+   */
+  async function confirmLeave() {
+    if (!isDirty()) {
+      return 'clean';
+    }
+    const choice = await window.adminUi.confirmSaveDiscard();
+    if (choice === 'save') {
+      const ok = await saveConfig();
+      return ok ? 'proceed' : 'cancel';
+    }
+    if (choice === 'discard') {
+      restoreSnapshot();
+      render();
+      return 'proceed';
+    }
+    return 'cancel';
   }
 
   function bindEvents(doc) {
@@ -534,6 +621,8 @@
     // 用户手动编辑显示名（与 key 不同）后停止跟随，尊重已填值。
     setupNameSync(el.projectName, el.projectDisplayName);
     setupNameSync(el.environmentName, el.environmentDisplayName);
+    // 环境 key 预设：选中 Test/Prod 时填默认显示名并（Prod）自动勾选生产环境。
+    setupEnvKeyPreset();
 
     el.addProjectBtn.addEventListener('click', addProject);
     el.addEnvironmentBtn.addEventListener('click', addEnvironment);
@@ -604,6 +693,259 @@
     });
   }
 
+  /**
+   * 环境 key 预设映射（combobox 选项 → 默认显示名）。
+   * - Test  → 测试环境
+   * - Prod  → 生产环境（同时联动勾选「生产环境」）
+   * - Dev   → 开发环境
+   * - UAT 及任意自定义输入 → 不预设，保留用户输入或留空。
+   */
+  const ENV_KEY_PRESETS = {
+    Test: { displayName: '测试环境', isProduction: false },
+    Prod: { displayName: '生产环境', isProduction: true },
+    Dev: { displayName: '开发环境', isProduction: false }
+  };
+
+  /**
+   * 环境 key 选择 Test/Prod 时联动 displayName 与 isProduction。
+   * - 仅在 displayName 处于「跟随中」（data-auto-synced='1'）时才覆盖显示名，
+   *   避免覆盖用户手动填写的值。
+   * - isProduction 仅在用户尚未手动改过该字段（data-touched != '1'）时联动，
+   *   用户一旦自己点过复选框即尊重其选择。
+   * - 仅新建态生效（已保存环境 key 只读，不会触发 input 事件）。
+   */
+  function setupEnvKeyPreset() {
+    el.environmentName.addEventListener('input', () => {
+      const preset = ENV_KEY_PRESETS[el.environmentName.value];
+      if (!preset) {
+        return;
+      }
+      if (el.environmentDisplayName.dataset.autoSynced === '1') {
+        el.environmentDisplayName.value = preset.displayName;
+      }
+      if (el.isProduction.dataset.touched !== '1') {
+        el.isProduction.checked = preset.isProduction;
+        el.productionWarning.classList.toggle('hidden', !preset.isProduction);
+      }
+    });
+    // 用户手动操作过生产环境开关后，不再被预设联动覆盖
+    el.isProduction.addEventListener('change', () => {
+      el.isProduction.dataset.touched = '1';
+      el.productionWarning.classList.toggle('hidden', !el.isProduction.checked);
+    });
+    // 自定义 combobox：替代原生 datalist（Chrome/Edge 单击不展开且 showPicker 无效）
+    setupEnvKeyCombobox();
+  }
+
+  /**
+   * 环境 key 自定义下拉。
+   * - 建议：Test / Prod / Dev / UAT（前三个有联动预设，UAT 仅建议项不联动）。
+   * - 点击 input 或 ▾ 按钮：展开/收起。
+   * - 输入时按前缀过滤；点击列表项：填入 input 并触发 input 事件（联动 displayName/isProduction）。
+   * - 键盘：↑↓ 选项、Enter 选中、Esc 关闭。
+   * - 已保存环境 readonly：隐藏 ▾ 按钮，不响应展开。
+   * - 点击外部关闭。
+   */
+  const ENV_KEY_SUGGESTIONS = ['Test', 'Prod', 'Dev', 'UAT'];
+  let comboboxOpen = false;
+  let comboboxHighlight = -1;
+  // selectItem 后聚焦 input 时抑制一次自动 open，避免选完项浮层立刻又被打开
+  let suppressingFocus = false;
+
+  function setupEnvKeyCombobox() {
+    const input = el.environmentName;
+    const toggle = el.environmentKeyToggle;
+    const list = el.environmentKeyList;
+
+    function isOpenable() {
+      return !input.readOnly;
+    }
+
+    function renderList(filter) {
+      const q = (filter || '').trim().toLowerCase();
+      const items = q ? ENV_KEY_SUGGESTIONS.filter(s => s.toLowerCase().includes(q)) : ENV_KEY_SUGGESTIONS.slice();
+      list.innerHTML = '';
+      items.forEach((value, index) => {
+        const li = document.createElement('li');
+        li.role = 'option';
+        li.dataset.value = value;
+        li.tabIndex = -1;
+        // 联动信息提示，帮助用户预判
+        const preset = ENV_KEY_PRESETS[value];
+        const hint = preset ? `（${preset.displayName}${preset.isProduction ? ' · 生产' : ''}）` : '';
+        li.textContent = `${value}${hint}`;
+        li.addEventListener('mousedown', event => {
+          // mousedown 先于 input blur 触发，避免失焦关掉浮层导致点击无效
+          event.preventDefault();
+        });
+        li.addEventListener('click', () => selectItem(value));
+        list.appendChild(li);
+      });
+      comboboxHighlight = items.length > 0 ? 0 : -1;
+      updateHighlight();
+      return items.length;
+    }
+
+    function open() {
+      if (!isOpenable() || comboboxOpen) {
+        return;
+      }
+      // focus/click 展开时显示完整建议列表，不按当前值过滤；
+      // 过滤仅由 input 事件（用户主动输入字符）触发，避免初始默认值导致空列表。
+      renderList('');
+      list.classList.remove('hidden');
+      comboboxOpen = true;
+      input.setAttribute('aria-expanded', 'true');
+    }
+
+    function close() {
+      if (!comboboxOpen) {
+        return;
+      }
+      list.classList.add('hidden');
+      comboboxOpen = false;
+      comboboxHighlight = -1;
+      input.setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleOpen() {
+      if (!isOpenable()) {
+        return;
+      }
+      if (comboboxOpen) {
+        close();
+      } else {
+        open();
+      }
+    }
+
+    function selectItem(value) {
+      input.value = value;
+      // 触发 input 让 setupNameSync + setupEnvKeyPreset 联动 displayName 与 isProduction
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      close();
+      // focus 会再次触发 open（focus 监听器），用 suppressingFocus 标志临时抑制一次
+      suppressingFocus = true;
+      input.focus();
+    }
+
+    function updateHighlight() {
+      const items = list.querySelectorAll('li');
+      items.forEach((li, i) => {
+        li.classList.toggle('highlighted', i === comboboxHighlight);
+      });
+      const cur = items[comboboxHighlight];
+      if (cur) {
+        cur.scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    function moveHighlight(delta) {
+      const items = list.querySelectorAll('li');
+      if (items.length === 0) {
+        return;
+      }
+      let next = comboboxHighlight + delta;
+      if (next < 0) {
+        next = items.length - 1;
+      } else if (next >= items.length) {
+        next = 0;
+      }
+      comboboxHighlight = next;
+      updateHighlight();
+    }
+
+    toggle.addEventListener('click', event => {
+      event.preventDefault();
+      toggleOpen();
+    });
+
+    input.addEventListener('focus', () => {
+      // selectItem 后聚焦会触发本监听器；用 suppressingFocus 抑制一次，避免选完项浮层立即重开
+      if (suppressingFocus) {
+        suppressingFocus = false;
+        return;
+      }
+      // 仅在可编辑时聚焦自动展开（已保存环境 readonly 不响应）
+      if (isOpenable()) {
+        open();
+      }
+    });
+
+    input.addEventListener('click', () => {
+      if (isOpenable()) {
+        open();
+      }
+    });
+
+    input.addEventListener('input', () => {
+      if (comboboxOpen) {
+        renderList(input.value);
+      }
+    });
+
+    input.addEventListener('keydown', event => {
+      if (!comboboxOpen) {
+        if (event.key === 'ArrowDown' || event.key === 'Enter') {
+          if (isOpenable()) {
+            event.preventDefault();
+            open();
+          }
+        }
+        return;
+      }
+      switch (event.key) {
+        case 'ArrowDown':
+          event.preventDefault();
+          moveHighlight(1);
+          break;
+        case 'ArrowUp':
+          event.preventDefault();
+          moveHighlight(-1);
+          break;
+        case 'Enter': {
+          event.preventDefault();
+          const items = list.querySelectorAll('li');
+          const cur = items[comboboxHighlight];
+          if (cur) {
+            selectItem(cur.dataset.value);
+          } else {
+            close();
+          }
+          break;
+        }
+        case 'Escape':
+          event.preventDefault();
+          close();
+          break;
+        case 'Tab':
+          close();
+          break;
+      }
+    });
+
+    // 点击外部关闭浮层
+    document.addEventListener('click', event => {
+      if (!comboboxOpen) {
+        return;
+      }
+      const wrap = input.closest('.combobox-wrap');
+      if (wrap && !wrap.contains(event.target)) {
+        close();
+      }
+    });
+  }
+
+  /**
+   * 重置环境字段交互标记（切换环境/项目/保存后调用）。
+   * - autoSynced：bindEnvironment 中已根据 displayName 是否为空重置
+   * - touched：isProduction 复选框的「用户已操作」标记需重置，允许下次新建环境时再次联动
+   */
+  function resetEnvInteractionMarks() {
+    el.isProduction.dataset.touched = '';
+  }
+
   window.adminViews = window.adminViews || {};
   window.adminViews.projects = {
     title: '项目管理',
@@ -632,6 +974,13 @@
     },
 
     save: saveConfig,
-    reload: loadConfig
+    reload: loadConfig,
+    /** 供 shell/外部查询：当前是否有未保存的修改。 */
+    isDirty,
+    /**
+     * 离开前提示。返回 'clean'（无需提示）/'proceed'（用户同意离开，已保存或丢弃）/'cancel'（留在页面）。
+     * shell.switchTo 在切换前调用，'cancel' 时中断切换。
+     */
+    confirmLeave
   };
 })();

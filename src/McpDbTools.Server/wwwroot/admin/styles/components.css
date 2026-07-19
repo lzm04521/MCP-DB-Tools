@@ -788,3 +788,72 @@ input[readonly] {
     width: 100%;
   }
 }
+
+/* ============ 自定义 combobox（环境 key 一体下拉） ============ */
+/* 替代原生 datalist：Chrome/Edge 单击 input[list] 不展开且 showPicker() 对 datalist 无效。
+   外层用 .field 而非 label：label 会把 li 的 click 转发给内部 input，导致选完项浮层立刻重开。 */
+.envkey-combobox.field {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+.envkey-combobox .combobox-wrap {
+  position: relative;
+}
+
+.envkey-combobox .combobox-wrap input {
+  padding-right: 36px; /* 给 ▾ 按钮留位 */
+}
+
+.envkey-combobox .combobox-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-muted, #6b7280);
+  cursor: pointer;
+  font-size: 14px;
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+.envkey-combobox .combobox-toggle:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--color-foreground, #1f2937);
+}
+
+.envkey-combobox .combobox-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: white;
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.envkey-combobox .combobox-list li {
+  padding: 9px 12px;
+  cursor: pointer;
+  color: var(--color-foreground, #1f2937);
+  font-size: 14px;
+}
+
+.envkey-combobox .combobox-list li:hover,
+.envkey-combobox .combobox-list li.highlighted {
+  background: var(--color-accent-bg, #eef2ff);
+  color: var(--color-accent, #4338ca);
+}
