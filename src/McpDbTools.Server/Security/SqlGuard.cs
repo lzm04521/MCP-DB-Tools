@@ -52,7 +52,7 @@ public sealed class SqlGuard : ISqlGuard
         {
             [DatabaseType.SqlServer] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "SELECT", "WITH", "EXEC", "EXECUTE",
+                "SELECT", "WITH", "EXEC", "EXECUTE", "DBCC",
                 "SP_HELP", "SP_TABLES", "SP_COLUMNS", "SP_PKEYS", "SP_SPACEUSED", "SP_HELPTEXT"
             },
             [DatabaseType.MySql] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -65,6 +65,23 @@ public sealed class SqlGuard : ISqlGuard
                 "SELECT", "WITH", "EXEC", "EXECUTE", "CALL",
                 "DESCRIBE", "DESC"
             }
+        };
+
+    /// <summary>SqlServer DBCC 只读诊断子命令白名单（仅基础只读形态，修复选项单独拦截）。</summary>
+    private static readonly IReadOnlySet<string> SqlServerDbccReadOnlySubcommands =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "SHOW_STATISTICS", "SHOWCONTIG",
+            "CHECKDB", "CHECKTABLE", "CHECKALLOC", "CHECKCATALOG",
+            "SQLPERF", "INPUTBUFFER", "OPENTRAN", "USEROPTIONS",
+            "TRACESTATUS", "PROCCACHE"
+        };
+
+    /// <summary>DBCC 修复选项修饰符（即使子命令在白名单也拒）。</summary>
+    private static readonly IReadOnlySet<string> DbccRepairModifiers =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "REPAIR_ALLOW_DATA_LOSS", "REPAIR_REBUILD", "REPAIR_FAST", "REPAIR"
         };
 
     public SqlGuardResult Validate(string sql, ResolvedDatabase database)
@@ -96,6 +113,12 @@ public sealed class SqlGuard : ISqlGuard
                 "SQL_BLOCKED");
         }
 
+        // 2.5 DBCC 子命令二次校验：仅放行只读诊断白名单子命令，禁带修复选项
+        if (firstKeyword.Equals("DBCC", StringComparison.OrdinalIgnoreCase))
+        {
+            return ValidateDbcc(firstStatement, normalized);
+        }
+
         // 3. 黑名单：对整段 SQL 检查阻止关键字（含多语句，拦截注入）
         //    每个关键字用词边界匹配，避免误伤包含该词的标识符
         foreach (string keyword in database.DisabledKeywords)
@@ -110,6 +133,44 @@ public sealed class SqlGuard : ISqlGuard
             {
                 return SqlGuardResult.Deny(
                     $"SQL 包含被阻止的关键字: {keyword}",
+                    "SQL_BLOCKED");
+            }
+        }
+
+        return SqlGuardResult.Allow();
+    }
+
+    /// <summary>
+    /// DBCC 子命令二次校验：仅放行只读诊断白名单子命令，且禁带修复选项。
+    /// </summary>
+    private static SqlGuardResult ValidateDbcc(string firstStatement, string normalized)
+    {
+        var tokens = firstStatement.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length < 2)
+        {
+            return SqlGuardResult.Deny("DBCC 缺少子命令", "SQL_BLOCKED");
+        }
+
+        // 子命令可能紧贴括号，如 SQLPERF(logspace)
+        string sub = tokens[1];
+        int paren = sub.IndexOf('(');
+        if (paren >= 0) sub = sub[..paren];
+
+        if (!SqlServerDbccReadOnlySubcommands.Contains(sub))
+        {
+            return SqlGuardResult.Deny(
+                $"不允许的 DBCC 子命令: {sub}（仅允许只读诊断子命令）",
+                "SQL_BLOCKED");
+        }
+
+        // 修复选项检测：CHECKDB/CHECKTABLE/CHECKALLOC 带 REPAIR_* 时写数据
+        foreach (string mod in DbccRepairModifiers)
+        {
+            string pattern = @$"\b{Regex.Escape(mod)}\b";
+            if (Regex.IsMatch(normalized, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                return SqlGuardResult.Deny(
+                    $"DBCC 修复选项不允许: {mod}",
                     "SQL_BLOCKED");
             }
         }

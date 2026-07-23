@@ -48,6 +48,53 @@ public class SqlGuardTests
         Assert.Equal(expected, r.Allowed);
     }
 
+    [Theory]
+    [InlineData("DBCC SQLPERF(logspace)", true)]
+    [InlineData("DBCC SHOW_STATISTICS('Users', IX_Users_Name)", true)]
+    [InlineData("DBCC CHECKDB('mydb') WITH PHYSICAL_ONLY", true)]
+    [InlineData("DBCC CHECKTABLE('Users')", true)]
+    [InlineData("DBCC CHECKALLOC('mydb')", true)]
+    [InlineData("DBCC CHECKCATALOG('mydb')", true)]
+    [InlineData("DBCC SHOWCONTIG(Users)", true)]
+    [InlineData("DBCC OPENTRAN", true)]
+    [InlineData("DBCC USEROPTIONS", true)]
+    [InlineData("DBCC TRACESTATUS", true)]
+    [InlineData("DBCC PROCCACHE", true)]
+    [InlineData("DBCC INPUTBUFFER(52)", true)]
+    [InlineData("DBCC SHRINKDATABASE(mydb, 10)", false)]
+    [InlineData("DBCC SHRINKFILE(myfile, 10)", false)]
+    [InlineData("DBCC WRITEPAGE(mydb, 1, 1, 1, 1, 0)", false)]
+    [InlineData("DBCC TRACEON(3604)", false)]
+    [InlineData("DBCC TRACEOFF(3604)", false)]
+    [InlineData("DBCC FREEPROCCACHE", false)]
+    [InlineData("DBCC DROPCLEANBUFFERS", false)]
+    [InlineData("DBCC DBREPAIR(mydb, NODATA)", false)]
+    public void SqlServer_Dbcc_SubcommandWhitelist(string sql, bool expected)
+    {
+        var r = _guard.Validate(sql, Db(DatabaseType.SqlServer));
+        Assert.Equal(expected, r.Allowed);
+    }
+
+    [Theory]
+    [InlineData("DBCC CHECKDB('mydb') WITH REPAIR_ALLOW_DATA_LOSS")]
+    [InlineData("DBCC CHECKTABLE('Users') WITH REPAIR_REBUILD")]
+    [InlineData("DBCC CHECKALLOC('mydb') WITH REPAIR_FAST")]
+    public void SqlServer_Dbcc_RepairModifiers_Blocked(string sql)
+    {
+        var r = _guard.Validate(sql, Db(DatabaseType.SqlServer));
+        Assert.False(r.Allowed);
+        Assert.Equal("SQL_BLOCKED", r.ErrorCode);
+        Assert.Contains("REPAIR", r.Reason);
+    }
+
+    [Fact]
+    public void SqlServer_Dbcc_MissingSubcommand_Blocked()
+    {
+        var r = _guard.Validate("DBCC", Db(DatabaseType.SqlServer));
+        Assert.False(r.Allowed);
+        Assert.Equal("SQL_BLOCKED", r.ErrorCode);
+    }
+
     [Fact]
     public void MultiStatement_Injection_Blocked()
     {
