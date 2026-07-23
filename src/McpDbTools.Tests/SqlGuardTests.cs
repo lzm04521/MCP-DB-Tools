@@ -20,6 +20,7 @@ public class SqlGuardTests
             IsProduction = false,
             Type = type,
             ConnectionString = "",
+            DatabaseName = null,
             MaxRows = 1000,
             CommandTimeout = 30,
             MaxPoolSize = 100,

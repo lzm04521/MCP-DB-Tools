@@ -216,6 +216,19 @@ public class DbListToolTests : IDisposable
         Assert.Equal(0, envs.GetArrayLength()); // 空环境数组
     }
 
+    // ───────── 边界：环境详情含 databaseName（从连接串按类型解析）─────────
+
+    [Fact]
+    public async Task EnvironmentDetails_IncludesDatabaseName_FromConnectionString()
+    {
+        var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;Initial Catalog=OrderDb;User Id=sa;Password=p;"}}}}""");
+        string json = await tool.ListProjects(project: "erp-system", environment: "prod");
+
+        using var doc = JsonDocument.Parse(json);
+        JsonElement env = doc.RootElement.GetProperty("projects")[0].GetProperty("environments")[0];
+        Assert.Equal("OrderDb", env.GetProperty("databaseName").GetString());
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }

@@ -18,6 +18,7 @@ public class QueryConcurrencyLimiterTests
             IsProduction = false,
             Type = DatabaseType.SqlServer,
             ConnectionString = "cs",
+            DatabaseName = null,
             MaxRows = 1000,
             CommandTimeout = 30,
             MaxPoolSize = 100,

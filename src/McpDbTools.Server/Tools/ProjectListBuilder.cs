@@ -81,6 +81,7 @@ public static class ProjectListBuilder
     {
         name = e.Key,
         type = e.Value.Type.ToString().ToLowerInvariant(),
+        databaseName = e.Value.DatabaseName,
         isProduction = e.Value.IsProduction,
         maxRows = e.Value.MaxRows,
         maxConcurrency = e.Value.MaxConcurrency,

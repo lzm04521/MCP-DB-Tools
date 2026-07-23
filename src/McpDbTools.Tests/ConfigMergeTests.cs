@@ -311,4 +311,60 @@ public class ConfigMergeTests
         Assert.Equal("this is not a valid connection string $$$", db.ConnectionString);
         Assert.Equal(100, db.MaxPoolSize);
     }
+
+    [Fact]
+    public void DatabaseName_Resolved_ByType()
+    {
+        // 按类型从连接串提取默认库/schema 标识
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["mssql"] = Db(DatabaseType.SqlServer, cs: "Server=.;Initial Catalog=OrderDb;User Id=sa;Password=p;"),
+                        ["mssqlAlt"] = Db(DatabaseType.SqlServer, cs: "Server=.;Database=AltDb;User Id=sa;Password=p;"),
+                        ["mysql"] = Db(DatabaseType.MySql, cs: "Server=localhost;Database=crm;"),
+                        ["oracle"] = Db(DatabaseType.Oracle, cs: "Data Source=ORCL;User Id=APP;Password=p;")
+                    }
+                }
+            }
+        };
+
+        ResolvedConfig resolved = ResolvedConfigBuilder.Build(raw);
+
+        Assert.Equal("OrderDb", resolved.Projects["p"].Environments["mssql"].DatabaseName);
+        Assert.Equal("AltDb", resolved.Projects["p"].Environments["mssqlAlt"].DatabaseName); // Database 键等价于 Initial Catalog
+        Assert.Equal("crm", resolved.Projects["p"].Environments["mysql"].DatabaseName);
+        Assert.Equal("APP", resolved.Projects["p"].Environments["oracle"].DatabaseName);
+    }
+
+    [Theory]
+    [InlineData("Server=.;", DatabaseType.SqlServer)]                      // 缺 Initial Catalog/Database
+    [InlineData("Server=.;Initial Catalog=  ;", DatabaseType.SqlServer)]   // 空白值
+    [InlineData("Server=localhost;", DatabaseType.MySql)]                  // 缺 Database
+    [InlineData("Data Source=ORCL;", DatabaseType.Oracle)]                 // 缺 User Id
+    [InlineData("not a valid connection string $$$", DatabaseType.SqlServer)] // 畸形串
+    public void DatabaseName_Null_WhenMissing_OrBlank_OrMalformed(string cs, DatabaseType type)
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["e"] = Db(type, cs: cs)
+                    }
+                }
+            }
+        };
+
+        ResolvedDatabase db = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["e"];
+
+        Assert.Null(db.DatabaseName);
+    }
 }

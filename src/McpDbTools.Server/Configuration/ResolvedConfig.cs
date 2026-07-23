@@ -47,6 +47,14 @@ public sealed record ResolvedDatabase
 
     public required DatabaseType Type { get; init; }
     public required string ConnectionString { get; init; }
+
+    /// <summary>
+    /// 当前连接默认库/schema 标识，供 db_list 返回给 Agent，避免 USE 切库。
+    /// 按类型语义：SqlServer=Initial Catalog；MySQL=Database；Oracle=User Id。
+    /// 键缺失/解析失败/空白 → null。
+    /// </summary>
+    public required string? DatabaseName { get; init; }
+
     public required int MaxRows { get; init; }
     public required int CommandTimeout { get; init; }
 
@@ -132,6 +140,7 @@ public static class ResolvedConfigBuilder
                     IsProduction = db.IsProduction,
                     Type = db.Type,
                     ConnectionString = finalConnectionString,
+                    DatabaseName = ResolveDatabaseName(db.ConnectionString, db.Type),
                     MaxRows = db.MaxRows <= 0 ? 1000 : db.MaxRows,
                     CommandTimeout = db.CommandTimeout <= 0 ? 600 : db.CommandTimeout,
                     MaxPoolSize = maxPoolSize,
@@ -187,6 +196,32 @@ public static class ResolvedConfigBuilder
         {
             // 畸形连接串：保留原值，运行时由驱动报错
             return raw;
+        }
+    }
+
+    /// <summary>
+    /// 从原始连接串提取默认库/schema 标识（按类型分流），供 db_list 返回。
+    /// SqlServer=Initial Catalog；MySQL=Database；Oracle=User Id。
+    /// 畸形串/键缺失/空白 → null，不抛、不阻断列表。
+    /// 只读单属性，绝不输出连接串整体或 Password 键。
+    /// </summary>
+    private static string? ResolveDatabaseName(string raw, DatabaseType type)
+    {
+        try
+        {
+            string? v = type switch
+            {
+                DatabaseType.SqlServer => new SqlConnectionStringBuilder(raw).InitialCatalog,
+                DatabaseType.MySql => new MySqlConnectionStringBuilder(raw).Database,
+                DatabaseType.Oracle => new OracleConnectionStringBuilder(raw).UserID,
+                _ => null
+            };
+            return string.IsNullOrWhiteSpace(v) ? null : v;
+        }
+        catch
+        {
+            // 畸形连接串：返回 null，运行时由驱动报错；此处不阻断列表
+            return null;
         }
     }
 }
