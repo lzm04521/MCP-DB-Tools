@@ -517,7 +517,16 @@
   function addEnvironment() {
     syncFormToState();
     const project = activeProject();
-    project.environments.push(createEnvironment(window.adminUi.uniqueName('Test', project.environments.map(e => e.name))));
+    // 默认填 Test，即便当前项目已存在 Test 也允许临时重名，重复检测推迟到保存时由后端卡控。
+    const env = createEnvironment('Test');
+    // 直接在数据层应用 Test 预设（显示名+生产标识），等价于用户手动选中 Test 时的联动；
+    // 程序化设置输入框 value 不会触发 input 事件，所以不能依赖 setupEnvKeyPreset 自动生效。
+    const preset = ENV_KEY_PRESETS['Test'];
+    if (preset) {
+      env.displayName = preset.displayName;
+      env.isProduction = preset.isProduction;
+    }
+    project.environments.push(env);
     state.selectedEnvironment = project.environments.length - 1;
     render();
   }
