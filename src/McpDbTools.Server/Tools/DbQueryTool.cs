@@ -74,6 +74,7 @@ public sealed class DbQueryTool
         if (!guardResult.Allowed)
         {
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, guardResult.Reason));
+            _audit.Flush(); // 同步排空：保证审计先于返回落盘，防进程退出丢队列（诊断 20260722）
             return QueryResult.Fail(project, db.Type.ToString(), guardResult.Reason, guardResult.ErrorCode, environment: env).ToJson();
         }
 
@@ -89,7 +90,24 @@ public sealed class DbQueryTool
         catch (QueryRateLimitedException ex)
         {
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, ex.Message));
+            _audit.Flush(); // 同步排空
             return QueryResult.Fail(project, db.Type.ToString(), ex.Message, "RATE_LIMITED", environment: env).ToJson();
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端取消/超时（provider 对外部 ct 取消会重新抛出 OperationCanceledException）：
+            // 记审计后返回失败，避免逃逸异常不记审计（阶段 3，诊断 20260722）
+            _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, "查询被取消（客户端超时或中断）"));
+            _audit.Flush();
+            return QueryResult.Fail(project, db.Type.ToString(), "查询被取消", "QUERY_CANCELED", environment: env).ToJson();
+        }
+        catch (Exception ex)
+        {
+            // 非 DbException 逃逸异常（provider 仅 catch DbException/TimeoutException）：
+            // 记审计后返回失败，防止单查询异常逃逸不记审计或崩溃进程（阶段 3）
+            _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, $"未处理异常: {ex.GetType().Name}: {ex.Message}"));
+            _audit.Flush();
+            return QueryResult.Fail(project, db.Type.ToString(), $"未处理异常: {ex.Message}", "QUERY_UNHANDLED", environment: env).ToJson();
         }
 
         // 6. 审计（开关开启且成功时，记录查询结果到子表）
@@ -98,6 +116,7 @@ public sealed class DbQueryTool
             ? AuditLogger.SerializeResult(result)
             : null;
         _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, result.RowCount, result.ExecutionTimeMs, result.Success, result.Error, resultJson));
+        _audit.Flush(); // 同步排空：查询返回前确保审计已落盘，不依赖后台消费者与进程退出方式
 
         return result.ToJson();
     }

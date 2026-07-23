@@ -208,6 +208,104 @@ public class DbQueryToolTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task ExecuteQuery_Audit_Flushed_Before_Return()
+    {
+        // ExecuteQuery 返回后立即（不调 audit.Flush）查审计应已落盘。
+        // 验证 db_query 返回前同步排空，不依赖后台异步消费者与进程退出方式（诊断 20260722 根因 1）。
+        var stubOk = new QueryResult
+        {
+            Success = true,
+            Columns = new List<string> { "id" },
+            Rows = new List<object?[]> { new object?[] { 1 } },
+            RowCount = 1
+        };
+        var (tool, audit) = CreateToolWithSwitch(true, stubOk);
+        using (audit)
+        {
+            await tool.ExecuteQuery("erp", "SELECT id FROM t");
+            // 不调 audit.Flush() —— 若 ExecuteQuery 未内部排空，此处读不到记录
+            var page = audit.Query(new AuditLogQuery());
+            AuditEntry entry = Assert.Single(page.Items);
+            Assert.True(entry.Success);
+            Assert.Equal("erp", entry.Project);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQuery_Audit_Flushed_Before_Return_OnGuardFailure()
+    {
+        // SQL 校验失败路径同样应同步排空（失败审计也需可靠落盘）
+        var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
+        // CreateTool 内部构造的 audit 未暴露，但校验失败走 ExecuteQuery 内部 Flush；
+        // 这里仅验证返回正常 + 不抛（Flush 不应阻塞或抛出）
+        string json = await tool.ExecuteQuery("erp", "DROP TABLE x");
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("SQL_BLOCKED", doc.RootElement.GetProperty("errorCode").GetString());
+    }
+
+    /// <summary>构造带抛异常 stub provider 的工具：验证逃逸异常路径也记审计（阶段 3）。</summary>
+    private (DbQueryTool tool, AuditLogger audit) CreateToolWithThrowingProvider(Exception toThrow)
+    {
+        string configPath = Path.Combine(_tempDir, "config.json");
+        string json = "{\"databases\":{\"erp\":{\"defaultEnvironment\":\"prod\",\"environments\":{\"prod\":{\"type\":\"sqlserver\",\"connectionString\":\"cs\"}}}},\"maintenance\":{\"auditRecordResults\":true}}";
+        File.WriteAllText(configPath, json);
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
+        var factory = new DatabaseProviderFactory(
+            new Dictionary<DatabaseType, IDatabaseProvider>
+            {
+                [DatabaseType.SqlServer] = new ThrowingProvider(toThrow, DatabaseType.SqlServer)
+            });
+        return (new DbQueryTool(store, new SqlGuard(), factory, audit, new QueryConcurrencyLimiter()), audit);
+    }
+
+    [Fact]
+    public async Task ExecuteQuery_Audit_Logged_OnUnhandledException()
+    {
+        // 非 DbException 逃逸异常：ExecuteQuery 兜底 catch 记审计 + 返回 QUERY_UNHANDLED（阶段 3）
+        var (tool, audit) = CreateToolWithThrowingProvider(new InvalidOperationException("boom"));
+        using (audit)
+        {
+            string json = await tool.ExecuteQuery("erp", "SELECT 1");
+            var page = audit.Query(new AuditLogQuery()); // 不调 Flush —— ExecuteQuery 内部已排空
+            AuditEntry entry = Assert.Single(page.Items);
+            Assert.False(entry.Success);
+            Assert.Contains("boom", entry.Error);
+            using var doc = JsonDocument.Parse(json);
+            Assert.Equal("QUERY_UNHANDLED", doc.RootElement.GetProperty("errorCode").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteQuery_Audit_Logged_OnCancellation()
+    {
+        // OperationCanceledException：记审计 + 返回 QUERY_CANCELED（阶段 3）
+        var (tool, audit) = CreateToolWithThrowingProvider(new OperationCanceledException());
+        using (audit)
+        {
+            string json = await tool.ExecuteQuery("erp", "SELECT 1");
+            var page = audit.Query(new AuditLogQuery());
+            Assert.Single(page.Items);
+            using var doc = JsonDocument.Parse(json);
+            Assert.Equal("QUERY_CANCELED", doc.RootElement.GetProperty("errorCode").GetString());
+        }
+    }
+
+    /// <summary>抛指定异常的 stub provider，用于测试逃逸异常路径。</summary>
+    private sealed class ThrowingProvider : IDatabaseProvider
+    {
+        private readonly Exception _ex;
+        public ThrowingProvider(Exception ex, DatabaseType type) { _ex = ex; DatabaseType = type; }
+        public DatabaseType DatabaseType { get; }
+        public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
+            => Task.FromException<QueryResult>(_ex);
+        public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
+            => Task.FromResult<(bool, long, string?)>((false, 0, _ex.Message));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }

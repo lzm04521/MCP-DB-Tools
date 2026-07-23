@@ -41,7 +41,28 @@ static async Task RunMcpAsync(string[] args)
         .WithStdioServerTransport()
         .WithToolsFromAssembly();
 
-    await builder.Build().RunAsync();
+    // host shutdown 时给 AuditLogger.DisposeAsync 排空审计队列留足时间（其内部上限 5s）
+    builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(15));
+
+    using IHost host = builder.Build();
+
+    // 进程退出兜底：Ctrl+C 取消 token → host 优雅停止 → DI Singleton DisposeAsync 排空审计。
+    // 注意：TerminateProcess 硬杀无法兜底，db_query 审计可靠性由 ExecuteQuery 内 Flush 保证（诊断 20260722）。
+    using var cts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        cts.Cancel();
+    };
+
+    try
+    {
+        await host.RunAsync(cts.Token);
+    }
+    catch (OperationCanceledException)
+    {
+        // 正常关闭：Ctrl+C 或外部取消
+    }
 }
 
 static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
