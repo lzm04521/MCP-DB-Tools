@@ -209,36 +209,10 @@ public class DbQueryToolTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteQuery_Audit_Flushed_Before_Return()
+    public async Task GuardFailure_ReturnsSqlBlocked()
     {
-        // ExecuteQuery 返回后立即（不调 audit.Flush）查审计应已落盘。
-        // 验证 db_query 返回前同步排空，不依赖后台异步消费者与进程退出方式（诊断 20260722 根因 1）。
-        var stubOk = new QueryResult
-        {
-            Success = true,
-            Columns = new List<string> { "id" },
-            Rows = new List<object?[]> { new object?[] { 1 } },
-            RowCount = 1
-        };
-        var (tool, audit) = CreateToolWithSwitch(true, stubOk);
-        using (audit)
-        {
-            await tool.ExecuteQuery("erp", "SELECT id FROM t");
-            // 不调 audit.Flush() —— 若 ExecuteQuery 未内部排空，此处读不到记录
-            var page = audit.Query(new AuditLogQuery());
-            AuditEntry entry = Assert.Single(page.Items);
-            Assert.True(entry.Success);
-            Assert.Equal("erp", entry.Project);
-        }
-    }
-
-    [Fact]
-    public async Task ExecuteQuery_Audit_Flushed_Before_Return_OnGuardFailure()
-    {
-        // SQL 校验失败路径同样应同步排空（失败审计也需可靠落盘）
+        // SQL 校验失败：DbQueryTool 调 SqlGuard 拦截 DROP，返回 SQL_BLOCKED
         var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        // CreateTool 内部构造的 audit 未暴露，但校验失败走 ExecuteQuery 内部 Flush；
-        // 这里仅验证返回正常 + 不抛（Flush 不应阻塞或抛出）
         string json = await tool.ExecuteQuery("erp", "DROP TABLE x");
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("SQL_BLOCKED", doc.RootElement.GetProperty("errorCode").GetString());
@@ -270,7 +244,8 @@ public class DbQueryToolTests : IDisposable
         using (audit)
         {
             string json = await tool.ExecuteQuery("erp", "SELECT 1");
-            var page = audit.Query(new AuditLogQuery()); // 不调 Flush —— ExecuteQuery 内部已排空
+            audit.Flush(); // 移除生产 Flush 后，测试同步排空以读取（Flush 的正当测试用途）
+            var page = audit.Query(new AuditLogQuery());
             AuditEntry entry = Assert.Single(page.Items);
             Assert.False(entry.Success);
             Assert.Contains("boom", entry.Error);
@@ -287,6 +262,7 @@ public class DbQueryToolTests : IDisposable
         using (audit)
         {
             string json = await tool.ExecuteQuery("erp", "SELECT 1");
+            audit.Flush(); // 测试同步排空
             var page = audit.Query(new AuditLogQuery());
             Assert.Single(page.Items);
             using var doc = JsonDocument.Parse(json);

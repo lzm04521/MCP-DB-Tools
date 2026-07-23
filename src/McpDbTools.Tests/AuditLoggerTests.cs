@@ -17,7 +17,7 @@ public class AuditLoggerTests : IDisposable
     }
 
     /// <summary>在临时目录构造 ConfigStore + AuditLogger（db 文件落在 config.json 同目录）。</summary>
-    private (ConfigStore store, AuditLogger logger, string dbPath) Create()
+    private (ConfigStore store, AuditLogger logger, string dbPath) Create(int channelCapacity = 1000)
     {
         string configPath = Path.Combine(_tempDir, "config.json");
         string json = """
@@ -30,7 +30,7 @@ public class AuditLoggerTests : IDisposable
         var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
-        var logger = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
+        var logger = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), channelCapacity);
         return (store, logger, Path.Combine(_tempDir, "audit.db"));
     }
 
@@ -377,6 +377,41 @@ public class AuditLoggerTests : IDisposable
             Assert.Equal("new", after.Items[0].Sql);
             // new 的子表数据应保留
             Assert.Equal("{\"columns\":[],\"rows\":[]}", logger.GetResultJson(after.Items[0].Id));
+        }
+    }
+
+    [Fact]
+    public void Dispose_DrainsAllEntries_WithoutFlush()
+    {
+        // 守护 Dispose 排空契约：Log 后不调 Flush，仅 Dispose，全部应落盘。
+        // 取代 9dd4b49 的"返回即落盘"契约（ExecuteQuery 内 Flush 已移除后）。
+        var (store, logger, _) = Create();
+        using (store)
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                logger.Log(MakeEntry($"SELECT {i}", true, time: Iso(10 - i)));
+            }
+            logger.Dispose(); // 触发排空，不调 Flush
+            var page = logger.Query(new AuditLogQuery { PageSize = 100 });
+            Assert.Equal(10, page.Total);
+        }
+    }
+
+    [Fact]
+    public void Log_AllEntriesPersist_WithBoundedChannel()
+    {
+        // 容量 4，写入 50 条远超容量：验证 FullMode=Wait 不丢、不抛（阻塞等消费者腾位）。
+        // 阻塞时序信任标准库 BoundedChannelFullMode.Wait 语义，此处只验证最终全落盘。
+        var (store, logger, _) = Create(channelCapacity: 4);
+        using (store)
+        {
+            for (int i = 0; i < 50; i++)
+            {
+                logger.Log(MakeEntry($"SELECT {i}", true, time: Iso(50 - i)));
+            }
+            logger.Flush();
+            Assert.Equal(50, logger.Query(new AuditLogQuery { PageSize = 100 }).Total);
         }
     }
 

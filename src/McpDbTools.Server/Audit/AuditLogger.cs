@@ -37,7 +37,7 @@ public sealed record AuditEntry
 /// <list type="bullet">
 /// <item>全局开启，不再依赖开关配置；db 文件位于 config.json 同目录，文件名 audit.db。</item>
 /// <item>WAL 模式 + busy_timeout：MCP 写入与 Admin 页读取同进程并发安全。</item>
-/// <item>写入异步化：Log 入无界 Channel，单后台消费者串行落盘，彻底消除写锁竞争并避免线程池饥饿。</item>
+/// <item>写入异步化：Log 入有界 Channel（容量 1000，满时反压等空位），单后台消费者串行落盘，消除写锁竞争。</item>
 /// <item>不自动清理：记录保留至用户在 Admin UI「审计日志」页手动清理为止。</item>
 /// </list>
 /// </para>
@@ -48,18 +48,25 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
     private readonly ILogger<AuditLogger> _logger;
     private int _initialized;
 
-    // 异步写入队列：无界 Channel + 单消费者，保证写入串行，无 SQLite 写锁竞争。
-    private readonly Channel<AuditEntry> _channel = Channel.CreateUnbounded<AuditEntry>(
-        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    // 默认队列容量：正常 QPS 下永不满；满时 FullMode=Wait 阻塞 Log（而非丢审计）。
+    private const int DefaultChannelCapacity = 1000;
+
+    // 异步写入队列：有界 Channel + 单消费者，保证写入串行，无 SQLite 写锁竞争。
+    private readonly Channel<AuditEntry> _channel;
     private readonly CancellationTokenSource _consumerCts = new();
     private readonly Task _consumerTask;
     private int _disposed;
 
-    // 已入队 / 已落盘计数：仅供 Flush 同步等待用（测试场景），不参与业务逻辑
+    // 已入队 / 已落盘计数：仅供测试 Flush 同步等待用，不参与业务逻辑。
     private long _enqueuedCount;
     private long _processedCount;
 
     public AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger)
+        : this(options, logger, DefaultChannelCapacity)
+    {
+    }
+
+    internal AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger, int channelCapacity)
     {
         // audit.db 放在集中解析的数据目录下，尊重 DI 中 ConfigPath 的目录（测试/显式覆盖场景）
         string dir = DataDirectoryResolver.EnsureExists(options.Value.ConfigPath);
@@ -72,6 +79,15 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             Cache = SqliteCacheMode.Shared
         }.ToString();
         _logger = logger;
+
+        // 有界 Channel：单消费者串行写；满时等待空位（不丢审计），防无界 OOM。
+        _channel = Channel.CreateBounded<AuditEntry>(
+            new BoundedChannelOptions(channelCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait
+            });
 
         // 启动单后台消费者：串行处理队列，串行写库
         _consumerTask = Task.Run(() => ConsumeAsync(_consumerCts.Token));
@@ -99,6 +115,12 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
 
             // 先递增入队计数再写入：保证 Flush 等待的 target >= 实际写入数
             Interlocked.Increment(ref _enqueuedCount);
+            // 有界 Channel 满时阻塞等空位（控制台宿主无 SynchronizationContext，同步等异步安全）；
+            // 不丢审计。Complete 后 WaitToWriteAsync 返回 false，走降级同步写。
+            // 注意：ValueTask 由 IValueTaskSource 支持时不能直接 .GetAwaiter().GetResult()，
+            // 否则未完成时立即返回 default(false) 不阻塞（导致 fallback 路径并发触发 EnsureInitialized 竞态丢写）。
+            // 必须先 AsTask() 转为 Task<TResult>，Task 的 GetResult() 才会真正阻塞到完成。
+            _channel.Writer.WaitToWriteAsync().AsTask().GetAwaiter().GetResult();
             if (!_channel.Writer.TryWrite(entry))
             {
                 // 入队失败（如已 Complete）：回退计数并降级同步写
@@ -487,6 +509,9 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         {
             return;
         }
+        long enq = Interlocked.Read(ref _enqueuedCount);
+        _logger.LogWarning("AuditLogger Dispose 开始：enqueued={Enq} processed={Proc}", enq, Interlocked.Read(ref _processedCount));
+
         _channel.Writer.TryComplete();
         try
         {
@@ -496,6 +521,15 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         {
             // 排空等待异常忽略，避免 Dispose 抛出
         }
+
+        bool drained = _consumerTask.IsCompleted;
+        long proc = Interlocked.Read(ref _processedCount);
+        if (!drained)
+        {
+            _logger.LogWarning("AuditLogger Dispose 排空超时：enqueued={Enq} processed={Proc}（部分审计可能未落盘）", enq, proc);
+        }
+        _logger.LogInformation("AuditLogger Dispose 完成：drained={Drained} enqueued={Enq} processed={Proc}", drained, enq, proc);
+
         _consumerCts.Cancel();
         _consumerCts.Dispose();
     }
@@ -507,6 +541,9 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         {
             return;
         }
+        long enq = Interlocked.Read(ref _enqueuedCount);
+        _logger.LogWarning("AuditLogger Dispose 开始：enqueued={Enq} processed={Proc}", enq, Interlocked.Read(ref _processedCount));
+
         _channel.Writer.TryComplete();
         try
         {
@@ -516,13 +553,22 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         {
             // 排空等待异常忽略
         }
+
+        bool drained = _consumerTask.IsCompleted;
+        long proc = Interlocked.Read(ref _processedCount);
+        if (!drained)
+        {
+            _logger.LogWarning("AuditLogger Dispose 排空超时：enqueued={Enq} processed={Proc}（部分审计可能未落盘）", enq, proc);
+        }
+        _logger.LogInformation("AuditLogger Dispose 完成：drained={Drained} enqueued={Enq} processed={Proc}", drained, enq, proc);
+
         _consumerCts.Cancel();
         _consumerCts.Dispose();
     }
 
     /// <summary>
-    /// 等待当前已入队记录全部落盘，但不关闭消费者。
-    /// 供测试在 Log 后、Query 前同步排空用；生产代码不需要调用。
+    /// 等待当前已入队记录全部落盘，但不关闭消费者。仅供测试同步用（Log 后、Query 前）。
+    /// <para>生产代码不调用：db_query 返回后排空由 DisposeAsync 保证（stdin EOF → host 优雅停止）。</para>
     /// </summary>
     public void Flush()
     {

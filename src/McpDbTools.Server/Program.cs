@@ -47,7 +47,7 @@ static async Task RunMcpAsync(string[] args)
     using IHost host = builder.Build();
 
     // 进程退出兜底：Ctrl+C 取消 token → host 优雅停止 → DI Singleton DisposeAsync 排空审计。
-    // 注意：TerminateProcess 硬杀无法兜底，db_query 审计可靠性由 ExecuteQuery 内 Flush 保证（诊断 20260722）。
+    // 注意：TerminateProcess 硬杀无法兜底，db_query 审计可靠性由 host 优雅停止 → AuditLogger.DisposeAsync 排空保证（stdin EOF 路径已实证）。
     using var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) =>
     {
