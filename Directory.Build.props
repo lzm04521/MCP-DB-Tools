@@ -1,0 +1,27 @@
+<Project>
+
+  <!-- 版本号：无 git/tag 时 fallback 基线 0.5.1；build 时由 SetGitVersion 从最近 tag 覆盖 -->
+  <PropertyGroup>
+    <Version>0.5.1</Version>
+    <AssemblyInformationalVersion>$(Version)</AssemblyInformationalVersion>
+    <FileVersion>$(Version)</FileVersion>
+  </PropertyGroup>
+
+  <!-- build 时从最近 git tag 注入版本；无 git/tag 时保留 fallback。
+       取干净 tag（abbrev=0，不带 commit 偏移），剥 v 前缀。 -->
+  <Target Name="SetGitVersion" BeforeTargets="PrepareForBuild">
+    <Exec Command="git describe --tags --abbrev=0"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true"
+          StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitDescribe" />
+    </Exec>
+    <PropertyGroup Condition="'$(GitDescribe)' != ''">
+      <GitVersion>$(GitDescribe.TrimStart('v'))</GitVersion>
+      <Version>$(GitVersion)</Version>
+      <AssemblyInformationalVersion>$(GitVersion)</AssemblyInformationalVersion>
+      <FileVersion>$(GitVersion)</FileVersion>
+    </PropertyGroup>
+  </Target>
+
+</Project>

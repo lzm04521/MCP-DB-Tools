@@ -37,5 +37,18 @@ window.adminApi = (() => {
     }
   }
 
-  return { loadConfig, requestJson };
+  async function loadVersion() {
+    try {
+      return await requestJson('/admin/api/version');
+    } catch (error) {
+      if (error.status !== 401) {
+        throw error;
+      }
+
+      await ensureSession();
+      return await requestJson('/admin/api/version');
+    }
+  }
+
+  return { loadConfig, loadVersion, requestJson };
 })();

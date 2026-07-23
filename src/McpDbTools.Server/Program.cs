@@ -9,6 +9,7 @@ using McpDbTools.Server.Database;
 using McpDbTools.Server.Maintenance;
 using McpDbTools.Server.Security;
 using McpDbTools.Server.Tools;
+using McpDbTools.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -127,6 +128,9 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
         }
         return await next(context);
     });
+
+    // 版本信息：从 AssemblyInformationalVersion（build 时 git tag 注入）读取，供 Admin UI 展示。
+    api.MapGet("/version", () => Results.Ok(new { version = AppVersion.Current }));
 
     api.MapGet("/config", (AdminConfigService service) => Results.Ok(service.GetConfig()));
     api.MapPut("/config", async (AdminConfigRequest request, AdminConfigService service, CancellationToken cancellationToken) =>

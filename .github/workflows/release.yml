@@ -35,6 +35,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 浅克隆默认不带 tag；必须取 tag 才能让 build 时 git describe 注入正确版本
+          fetch-tags: true
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4

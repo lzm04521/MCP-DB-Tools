@@ -217,6 +217,19 @@ textarea {
   text-align: center;
 }
 
+/* ============ 版本徽标（顶栏） ============ */
+.app-version {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-surface);
+  background: var(--color-secondary);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 /* ============ Toast ============ */
 .toast {
   position: fixed;

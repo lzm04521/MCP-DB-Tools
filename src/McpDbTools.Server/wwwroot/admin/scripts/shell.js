@@ -9,6 +9,7 @@
 
   const dom = {
     eyebrow: document.getElementById('eyebrow'),
+    appVersion: document.getElementById('appVersion'),
     viewTitle: document.getElementById('viewTitle'),
     configPath: document.getElementById('configPath'),
     reloadBtn: document.getElementById('reloadBtn'),
@@ -197,6 +198,16 @@
   }
   // 启动 idle 提示计时器（用户操作或保存后会重置）
   scheduleIdlePrompt();
+
+  // 版本号：启动一次性拉取，渲染到顶栏；不随视图切换变化。失败保留占位，不阻断 UI。
+  (async () => {
+    try {
+      const { version } = await window.adminApi.loadVersion();
+      dom.appVersion.textContent = version ? `v${version}` : '';
+    } catch (error) {
+      console.error('加载版本失败：', error);
+    }
+  })();
 
   window.adminShell = {
     /** 供视图在 config 加载完成后回填顶栏 configPath。 */
