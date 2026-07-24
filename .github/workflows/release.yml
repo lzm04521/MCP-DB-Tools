@@ -36,8 +36,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # 浅克隆默认不带 tag；必须取 tag 才能让 build 时 git describe 注入正确版本
-          fetch-tags: true
+          # 浅克隆默认不带 tag；用 fetch-depth: 0 全量拉取历史（含 tags），让 build 时 git describe 注入正确版本；
+          # 不能用 fetch-tags: true：annotated tag 指向特定 commit SHA 时会与 ref 拉取冲突（git 报 "Cannot fetch both X and refs/tags/vY to refs/tags/vY"）
+          fetch-depth: 0
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
