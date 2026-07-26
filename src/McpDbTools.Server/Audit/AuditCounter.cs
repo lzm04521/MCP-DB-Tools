@@ -136,6 +136,20 @@ public sealed class AuditCounter
         }
     }
 
+    /// <summary>
+    /// 清理（自动/手动）后把 total 重置为当前 audit_log COUNT。daily 不动。
+    /// <para>调用方传入复用的连接（与 DELETE 同连接），避免多连接写锁冲突。内存与持久化同步。</para>
+    /// </summary>
+    public void ResetTotalToCount(SqliteConnection connection, long count)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "UPDATE audit_counter_total SET total = @total WHERE id = 1";
+        cmd.Parameters.AddWithValue("@total", count);
+        cmd.ExecuteNonQuery();
+        Interlocked.Exchange(ref _total, count);
+        _logger.LogInformation("审计计数器 total 已重置为 {Total}（清理后对齐 audit_log COUNT）", count);
+    }
+
     private static long ReadDaily(SqliteConnection connection, string dateKey)
     {
         using var cmd = connection.CreateCommand();

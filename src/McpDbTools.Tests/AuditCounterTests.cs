@@ -103,6 +103,36 @@ public class AuditCounterTests : IDisposable
         Assert.Equal(expected, counter2.TotalCurrent);
     }
 
+    [Fact]
+    public void ResetTotalToCount_SetsTotal_DailyUntouched()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        string today = TodayKey();
+        counter.Increment(today);
+        counter.Increment(today);
+        Assert.Equal(2, counter.TotalCurrent);
+
+        // 模拟清理后 audit_log 只剩 5 条
+        using (var conn = counter.OpenConnection())
+        {
+            counter.ResetTotalToCount(conn, 5);
+        }
+        Assert.Equal(5, counter.TotalCurrent);
+
+        // daily 不动
+        Assert.Equal(2, counter.TodayCount);
+
+        // 持久化校验
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        Assert.Equal(5, counter2.TotalCurrent);
+        Assert.Equal(2, counter2.TodayCount);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理 */ }
