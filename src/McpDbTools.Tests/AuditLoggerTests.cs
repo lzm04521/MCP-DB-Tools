@@ -328,6 +328,34 @@ public class AuditLoggerTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Log_PassesTodayLocalKey_ToCounter()
+    {
+        // 验证 AuditLogger.Log 内部把 DateTime.Today.ToString("yyyy-MM-dd") 传给 counter
+        var (store, logger, _, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));
+            logger.Flush();
+        }
+        var page = logger.Query(new AuditLogQuery());
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), page.Counters.TodayDateKey);
+    }
+
+    [Fact]
+    public void Log_SingleEntry_CounterNotDoubleCount()
+    {
+        // C1 回归保护：正常路径单条 Log 不应 double-count（counter == audit_log 条数）
+        var (store, logger, counter, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));
+            logger.Flush();
+            Assert.Equal(1, counter.TotalCurrent);   // 恰好 1，不多
+            Assert.Equal(1, counter.TodayCount);
+        }
+    }
+
     private static AuditEntry MakeEntry(string sql, bool success, string project = "p",
         string? error = null, string? time = null) => new()
     {

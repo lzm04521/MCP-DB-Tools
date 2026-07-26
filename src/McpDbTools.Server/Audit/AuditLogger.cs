@@ -129,13 +129,13 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             _channel.Writer.WaitToWriteAsync().AsTask().GetAwaiter().GetResult();
             if (!_channel.Writer.TryWrite(entry))
             {
-                // 入队失败（如已 Complete）：回退计数并降级同步写
+                // 入队失败（如已 Complete）：回退入队计数并降级同步写。
+                // counter 不重复加：正常路径 WaitToWriteAsync 前已 Increment（应写语义），
+                // 此处 WriteEntryCore 同步落盘 audit_log，counter 与 audit_log 各 +1，一致。
                 Interlocked.Decrement(ref _enqueuedCount);
                 WriteEntryCore(entry);
                 Interlocked.Increment(ref _enqueuedCount);
                 Interlocked.Increment(ref _processedCount);
-                // 计数器应写 +1：与审计 INSERT 解耦持久化（A2），崩溃可被对账发现
-                _counter.Increment(DateTime.Today.ToString("yyyy-MM-dd"));
             }
         }
         catch (Exception ex)
