@@ -870,3 +870,36 @@ input[readonly] {
   background: var(--color-accent-bg, #eef2ff);
   color: var(--color-accent, #4338ca);
 }
+
+/* ============ 审计计数器对账条 ============ */
+.audit-counters {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: rgba(37, 99, 235, 0.05);
+  border: 1px solid rgba(37, 99, 235, 0.15);
+  border-radius: var(--radius-lg);
+}
+
+.audit-counters .counter-cell {
+  display: inline-flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.audit-counters strong {
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 当日计数器 ≠ 今日落盘：红色高亮，提示丢日志 */
+.audit-counters.mismatch {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.45);
+}
+
+.audit-counters.mismatch strong {
+  color: #dc2626;
+}

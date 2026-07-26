@@ -69,6 +69,11 @@
         </section>
 
         <section class="card">
+          <div class="audit-counters" id="auditCounters">
+            <span class="counter-cell"><span class="muted">计数器总数</span> <strong id="ctrTotal">-</strong></span>
+            <span class="counter-cell"><span class="muted">当日计数器</span> <strong id="ctrToday">-</strong></span>
+            <span class="counter-cell"><span class="muted">今日落盘</span> <strong id="ctrPersisted">-</strong></span>
+          </div>
           <div class="card-title">
             <div>
               <h2>审计日志</h2>
@@ -137,7 +142,8 @@
       'searchBtn', 'resetBtn', 'refreshBtn',
       'resultMeta', 'auditBody', 'pager',
       'sqlDialog', 'sqlDialogTitle', 'sqlDialogContent', 'copySqlBtn',
-      'resultSection', 'resultStatus', 'resultTable'
+      'resultSection', 'resultStatus', 'resultTable',
+      'auditCounters', 'ctrTotal', 'ctrToday', 'ctrPersisted'
     ];
     const refs = {};
     for (const id of ids) {
@@ -287,6 +293,7 @@
 
   function render() {
     const result = state.result;
+    renderCounters(result);
     if (!result) {
       el.resultMeta.textContent = '输入条件后点击「查询」。';
       el.auditBody.innerHTML = '<tr class="audit-empty-row"><td colspan="9">暂无数据</td></tr>';
@@ -310,6 +317,25 @@
       el.auditBody.appendChild(renderRow(entry));
     }
     renderPager(result);
+  }
+
+  function renderCounters(result) {
+    const c = result && result.counters;
+    if (!c) {
+      el.ctrTotal.textContent = '-';
+      el.ctrToday.textContent = '-';
+      el.ctrPersisted.textContent = '-';
+      el.auditCounters.classList.remove('mismatch');
+      return;
+    }
+    el.ctrTotal.textContent = String(c.totalCounter ?? '-');
+    el.ctrToday.textContent = String(c.todayCounter ?? '-');
+    el.ctrPersisted.textContent = String(c.todayPersisted ?? '-');
+    // 当日计数器 ≠ 今日落盘 → 高亮（差值即丢失的审计日志）
+    const mismatch = typeof c.todayCounter === 'number'
+      && typeof c.todayPersisted === 'number'
+      && c.todayCounter !== c.todayPersisted;
+    el.auditCounters.classList.toggle('mismatch', mismatch);
   }
 
   function renderRow(entry) {
