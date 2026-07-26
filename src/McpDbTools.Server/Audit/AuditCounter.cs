@@ -129,8 +129,10 @@ public sealed class AuditCounter
             }
             using var connection = OpenConnection();
             EnsureTables(connection);
+            // 先就位今日计数，再发布新 dateKey：避免并发 Increment 读到新 key 后 +1 被此处 Exchange 抹掉
+            long loaded = ReadDaily(connection, dateKey);
+            Interlocked.Exchange(ref _todayCount, loaded);
             Volatile.Write(ref _todayDateKey, dateKey);
-            Interlocked.Exchange(ref _todayCount, ReadDaily(connection, dateKey));
         }
     }
 
