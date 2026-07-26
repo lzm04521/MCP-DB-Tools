@@ -289,6 +289,8 @@ static void ConfigureBusinessServices(IServiceCollection services, IConfiguratio
     services.AddSingleton<ISqlGuard, SqlGuard>();
     services.AddSingleton<DatabaseProviderFactory>();
     services.AddSingleton<IQueryConcurrencyLimiter, QueryConcurrencyLimiter>();
+    // 审计计数器（AuditLogger 依赖）：持久化总数 + 按本地日，对账用
+    services.AddSingleton<AuditCounter>();
     services.AddSingleton<AuditLogger>();
     services.AddSingleton<DbQueryTool>();
     services.AddSingleton<DbListTool>();
