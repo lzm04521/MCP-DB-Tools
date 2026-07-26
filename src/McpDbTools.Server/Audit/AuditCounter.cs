@@ -68,6 +68,72 @@ public sealed class AuditCounter
         }
     }
 
+    /// <summary>
+    /// 应写计数 +1：内存 Interlocked 累加 + 同步持久化 UPDATE。
+    /// <para>在 AuditLogger.Log() 入队前调用。崩溃在 Increment 后入队前 → 计数器有、库没有 → 对账发现丢。</para>
+    /// <para>持久化失败：catch + 记 Error，内存仍累加（方案 i）。</para>
+    /// </summary>
+    public void Increment(string localDateKey)
+    {
+        // 内存累加（无锁快路径）
+        Interlocked.Increment(ref _total);
+
+        // 跨日处理：先确保 today key 与今日计数对齐，再累加今日
+        string current = Volatile.Read(ref _todayDateKey);
+        if (localDateKey != current)
+        {
+            EnsureToday(localDateKey);
+        }
+        Interlocked.Increment(ref _todayCount);
+
+        // 同步持久化（锁内串行，SQLite 单连接非线程安全）
+        try
+        {
+            lock (_persistLock)
+            {
+                using var connection = OpenConnection();
+                EnsureTables(connection);
+                using var tx = connection.BeginTransaction();
+                using (var cmdTotal = connection.CreateCommand())
+                {
+                    cmdTotal.CommandText = "UPDATE audit_counter_total SET total = total + 1 WHERE id = 1";
+                    cmdTotal.ExecuteNonQuery();
+                }
+                using (var cmdDaily = connection.CreateCommand())
+                {
+                    cmdDaily.CommandText = """
+                        INSERT INTO audit_counter_daily(date, count) VALUES(@date, 1)
+                        ON CONFLICT(date) DO UPDATE SET count = count + 1
+                        """;
+                    cmdDaily.Parameters.AddWithValue("@date", localDateKey);
+                    cmdDaily.ExecuteNonQuery();
+                }
+                tx.Commit();
+            }
+        }
+        catch (Exception ex)
+        {
+            // 方案 i：内存已加、持久化未加；不影响审计主流程，但必须上报
+            _logger.LogError(ex, "审计计数器持久化失败（内存计数仍已累加）");
+        }
+    }
+
+    /// <summary>跨日时重置内存今日 key 与今日计数（从持久化表读今日行）。</summary>
+    private void EnsureToday(string dateKey)
+    {
+        lock (_persistLock)
+        {
+            if (Volatile.Read(ref _todayDateKey) == dateKey)
+            {
+                return; // 双检：并发已切换
+            }
+            using var connection = OpenConnection();
+            EnsureTables(connection);
+            Volatile.Write(ref _todayDateKey, dateKey);
+            Interlocked.Exchange(ref _todayCount, ReadDaily(connection, dateKey));
+        }
+    }
+
     private static long ReadDaily(SqliteConnection connection, string dateKey)
     {
         using var cmd = connection.CreateCommand();
