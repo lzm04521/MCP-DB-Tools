@@ -48,4 +48,23 @@ public sealed record AuditLogPage
 
     /// <summary>每页条数。</summary>
     public int PageSize { get; init; }
+
+    /// <summary>审计计数器对账载荷（计数器总数 / 当日计数器 / 今日落盘 COUNT）。</summary>
+    public required AuditCounters Counters { get; init; }
+}
+
+/// <summary>审计计数器对账载荷。前端三个数字并排显示，不等则高亮（差值即丢失日志）。</summary>
+public sealed record AuditCounters
+{
+    /// <summary>计数器总数（应写累计，清理后重置为 COUNT(*)）。</summary>
+    public long TotalCounter { get; init; }
+
+    /// <summary>当日计数器（本地时区日，按日历史行）。</summary>
+    public long TodayCounter { get; init; }
+
+    /// <summary>今日落盘数（audit_log 中今日 time 的 COUNT(*)，本地时区日界）。</summary>
+    public long TodayPersisted { get; init; }
+
+    /// <summary>本地今日 yyyy-MM-dd，便于 UI 显示。</summary>
+    public string TodayDateKey { get; init; } = "";
 }

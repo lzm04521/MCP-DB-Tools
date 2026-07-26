@@ -258,7 +258,8 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             Items = items,
             Total = total,
             Page = query.Page,
-            PageSize = query.PageSize
+            PageSize = query.PageSize,
+            Counters = new AuditCounters()
         };
     }
 
