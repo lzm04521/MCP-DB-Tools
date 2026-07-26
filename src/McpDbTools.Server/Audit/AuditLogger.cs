@@ -46,6 +46,7 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
 {
     private readonly string _connectionString;
     private readonly ILogger<AuditLogger> _logger;
+    private readonly AuditCounter _counter;
     private int _initialized;
 
     // 默认队列容量：正常 QPS 下永不满；满时 FullMode=Wait 阻塞 Log（而非丢审计）。
@@ -61,12 +62,12 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
     private long _enqueuedCount;
     private long _processedCount;
 
-    public AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger)
-        : this(options, logger, DefaultChannelCapacity)
+    public AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger, AuditCounter counter)
+        : this(options, logger, counter, DefaultChannelCapacity)
     {
     }
 
-    internal AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger, int channelCapacity)
+    internal AuditLogger(IOptions<ConfigStoreOptions> options, ILogger<AuditLogger> logger, AuditCounter counter, int channelCapacity)
     {
         // audit.db 放在集中解析的数据目录下，尊重 DI 中 ConfigPath 的目录（测试/显式覆盖场景）
         string dir = DataDirectoryResolver.EnsureExists(options.Value.ConfigPath);
@@ -79,6 +80,7 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             Cache = SqliteCacheMode.Shared
         }.ToString();
         _logger = logger;
+        _counter = counter;
 
         // 有界 Channel：单消费者串行写；满时等待空位（不丢审计），防无界 OOM。
         _channel = Channel.CreateBounded<AuditEntry>(
@@ -110,11 +112,15 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                 WriteEntryCore(entry);
                 Interlocked.Increment(ref _enqueuedCount);
                 Interlocked.Increment(ref _processedCount);
+                // 计数器应写 +1：与审计 INSERT 解耦持久化（A2），崩溃可被对账发现
+                _counter.Increment(DateTime.Today.ToString("yyyy-MM-dd"));
                 return;
             }
 
             // 先递增入队计数再写入：保证 Flush 等待的 target >= 实际写入数
             Interlocked.Increment(ref _enqueuedCount);
+            // 计数器应写 +1：与审计 INSERT 解耦持久化（A2），崩溃可被对账发现
+            _counter.Increment(DateTime.Today.ToString("yyyy-MM-dd"));
             // 有界 Channel 满时阻塞等空位（控制台宿主无 SynchronizationContext，同步等异步安全）；
             // 不丢审计。Complete 后 WaitToWriteAsync 返回 false，走降级同步写。
             // 注意：ValueTask 由 IValueTaskSource 支持时不能直接 .GetAwaiter().GetResult()，
@@ -128,6 +134,8 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                 WriteEntryCore(entry);
                 Interlocked.Increment(ref _enqueuedCount);
                 Interlocked.Increment(ref _processedCount);
+                // 计数器应写 +1：与审计 INSERT 解耦持久化（A2），崩溃可被对账发现
+                _counter.Increment(DateTime.Today.ToString("yyyy-MM-dd"));
             }
         }
         catch (Exception ex)
@@ -259,7 +267,13 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             Total = total,
             Page = query.Page,
             PageSize = query.PageSize,
-            Counters = new AuditCounters()
+            Counters = new AuditCounters
+            {
+                TotalCounter = _counter.TotalCurrent,
+                TodayCounter = _counter.TodayCount,
+                TodayPersisted = CountTodayLocal(connection),
+                TodayDateKey = _counter.TodayDateKey
+            }
         };
     }
 
@@ -324,6 +338,22 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         }
 
         return (sql, parameters, total);
+    }
+
+    /// <summary>
+    /// 统计今日（本地时区日）已落盘的 audit_log 行数，供 UI 与当日计数器对账。
+    /// <para>本地今日 0 点 → 转 UTC ISO → 与 audit_log.time（UTC ISO）比较。</para>
+    /// </summary>
+    private static long CountTodayLocal(SqliteConnection connection)
+    {
+        DateTime localTodayStart = DateTime.SpecifyKind(DateTime.Today, DateTimeKind.Local);
+        string todayStartUtc = localTodayStart
+            .ToUniversalTime()
+            .ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM audit_log WHERE time >= @start";
+        cmd.Parameters.AddWithValue("@start", todayStartUtc);
+        return (long)cmd.ExecuteScalar()!;
     }
 
     private static string EscapeLike(string value)
@@ -393,6 +423,11 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                 "审计日志清理：主表 {Main} 条、子表 {Result} 条、孤儿 {Orphan} 条（{Days} 天前）",
                 deleted, resultDeleted, orphanDeleted, days);
         }
+        // 清理后把计数器 total 对齐到当前 audit_log COUNT（daily 不动）
+        using var countCmd = connection.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*) FROM audit_log";
+        long remaining = (long)countCmd.ExecuteScalar()!;
+        _counter.ResetTotalToCount(connection, remaining);
         return deleted;
     }
 
@@ -446,6 +481,32 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                 using var indexResult = connection.CreateCommand();
                 indexResult.CommandText = "CREATE INDEX IF NOT EXISTS idx_audit_result_id ON audit_log_result(audit_id)";
                 indexResult.ExecuteNonQuery();
+
+                // 计数器两表（幂等建表；counter 自身 Load 时也会 EnsureTables，此处仅为启动顺序清晰）
+                using var counterTotal = connection.CreateCommand();
+                counterTotal.CommandText = """
+                    CREATE TABLE IF NOT EXISTS audit_counter_total (
+                        id    INTEGER PRIMARY KEY,
+                        total INTEGER NOT NULL DEFAULT 0
+                    )
+                    """;
+                counterTotal.ExecuteNonQuery();
+
+                using var counterSeed = connection.CreateCommand();
+                counterSeed.CommandText = "INSERT OR IGNORE INTO audit_counter_total(id, total) VALUES(1, 0)";
+                counterSeed.ExecuteNonQuery();
+
+                using var counterDaily = connection.CreateCommand();
+                counterDaily.CommandText = """
+                    CREATE TABLE IF NOT EXISTS audit_counter_daily (
+                        date  TEXT PRIMARY KEY,
+                        count INTEGER NOT NULL DEFAULT 0
+                    )
+                    """;
+                counterDaily.ExecuteNonQuery();
+
+                // 表就绪后加载内存快照（首次部署从 0 起，不回填历史 COUNT）
+                _counter.Load();
             }
             catch (Exception ex)
             {

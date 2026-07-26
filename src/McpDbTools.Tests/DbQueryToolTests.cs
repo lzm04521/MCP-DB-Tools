@@ -34,7 +34,7 @@ public class DbQueryToolTests : IDisposable
         var store = new ConfigStore(
             loggerFactory.CreateLogger<ConfigStore>(),
             options);
-        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>()));
         return new DbQueryTool(store, new SqlGuard(), new DatabaseProviderFactory(), audit, new QueryConcurrencyLimiter());
     }
 
@@ -123,7 +123,7 @@ public class DbQueryToolTests : IDisposable
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
-        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>()));
         // stub provider 只挂 sqlserver 类型
         var factory = new DatabaseProviderFactory(
             new Dictionary<DatabaseType, IDatabaseProvider>
@@ -227,7 +227,7 @@ public class DbQueryToolTests : IDisposable
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
-        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>());
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>()));
         var factory = new DatabaseProviderFactory(
             new Dictionary<DatabaseType, IDatabaseProvider>
             {

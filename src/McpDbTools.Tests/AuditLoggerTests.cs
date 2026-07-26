@@ -17,7 +17,7 @@ public class AuditLoggerTests : IDisposable
     }
 
     /// <summary>在临时目录构造 ConfigStore + AuditLogger（db 文件落在 config.json 同目录）。</summary>
-    private (ConfigStore store, AuditLogger logger, string dbPath) Create(int channelCapacity = 1000)
+    private (ConfigStore store, AuditLogger logger, AuditCounter counter, string dbPath) Create(int channelCapacity = 1000)
     {
         string configPath = Path.Combine(_tempDir, "config.json");
         string json = """
@@ -30,8 +30,9 @@ public class AuditLoggerTests : IDisposable
         var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
-        var logger = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), channelCapacity);
-        return (store, logger, Path.Combine(_tempDir, "audit.db"));
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        var logger = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), counter, channelCapacity);
+        return (store, logger, counter, Path.Combine(_tempDir, "audit.db"));
     }
 
     /// <summary>以「当前 UTC 往前 daysAgo 天」生成 ISO 时间，保证各条记录时间互不相同、可稳定排序。</summary>
@@ -42,7 +43,7 @@ public class AuditLoggerTests : IDisposable
     public void Log_AlwaysWrites_GlobalAuditOn()
     {
         // 需求 3：审计全局开启，不再依赖开关。任何 Log 调用都应写入。
-        var (store, logger, dbPath) = Create();
+        var (store, logger, _, dbPath) = Create();
         using (store)
         {
             logger.Log(new AuditEntry
@@ -76,7 +77,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void MultipleEntries_AreOrderedByTimeDescending()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("SELECT 1", true, time: Iso(3)));
@@ -97,7 +98,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void Query_FiltersByProjectAndSuccess()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("SELECT 1", true, project: "erp"));
@@ -116,7 +117,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void Query_FiltersByTimeRange()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("A", true, time: Iso(5)));
@@ -137,7 +138,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void Query_FiltersBySqlContains_CaseInsensitive()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("SELECT * FROM Users", true));
@@ -156,7 +157,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void Query_PaginationWorks()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             for (int i = 0; i < 7; i++)
@@ -184,7 +185,7 @@ public class AuditLoggerTests : IDisposable
     public void Query_NormalizesPageSize()
     {
         // 5000 以内合法值保留原值；超出 5000 归一化为 50
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("SELECT 1", true));
@@ -201,7 +202,7 @@ public class AuditLoggerTests : IDisposable
     public void Log_DoesNotThrow_OnUnusualValues()
     {
         // 验证参数化写入对特殊字符、空错误等安全
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(new AuditEntry { Project = "p", Sql = "SELECT 'a''b'", Success = true });
@@ -218,7 +219,7 @@ public class AuditLoggerTests : IDisposable
     public void DeleteOlderThan_RemovesOldKeepsNew()
     {
         // 用 1/4/10 天偏移构造新旧记录，便于验证 DeleteOlderThan 按天数删除的行为
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("old", true, time: Iso(10)));   // 10 天前
@@ -240,11 +241,90 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void DeleteOlderThan_RejectsNonPositiveDays()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             Assert.Throws<ArgumentException>(() => logger.DeleteOlderThan(0));
             Assert.Throws<ArgumentException>(() => logger.DeleteOlderThan(-5));
+        }
+    }
+
+    [Fact]
+    public void Query_Counters_NormalPath_CounterEqualsPersisted()
+    {
+        var (store, logger, _, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));
+            logger.Log(MakeEntry("SELECT 2", true));
+            logger.Flush(); // 等消费者落盘
+        }
+
+        var page = logger.Query(new AuditLogQuery());
+        Assert.Equal(2, page.Counters.TodayCounter);
+        Assert.Equal(2, page.Counters.TodayPersisted);
+        Assert.Equal(2, page.Counters.TotalCounter);
+        Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), page.Counters.TodayDateKey);
+    }
+
+    [Fact]
+    public void Query_Counters_DetectsLoss_WhenCounterAheadOfPersisted()
+    {
+        // 验证对账能反映"应写未落盘"差值：counter 领先于 audit_log 实际落盘数
+        var (store, logger, counter, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));
+            logger.Flush(); // 确定落盘：audit_log 今日=1，counter 今日=1
+
+            // 手动注入一条"应写未落盘"：counter+1，audit_log 不变
+            counter.Increment(DateTime.Today.ToString("yyyy-MM-dd"));
+
+            var page = logger.Query(new AuditLogQuery());
+            Assert.Equal(2, page.Counters.TodayCounter);   // counter 领先
+            Assert.Equal(1, page.Counters.TodayPersisted); // 实际落盘
+        }
+    }
+
+    [Fact]
+    public void DeleteOlderThan_ResetsTotalCounterToCount()
+    {
+        var (store, logger, _, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("old", true, time: Iso(10)));
+            logger.Log(MakeEntry("mid", true, time: Iso(4)));
+            logger.Log(MakeEntry("new", true, time: Iso(1)));
+            logger.Flush();
+
+            // 清理前 total=3
+            Assert.Equal(3, logger.Query(new AuditLogQuery()).Counters.TotalCounter);
+
+            logger.DeleteOlderThan(5); // 删 old，剩 2
+
+            var page = logger.Query(new AuditLogQuery());
+            Assert.Equal(2, page.Counters.TotalCounter); // 重置为 COUNT
+            // daily 不动：仍为 3（今日 counter 不参与清理重置）
+            Assert.Equal(3, page.Counters.TodayCounter);
+        }
+    }
+
+    [Fact]
+    public void Increment_CrossDay_RolloverTodayCount()
+    {
+        // 直接验证 AuditCounter 跨日（AuditLogger.Log 内部转 localDateKey）
+        var (store, logger, counter, _) = Create();
+        using (store)
+        {
+            string today = DateTime.Today.ToString("yyyy-MM-dd");
+            string yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd");
+            counter.Increment(today);
+            counter.Increment(today);
+            counter.Increment(yesterday); // 触发跨日
+
+            Assert.Equal(3, counter.TotalCurrent);
+            Assert.Equal(1, counter.TodayCount); // 切到昨日，今日计数=昨日行
+            Assert.Equal(yesterday, counter.TodayDateKey);
         }
     }
 
@@ -300,7 +380,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void Log_WritesResultJson_WhenProvided()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntryWithResult("SELECT 1", "{\"columns\":[\"x\"],\"rows\":[]}"));
@@ -316,7 +396,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void Log_SkipsResultTable_WhenResultJsonNull()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("SELECT 1", true));   // MakeEntry 不带 ResultJson → null
@@ -332,7 +412,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void GetResultJson_ReturnsJson_WhenExists()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         const string payload = "{\"columns\":[\"id\"],\"rows\":[[1],[2]]}";
         using (store)
         {
@@ -348,7 +428,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void GetResultJson_ReturnsNull_WhenMissing()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntry("SELECT 1", true));
@@ -362,7 +442,7 @@ public class AuditLoggerTests : IDisposable
     [Fact]
     public void DeleteOlderThan_RemovesBothTables_NoOrphans()
     {
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             logger.Log(MakeEntryWithResult("old", "{\"columns\":[],\"rows\":[]}", time: Iso(10)));
@@ -385,7 +465,7 @@ public class AuditLoggerTests : IDisposable
     {
         // 守护 Dispose 排空契约：Log 后不调 Flush，仅 Dispose，全部应落盘。
         // 取代 9dd4b49 的"返回即落盘"契约（ExecuteQuery 内 Flush 已移除后）。
-        var (store, logger, _) = Create();
+        var (store, logger, _, _) = Create();
         using (store)
         {
             for (int i = 0; i < 10; i++)
@@ -403,7 +483,7 @@ public class AuditLoggerTests : IDisposable
     {
         // 容量 4，写入 50 条远超容量：验证 FullMode=Wait 不丢、不抛（阻塞等消费者腾位）。
         // 阻塞时序信任标准库 BoundedChannelFullMode.Wait 语义，此处只验证最终全落盘。
-        var (store, logger, _) = Create(channelCapacity: 4);
+        var (store, logger, _, _) = Create(channelCapacity: 4);
         using (store)
         {
             for (int i = 0; i < 50; i++)
