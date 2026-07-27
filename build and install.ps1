@@ -771,7 +771,7 @@ elseif ($useScheduledTask) {
 }
 else {
     Write-Host "警告：未部署常驻承载（NSSM / 计划任务）。HTTP 模式下 MCP 客户端将无法连接服务。" -ForegroundColor Yellow
-    Write-Host "请手启动: $exePath --admin-port $adminPort" -ForegroundColor Yellow
+    Write-Host "请手动启动: $exePath --admin-port $adminPort" -ForegroundColor Yellow
 }
 
 Write-Host ""
