@@ -60,74 +60,38 @@ dotnet build
 
 ### 接入 MCP 客户端
 
-本工具通过 MCP stdio 与 Agent 通信。下面给出 Claude Code 与 Codex 的配置示例，其它 MCP 客户端按各自文档以相同 command / args / env 接入即可。
+本工具通过 MCP Streamable HTTP 与 Agent 通信。服务须先启动（开发时 `dotnet run --project src/McpDbTools.Server`；生产环境用 NSSM 服务或登录计划任务），再让 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。下面给出 Claude Code 与 Codex 的配置示例，其它 MCP 客户端按各自文档以 HTTP URL 接入即可。
 
-> 建议先用 Admin UI 测试连接、确认配置无误，再接入客户端：`dotnet run --project src/McpDbTools.Server -- --admin-only`，打开日志中的 `http://127.0.0.1:5123/admin`。
+> 建议先用 Admin UI 测试连接、确认配置无误，再接入客户端：`dotnet run --project src/McpDbTools.Server`，浏览器打开 `http://127.0.0.1:5123/admin`。
 
 #### Claude Code
 
-Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 JSON 配置 `mcpServers`。
-
-开发时直接用 `dotnet run`（指向源码 csproj，并指定配置文件）：
+Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 JSON 配置 `mcpServers`。HTTP 模式下只需指定 URL，服务须先单独启动（开发时 `dotnet run --project src/McpDbTools.Server`，可用 `ConfigStore__ConfigPath` 指向源码目录的 config.json；生产环境用 NSSM 服务或计划任务）：
 
 ```json
 {
   "mcpServers": {
     "db-tools": {
-      "command": "dotnet",
-      "args": [
-        "run",
-        "--project",
-        "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/McpDbTools.Server.csproj"
-      ],
-      "env": {
-        "ConfigStore__ConfigPath": "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json"
-      }
+      "type": "http",
+      "url": "http://127.0.0.1:5123/mcp"
     }
   }
 }
 ```
 
-发布后推荐直接运行 exe（程序默认读取 `%ProgramData%\McpDbTools\config.json`，无需传 `ConfigStore__ConfigPath`）：
+也可用 Claude Code CLI 一条命令添加（等效于上面配置；CLI 默认 scope 是 `local`，如要写用户级配置请加 `-s user`，要写项目级共享 `.mcp.json` 请加 `-s project`）：
 
-```json
-{
-  "mcpServers": {
-    "db-tools": {
-      "command": "D:/Tools/McpDbTools/McpDbTools.Server.exe",
-      "args": []
-    }
-  }
-}
+```bash
+claude mcp add --transport http db-tools http://127.0.0.1:5123/mcp
 ```
 
 #### Codex
 
-[Codex](https://developers.openai.com/codex) 在 `~/.codex/config.toml`（或项目级 `.codex/config.toml`）中用 TOML 配置，每个 server 一个 `[mcp_servers.<name>]` 表，字段为 `command` / `args` / `env`。
-
-开发时直接用 `dotnet run`：
+[Codex](https://developers.openai.com/codex) 在 `~/.codex/config.toml`（或项目级 `.codex/config.toml`）中用 TOML 配置，每个 server 一个 `[mcp_servers.<name>]` 表。Codex 通过是否存在 `url` 字段区分 stdio 与 streamable HTTP（无显式 `type` 字段），HTTP 模式只需写 `url`：
 
 ```toml
 [mcp_servers.db-tools]
-command = "dotnet"
-args = ["run", "--project", "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/McpDbTools.Server.csproj"]
-
-[mcp_servers.db-tools.env]
-ConfigStore__ConfigPath = "D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json"
-```
-
-发布后直接运行 exe（程序默认读取 `%ProgramData%\McpDbTools\config.json`）：
-
-```toml
-[mcp_servers.db-tools]
-command = "D:/Tools/McpDbTools/McpDbTools.Server.exe"
-args = []
-```
-
-也可以用 Codex CLI 一条命令添加（等效于上面发布后配置）：
-
-```bash
-codex mcp add db-tools -- D:/Tools/McpDbTools/McpDbTools.Server.exe
+url = "http://127.0.0.1:5123/mcp"
 ```
 
 > Codex 默认工具执行超时 `tool_timeout_sec = 60` 秒。如果数据库查询可能较慢，可在 `[mcp_servers.db-tools]` 下追加 `tool_timeout_sec = 120` 调大。
@@ -142,17 +106,24 @@ codex mcp add db-tools -- D:/Tools/McpDbTools/McpDbTools.Server.exe
 
 ## 运行模式
 
-| 模式         | 参数           | 说明                                               |
-| ------------ | -------------- | -------------------------------------------------- |
-| MCP 模式     | 无参数         | 默认。启动 MCP stdio server，不启动 Admin UI       |
-| Admin 模式   | `--admin-only` | 只启动本机 Admin Web 服务，不启动 MCP              |
-| 调试混合模式 | `--admin`      | 同时启动两者，仅用于开发调试                       |
+默认即单一 Web 进程，同端口同时提供 Admin UI（`/admin`）与 MCP Streamable HTTP（`/mcp`）：
 
-Admin UI 默认端口 `5123`（`--admin-port` 可改），只监听 `127.0.0.1`。首次访问 `/admin` 自动设置仅限该路径的 HttpOnly、SameSite=Strict 本机会话 cookie，secret 只存于进程内存。
+| 参数            | 说明                                                       |
+| --------------- | ---------------------------------------------------------- |
+| 无参数          | 默认。启动 Web 服务，同端口出 `/admin` + `/mcp`             |
+| `--admin-port`  | 覆盖默认端口 `5123`（取值 1-65535）                        |
+
+旧的 `--admin-only` / `--admin` 参数已移除。Admin UI 默认端口 `5123`（`--admin-port` 可改），只监听 `127.0.0.1`。首次访问 `/admin` 自动设置仅限该路径的 HttpOnly、SameSite=Strict 本机会话 cookie，secret 只存于进程内存。
+
+服务须常驻（NSSM 服务或登录计划任务，见 [发布与部署](#发布与部署)）；不常驻则 MCP 客户端无法连接。
+
+> **安全提示（本机信任模型）：** HTTP 合一后 `/admin` 与 `/mcp` 同进程同端口，均仅监听 `127.0.0.1`，且 `/mcp` 与 `/admin/api/*` **均不鉴权**——`/admin` 的会话 cookie 仅限浏览器 `/admin` 路径，不保护 API 调用。任何能访问 `127.0.0.1:<port>` 的本机进程或 Agent 都可调用 `/admin/api/*` 修改配置，或经 `/mcp` 查询数据库。远程访问、TLS、端点鉴权留作后续独立设计（本次不做）；多用户主机或不受信任环境暂不适用。
 
 ```bash
+# 开发时
+dotnet run --project src/McpDbTools.Server
 ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json \
-  dotnet run --project src/McpDbTools.Server -- --admin-only --admin-port 5123
+  dotnet run --project src/McpDbTools.Server -- --admin-port 5123
 ```
 
 ## Admin UI
@@ -326,7 +297,7 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 - 每次成功解析到项目与环境的 `db_query` 都会记录一条（含被阻止与执行失败）；早期参数解析错误（项目/环境不存在）不入库。
 - 写入经 Channel 入队、单消费者串行落盘，避免高并发下线程池饥饿与写锁竞争。
-- 清理策略由「全局设置」的 `maintenance` 节点控制：默认不清理，可开启按保留天数的自动清理（后台服务每小时检查，仅在 Admin/混合模式运行时生效），也可手动按 10/20/30/50 天清理。
+- 清理策略由「全局设置」的 `maintenance` 节点控制：默认不清理，可开启按保留天数的自动清理（后台服务每小时检查，随 Web 进程常驻运行），也可手动按 10/20/30/50 天清理。
 - 「全局设置」的「记录查询结果」开关（`maintenance.auditRecordResults`，默认关闭）开启后，成功的 `db_query` 会把完整查询结果（columns + rows）以 JSON 存入 `audit_log_result` 子表（1:1 关联主表）。结果集不限制大小，关闭开关或失败查询不入子表。审计日志列表不展示结果，点击 SQL 单元格弹窗时按需懒加载渲染为表格（含行号、NULL 灰字、滚动）。开关关闭前的老记录无结果数据，弹窗提示「该记录无查询结果」。开启后请关注 `audit.db` 体积，配合自动/手动清理使用。
 
 ## SQL 安全策略
@@ -360,7 +331,7 @@ D:\Tools\McpDbTools\                # 安装目录（程序文件，升级时可
 └── backups\                        # 配置备份（保存自动生成）
 ```
 
-数据目录选用 `%ProgramData%\McpDbTools`（Windows 跨用户共享数据目录），保证 **LocalSystem 服务**（Admin UI 默认承载方式）与**当前用户进程**（Claude/Codex 调用的 MCP server）读写同一份数据。部署脚本会自动给 Users 组授予 Modify 权限。
+数据目录选用 `%ProgramData%\McpDbTools`（Windows 跨用户共享数据目录），保证 **LocalSystem 服务**（NSSM / 计划任务承载的统一 Web 进程）与**当前用户进程**（开发时手动 `dotnet run`）读写同一份数据。部署脚本会自动给 Users 组授予 Modify 权限。
 
 > 数据目录由 `DataDirectoryResolver` 集中解析，优先级：调用方传入 > 环境变量 `ConfigStore__ConfigPath` > `%ProgramData%\McpDbTools` > exe 同目录。多数情况下无需关心，默认值即可。
 
@@ -412,19 +383,21 @@ dotnet publish src/McpDbTools.Server -c Release
 
 发布产物拷到目标目录后，首次运行会自动在 `%ProgramData%\McpDbTools` 创建数据目录与空配置。也可用环境变量 `ConfigStore__ConfigPath` 指定自定义路径。
 
-### Admin UI 自启动
+### 服务自启动
 
-生产环境推荐 Admin UI 单独承载，**不**在 MCP 客户端配置里加 `--admin` 参数（避免 Agent 通过 MCP 进程修改配置）：
+HTTP 模式下，MCP 客户端通过 `http://127.0.0.1:<port>/mcp` 连接服务，**服务必须常驻**。生产环境推荐用 NSSM 装成 Windows 服务（部署脚本已自动安装），或用登录计划任务承载：
 
 ```bash
 # 前台运行（调试）
-McpDbTools.Server.exe --admin-only --admin-port 5123
+McpDbTools.Server.exe --admin-port 5123
 
 # 后台服务（推荐，部署脚本已自动安装）
 # 或手工用 nssm：
-nssm install McpDbTools.Admin "D:\Tools\McpDbTools\McpDbTools.Server.exe" --admin-only --admin-port 61123
-nssm start McpDbTools.Admin
+nssm install McpDbTools.Server "D:\Tools\McpDbTools\McpDbTools.Server.exe" --admin-port 61123
+nssm start McpDbTools.Server
 ```
+
+服务启动后同时暴露 Admin UI（`/admin`）与 MCP HTTP（`/mcp`）；MCP 客户端只需配置 URL，不感知承载方式。
 
 ## 开发
 
@@ -432,12 +405,12 @@ nssm start McpDbTools.Admin
 dotnet build
 dotnet test                                    # 全部测试
 dotnet test --filter "FullyQualifiedName~SqlGuardTests"   # 单个测试类
-dotnet run --project src/McpDbTools.Server                                  # MCP 模式
-dotnet run --project src/McpDbTools.Server -- --admin-only --admin-port 5123 # Admin 模式
+dotnet run --project src/McpDbTools.Server                                  # 启动 Web 服务（/admin + /mcp）
+dotnet run --project src/McpDbTools.Server -- --admin-port 5123            # 指定端口
 dotnet publish src/McpDbTools.Server -c Release
 ```
 
-> MCP 模式下 stdout 是协议通道，新增日志或调试输出必须走 stderr。
+> 服务运行时 stdout 不再是协议通道（MCP 改用 HTTP），日志走标准 ASP.NET Core logging 管道。
 
 ### 项目结构
 
