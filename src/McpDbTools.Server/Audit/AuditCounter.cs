@@ -61,6 +61,36 @@ public sealed class AuditCounter
                 Interlocked.Exchange(ref _total, v is null or DBNull ? 0 : Convert.ToInt64(v, CultureInfo.InvariantCulture));
             }
 
+            // 零值兜底：total 为 0 时启动回填为 audit_log COUNT（老库升级 / counter 表新建但已有历史日志）。
+            // 初始全新部署 audit_log 也空 → COUNT=0 → 保持 0，不写库，不盲目同步。
+            // audit_log 表在 AuditLogger.EnsureInitialized 中先于此处建立；独立测试场景未建表时 catch 视同 COUNT=0。
+            // 并发安全：本块在 _persistLock 内，与 Increment 持久化段串行；内存 Exchange 与 Increment 的 Interlocked 竞态最差偏差 1，下次重启 Load 校正。
+            if (Interlocked.Read(ref _total) == 0)
+            {
+                long logCount = 0;
+                try
+                {
+                    using var logCmd = connection.CreateCommand();
+                    logCmd.CommandText = "SELECT COUNT(*) FROM audit_log";
+                    var cv = logCmd.ExecuteScalar();
+                    logCount = cv is null or DBNull ? 0 : Convert.ToInt64(cv, CultureInfo.InvariantCulture);
+                }
+                catch (SqliteException)
+                {
+                    // audit_log 表尚未建立（独立 AuditCounter 测试 / 未经 AuditLogger 初始化）→ 视同空库
+                    logCount = 0;
+                }
+                if (logCount > 0)
+                {
+                    using var upd = connection.CreateCommand();
+                    upd.CommandText = "UPDATE audit_counter_total SET total = @total WHERE id = 1";
+                    upd.Parameters.AddWithValue("@total", logCount);
+                    upd.ExecuteNonQuery();
+                    Interlocked.Exchange(ref _total, logCount);
+                    _logger.LogInformation("审计计数器 total 为 0，启动时回填为 audit_log COUNT = {Total}", logCount);
+                }
+            }
+
             // 同步本地今日 key 与 today 计数
             string today = DateTime.Today.ToString("yyyy-MM-dd");
             Volatile.Write(ref _todayDateKey, today);
@@ -137,7 +167,8 @@ public sealed class AuditCounter
     }
 
     /// <summary>
-    /// 清理（自动/手动）后把 total 重置为当前 audit_log COUNT。daily 不动。
+    /// 设定 total 为指定绝对值。daily 不动。
+    /// <para>当前内置调用方已切换为 <see cref="DecrementTotal"/>（增量扣减），本方法作为公共 API 保留供外部/测试复用。</para>
     /// <para>调用方传入复用的连接（与 DELETE 同连接），避免多连接写锁冲突。内存与持久化同步。</para>
     /// </summary>
     public void ResetTotalToCount(SqliteConnection connection, long count)
@@ -147,7 +178,35 @@ public sealed class AuditCounter
         cmd.Parameters.AddWithValue("@total", count);
         cmd.ExecuteNonQuery();
         Interlocked.Exchange(ref _total, count);
-        _logger.LogInformation("审计计数器 total 已重置为 {Total}（清理后对齐 audit_log COUNT）", count);
+        _logger.LogInformation("审计计数器 total 已重置为 {Total}", count);
+    }
+
+    /// <summary>
+    /// 清理（自动/手动）后按本次删除条数增量扣减 total。daily 不动。
+    /// <para>调用方传入复用的连接（与 DELETE 同连接），避免多连接写锁冲突。</para>
+    /// <para>持久化使用 MAX(0, total - @n) 防止负数；执行后读回真实值同步内存镜像。</para>
+    /// <para>n &lt;= 0 时为无操作，避免 deleted=0 的清理改动计数器。</para>
+    /// </summary>
+    public void DecrementTotal(SqliteConnection connection, long n)
+    {
+        if (n <= 0)
+        {
+            return;
+        }
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE audit_counter_total SET total = MAX(0, total - @n) WHERE id = 1";
+            cmd.Parameters.AddWithValue("@n", n);
+            cmd.ExecuteNonQuery();
+        }
+        long newVal;
+        using (var read = connection.CreateCommand())
+        {
+            read.CommandText = "SELECT total FROM audit_counter_total WHERE id = 1";
+            newVal = Convert.ToInt64(read.ExecuteScalar()!, CultureInfo.InvariantCulture);
+        }
+        Interlocked.Exchange(ref _total, newVal);
+        _logger.LogInformation("审计计数器 total 增量扣减 {Decrement}（清理后），新值 {Total}", n, newVal);
     }
 
     private static long ReadDaily(SqliteConnection connection, string dateKey)

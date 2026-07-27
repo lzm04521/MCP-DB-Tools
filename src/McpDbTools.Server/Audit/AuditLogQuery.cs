@@ -56,7 +56,7 @@ public sealed record AuditLogPage
 /// <summary>审计计数器对账载荷。前端三个数字并排显示，不等则高亮（差值即丢失日志）。</summary>
 public sealed record AuditCounters
 {
-    /// <summary>计数器总数（应写累计，清理后重置为 COUNT(*)）。</summary>
+    /// <summary>计数器总数（应写累计，清理后按删除条数增量扣减）。</summary>
     public long TotalCounter { get; init; }
 
     /// <summary>当日计数器（本地时区日，按日历史行）。</summary>

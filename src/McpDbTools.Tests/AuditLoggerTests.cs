@@ -1,6 +1,7 @@
 using McpDbTools.Server.Audit;
 using McpDbTools.Server.Configuration;
 using McpDbTools.Server.Database;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -287,7 +288,7 @@ public class AuditLoggerTests : IDisposable
     }
 
     [Fact]
-    public void DeleteOlderThan_ResetsTotalCounterToCount()
+    public void DeleteOlderThan_DecrementsCounter_NotCountReset()
     {
         var (store, logger, _, _) = Create();
         using (store)
@@ -300,13 +301,68 @@ public class AuditLoggerTests : IDisposable
             // 清理前 total=3
             Assert.Equal(3, logger.Query(new AuditLogQuery()).Counters.TotalCounter);
 
-            logger.DeleteOlderThan(5); // 删 old，剩 2
+            logger.DeleteOlderThan(5); // 删 old（1 条），剩 2
 
             var page = logger.Query(new AuditLogQuery());
-            Assert.Equal(2, page.Counters.TotalCounter); // 重置为 COUNT
-            // daily 不动：仍为 3（今日 counter 不参与清理重置）
+            Assert.Equal(2, page.Counters.TotalCounter); // 增量扣减：3 - 1 = 2（非全表 COUNT 对齐）
+            // daily 不动：仍为 3（今日 counter 不参与清理扣减）
             Assert.Equal(3, page.Counters.TodayCounter);
         }
+    }
+
+    [Fact]
+    public void Load_BackfillsCounterWhenZeroAndLogHasRows()
+    {
+        // 老库升级场景：audit_log 已有历史行、counter_total.total=0
+        // → 首次 Query 触发 EnsureInitialized（含 counter.Load）→ total=0 回填为 audit_log COUNT
+        string configPath = Path.Combine(_tempDir, "config.json");
+        File.WriteAllText(configPath, "{\"databases\":{}}");
+        string dbPath = Path.Combine(_tempDir, "audit.db");
+
+        // 预置 audit_log 3 行（不经 AuditLogger，模拟老库历史；schema 与 EnsureInitialized 一致）
+        using (var raw = new SqliteConnection($"Data Source={dbPath}"))
+        {
+            raw.Open();
+            using (var t = raw.CreateCommand())
+            {
+                t.CommandText = """
+                    CREATE TABLE audit_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        time TEXT NOT NULL,
+                        project TEXT NOT NULL,
+                        environment TEXT NOT NULL,
+                        database_type TEXT NOT NULL,
+                        sql TEXT NOT NULL,
+                        row_count INTEGER NOT NULL DEFAULT 0,
+                        elapsed_ms INTEGER NOT NULL DEFAULT 0,
+                        success INTEGER NOT NULL DEFAULT 0,
+                        error TEXT
+                    )
+                    """;
+                t.ExecuteNonQuery();
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                using var ins = raw.CreateCommand();
+                ins.CommandText = "INSERT INTO audit_log(time,project,environment,database_type,sql) VALUES (@t,@p,@e,@d,@s)";
+                ins.Parameters.AddWithValue("@t", Iso(10 - i));
+                ins.Parameters.AddWithValue("@p", "erp");
+                ins.Parameters.AddWithValue("@e", "prod");
+                ins.Parameters.AddWithValue("@d", "SqlServer");
+                ins.Parameters.AddWithValue("@s", $"SELECT {i}");
+                ins.ExecuteNonQuery();
+            }
+        }
+
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        var logger = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), counter);
+
+        // 首次 Query 触发 EnsureInitialized → counter.Load → total=0 回填为 audit_log COUNT=3
+        var page = logger.Query(new AuditLogQuery());
+        Assert.Equal(3, counter.TotalCurrent);
+        Assert.Equal(3, page.Counters.TotalCounter);
     }
 
     [Fact]

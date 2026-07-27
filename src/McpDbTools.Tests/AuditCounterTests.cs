@@ -133,6 +133,170 @@ public class AuditCounterTests : IDisposable
         Assert.Equal(2, counter2.TodayCount);
     }
 
+    [Fact]
+    public void Load_WhenTotalZeroAndAuditLogHasRows_BackfillsCount()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        // 直接建 audit_log 表并插入 3 行（不经 Increment，模拟老库历史）
+        using (var conn = counter.OpenConnection())
+        {
+            using (var t = conn.CreateCommand())
+            {
+                t.CommandText = "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL)";
+                t.ExecuteNonQuery();
+            }
+            for (int i = 0; i < 3; i++)
+            {
+                using var ins = conn.CreateCommand();
+                ins.CommandText = "INSERT INTO audit_log(time) VALUES (@t)";
+                ins.Parameters.AddWithValue("@t", $"2026-01-0{i + 1}T00:00:00.000Z");
+                ins.ExecuteNonQuery();
+            }
+        }
+
+        // 新实例 Load：total=0 → COUNT audit_log=3 → 回填
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        Assert.Equal(3, counter2.TotalCurrent);
+
+        // 持久化校验：再起实例 total 已非 0，不再回填
+        var counter3 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter3.Load();
+        Assert.Equal(3, counter3.TotalCurrent);
+    }
+
+    [Fact]
+    public void Load_WhenTotalZeroAndAuditLogEmpty_StaysZero()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        // 建空 audit_log 表
+        using (var conn = counter.OpenConnection())
+        using (var t = conn.CreateCommand())
+        {
+            t.CommandText = "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL)";
+            t.ExecuteNonQuery();
+        }
+
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        // COUNT=0 → total 保持 0（不写库）
+        Assert.Equal(0, counter2.TotalCurrent);
+    }
+
+    [Fact]
+    public void Load_WhenTotalNonZero_DoesNotTouchAuditLog()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        string today = TodayKey();
+        for (int i = 0; i < 5; i++) counter.Increment(today);
+        Assert.Equal(5, counter.TotalCurrent);
+
+        // audit_log 插 2 行（与 total=5 不同，验证不被 COUNT 覆盖）
+        using (var conn = counter.OpenConnection())
+        {
+            using (var t = conn.CreateCommand())
+            {
+                t.CommandText = "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL)";
+                t.ExecuteNonQuery();
+            }
+            for (int i = 0; i < 2; i++)
+            {
+                using var ins = conn.CreateCommand();
+                ins.CommandText = "INSERT INTO audit_log(time) VALUES (@t)";
+                ins.Parameters.AddWithValue("@t", $"2026-01-0{i + 1}T00:00:00.000Z");
+                ins.ExecuteNonQuery();
+            }
+        }
+
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        Assert.Equal(5, counter2.TotalCurrent); // 非 0 → 不回填，不被 COUNT=2 覆盖
+    }
+
+    [Fact]
+    public void DecrementTotal_ReducesTotal_DailyUntouched()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        string today = TodayKey();
+        for (int i = 0; i < 10; i++) counter.Increment(today);
+        Assert.Equal(10, counter.TotalCurrent);
+
+        using (var conn = counter.OpenConnection())
+        {
+            counter.DecrementTotal(conn, 3);
+        }
+        Assert.Equal(7, counter.TotalCurrent);
+        Assert.Equal(10, counter.TodayCount); // daily 不动
+
+        // 持久化校验
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        Assert.Equal(7, counter2.TotalCurrent);
+    }
+
+    [Fact]
+    public void DecrementTotal_ClampsToZero()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        string today = TodayKey();
+        counter.Increment(today);
+        counter.Increment(today);
+        Assert.Equal(2, counter.TotalCurrent);
+
+        using (var conn = counter.OpenConnection())
+        {
+            counter.DecrementTotal(conn, 100); // deleted > total
+        }
+        Assert.Equal(0, counter.TotalCurrent); // MAX(0, ...) clamp
+
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        Assert.Equal(0, counter2.TotalCurrent);
+    }
+
+    [Fact]
+    public void DecrementTotal_ZeroOrNegative_NoOp()
+    {
+        var (options, _) = CreateOptions();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var counter = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter.Load();
+
+        string today = TodayKey();
+        for (int i = 0; i < 5; i++) counter.Increment(today);
+
+        using (var conn = counter.OpenConnection())
+        {
+            counter.DecrementTotal(conn, 0);
+            counter.DecrementTotal(conn, -3);
+        }
+        Assert.Equal(5, counter.TotalCurrent);
+
+        var counter2 = new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>());
+        counter2.Load();
+        Assert.Equal(5, counter2.TotalCurrent);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理 */ }

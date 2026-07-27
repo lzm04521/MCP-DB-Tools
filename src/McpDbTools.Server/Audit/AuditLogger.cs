@@ -423,11 +423,8 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                 "审计日志清理：主表 {Main} 条、子表 {Result} 条、孤儿 {Orphan} 条（{Days} 天前）",
                 deleted, resultDeleted, orphanDeleted, days);
         }
-        // 清理后把计数器 total 对齐到当前 audit_log COUNT（daily 不动）
-        using var countCmd = connection.CreateCommand();
-        countCmd.CommandText = "SELECT COUNT(*) FROM audit_log";
-        long remaining = (long)countCmd.ExecuteScalar()!;
-        _counter.ResetTotalToCount(connection, remaining);
+        // 清理后按本次删除条数增量扣减 total（不再全表 COUNT 对齐，保留应写累计语义；daily 不动）
+        _counter.DecrementTotal(connection, deleted);
         return deleted;
     }
 
@@ -505,7 +502,7 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
                     """;
                 counterDaily.ExecuteNonQuery();
 
-                // 表就绪后加载内存快照（首次部署从 0 起，不回填历史 COUNT）
+                // 表就绪后加载内存快照（total=0 时启动回填 audit_log COUNT，见 AuditCounter.Load）
                 _counter.Load();
             }
             catch (Exception ex)
