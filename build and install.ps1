@@ -622,6 +622,26 @@ if ($null -eq $claudeCommand) {
 $nssmCommand = Get-Command nssm -ErrorAction SilentlyContinue
 $useNssm = $null -ne $nssmCommand
 $hasExistingNssmService = $useNssm -and (Test-WindowsServiceExists -ServiceName $AdminServiceName)
+# 旧版 NSSM 服务检测：AppParameters 含 --admin-only（旧版专属，新版 exe 不用）→ 提示重装刷新配置
+$needsNssmReinstall = $false
+$existingAppParams = $null
+if ($hasExistingNssmService) {
+    $existingAppParams = & $nssmCommand.Source get $AdminServiceName AppParameters 2>$null
+    if ($existingAppParams -match "--admin-only") {
+        Write-Host "检测到旧版 NSSM 服务（参数含 --admin-only）。" -ForegroundColor Yellow
+        $reinstallInput = Read-Host "建议重新安装以刷新服务配置（AppParameters/DisplayName/Description）。是否重装？[Y/n]"
+        $reinstallNorm = if ([string]::IsNullOrWhiteSpace($reinstallInput)) { "y" } else { $reinstallInput.Trim().ToLowerInvariant() }
+        switch ($reinstallNorm) {
+            "y" { $needsNssmReinstall = $true }
+            "yes" { $needsNssmReinstall = $true }
+            "是" { $needsNssmReinstall = $true }
+            "n" { $needsNssmReinstall = $false }
+            "no" { $needsNssmReinstall = $false }
+            "否" { $needsNssmReinstall = $false }
+            default { throw "无效输入: $reinstallInput。请输入 Y 或 n。" }
+        }
+    }
+}
 $useScheduledTask = $false
 if (-not $useNssm) {
     # 优先用提权前传入的选择，缺省时才交互询问
@@ -637,10 +657,9 @@ if (-not $useNssm) {
 }
 $adminPort = $null
 if ($hasExistingNssmService) {
-    # 已有 NSSM 服务：从 nssm 读取现有端口，避免改端口
-    $existingPort = & $nssmCommand.Source get $AdminServiceName AppParameters 2>$null
-    # AppParameters 形如 "--admin-port 5123"；简单解析
-    if ($existingPort -match "--admin-port\s+(\d+)") {
+    # 已有 NSSM 服务：从已读取的 AppParameters 解析端口（复用上方检测读取），避免改端口
+    # AppParameters 形如 "--admin-only --admin-port 5123"（旧）或 "--admin-port 5123"（新）
+    if ($existingAppParams -match "--admin-port\s+(\d+)") {
         $adminPort = [int]$Matches[1]
     } else {
         $adminPort = if ($AdminPortParam -gt 0) { $AdminPortParam } else { Read-AdminPort }
@@ -750,7 +769,22 @@ Install-ClaudeMcp `
     -Port $adminPort
 
 if ($useNssm) {
-    if ($hasExistingNssmService) {
+    if ($hasExistingNssmService -and $needsNssmReinstall) {
+        # 旧版服务重装：停 + remove + install（刷新 AppParameters/DisplayName/Description）
+        Write-Host "重新安装 NSSM 服务以刷新配置: $AdminServiceName"
+        Stop-NssmAdminService -NssmPath $nssmCommand.Source -ServiceName $AdminServiceName
+        Invoke-CheckedCommand -FilePath $nssmCommand.Source -Arguments @("remove", $AdminServiceName, "confirm") -IgnoreExitCode
+        if (Test-WindowsServiceExists -ServiceName $AdminServiceName) {
+            throw "nssm remove 失败，服务仍存在: $AdminServiceName。请手动删除后重试。"
+        }
+        Install-NssmAdminService `
+            -NssmPath $nssmCommand.Source `
+            -ServiceName $AdminServiceName `
+            -ServerExePath $exePath `
+            -WorkingDirectory $installDirFull `
+            -Port $adminPort
+    }
+    elseif ($hasExistingNssmService) {
         Invoke-CheckedCommand -FilePath $nssmCommand.Source -Arguments @("start", $AdminServiceName)
     }
     else {
@@ -782,7 +816,10 @@ if (-not $hasExistingNssmService -and ($useNssm -or $useScheduledTask)) {
 }
 Write-Host "MCP (HTTP) 已安装到 Claude Code: $McpName ($McpScope) -> http://127.0.0.1:$adminPort/mcp"
 if ($useNssm) {
-    if ($hasExistingNssmService) {
+    if ($hasExistingNssmService -and $needsNssmReinstall) {
+        Write-Host "Admin UI 已重新安装 NSSM 服务（配置已刷新）: $AdminServiceName"
+    }
+    elseif ($hasExistingNssmService) {
         Write-Host "Admin UI 已使用 NSSM 安装服务: $AdminServiceName"
     }
     else {
