@@ -383,7 +383,7 @@ input[readonly] {
 }
 
 .audit-table .cell-sql {
-  max-width: 320px;
+  max-width: 480px;
 }
 
 .audit-table .sql-preview {
@@ -396,26 +396,12 @@ input[readonly] {
   max-width: 100%;
 }
 
-.audit-table .cell-error {
-  color: var(--color-danger);
-  max-width: 160px;
-}
-
-.audit-table .error-preview {
-  display: inline-block;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 可点击单元格：SQL / 错误信息点击弹窗查看全部，给视觉提示 */
+/* 可点击单元格：SQL 点击弹窗查看全部，给视觉提示 */
 .audit-table .clickable {
   cursor: pointer;
 }
 
-.audit-table .clickable:hover .sql-preview,
-.audit-table .clickable:hover .error-preview {
+.audit-table .clickable:hover .sql-preview {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -655,6 +641,39 @@ input[readonly] {
 .result-status {
   color: var(--color-subtle);
   font-size: 12px;
+}
+
+/* 失败查询：结果区切换为「异常信息」，标题色与色条改危险色，区分成功 / 失败 */
+.result-title.is-error {
+  color: var(--color-danger);
+}
+.result-title.is-error::before {
+  background: var(--color-danger);
+}
+
+/* 异常信息展示区：失败查询取代结果表格，等宽 pre + 浅危险底，撑满 result-section 剩余高度并可滚动。
+   沿用 .result-table-wrap 的 flex/overflow 模式，与成功路径视觉对称。 */
+.error-content {
+  flex: 1 1 auto;
+  min-height: 80px;
+  max-height: 40vh;
+  margin: 0;
+  padding: 16px;
+  background: #fef2f2;
+  color: var(--color-danger);
+  border: 1px solid #fca5a5;
+  border-radius: var(--radius-md);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  user-select: all;
+}
+
+.error-content[hidden] {
+  display: none;
 }
 
 .result-table-wrap {

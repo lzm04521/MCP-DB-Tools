@@ -93,12 +93,11 @@
                   <th>行数</th>
                   <th>耗时</th>
                   <th>SQL</th>
-                  <th>错误</th>
                 </tr>
               </thead>
               <tbody id="auditBody">
                 <tr class="audit-empty-row">
-                  <td colspan="9">暂无数据</td>
+                  <td colspan="8">暂无数据</td>
                 </tr>
               </tbody>
             </table>
@@ -120,12 +119,13 @@
           <pre id="sqlDialogContent" class="sql-content"></pre>
           <div id="resultSection" class="result-section" hidden>
             <div class="result-header">
-              <span class="result-title">查询结果</span>
+              <span id="resultTitle" class="result-title">查询结果</span>
               <span id="resultStatus" class="result-status"></span>
             </div>
-            <div class="result-table-wrap">
+            <div id="resultTableWrap" class="result-table-wrap">
               <table id="resultTable" class="result-table"></table>
             </div>
+            <pre id="errorContent" class="error-content" hidden></pre>
           </div>
           <div class="dialog-actions">
             <button value="close" type="submit" class="button secondary">关闭</button>
@@ -142,7 +142,7 @@
       'searchBtn', 'resetBtn', 'refreshBtn',
       'resultMeta', 'auditBody', 'pager',
       'sqlDialog', 'sqlDialogTitle', 'sqlDialogContent', 'copySqlBtn',
-      'resultSection', 'resultStatus', 'resultTable',
+      'resultSection', 'resultTitle', 'resultStatus', 'resultTable', 'resultTableWrap', 'errorContent',
       'auditCounters', 'ctrTotal', 'ctrToday', 'ctrPersisted'
     ];
     const refs = {};
@@ -296,7 +296,7 @@
     renderCounters(result);
     if (!result) {
       el.resultMeta.textContent = '输入条件后点击「查询」。';
-      el.auditBody.innerHTML = '<tr class="audit-empty-row"><td colspan="9">暂无数据</td></tr>';
+      el.auditBody.innerHTML = '<tr class="audit-empty-row"><td colspan="8">暂无数据</td></tr>';
       el.pager.classList.add('hidden');
       return;
     }
@@ -307,7 +307,7 @@
     el.resultMeta.textContent = `共 ${result.total} 条，当前第 ${from}-${to} 条（第 ${result.page} 页，每页 ${result.pageSize} 条）`;
 
     if (items.length === 0) {
-      el.auditBody.innerHTML = '<tr class="audit-empty-row"><td colspan="9">暂无数据</td></tr>';
+      el.auditBody.innerHTML = '<tr class="audit-empty-row"><td colspan="8">暂无数据</td></tr>';
       el.pager.classList.add('hidden');
       return;
     }
@@ -345,8 +345,6 @@
     const sqlPreview = entry.sql && entry.sql.length > 60
       ? `${entry.sql.slice(0, 60)}…`
       : (entry.sql || '');
-    // 错误信息也截断，过长部分点击弹窗查看
-    const errorPreview = entry.error ? truncate(entry.error, 20) : '';
 
     tr.innerHTML = `
       <td class="cell-time">${window.adminUi.escapeHtml(isoToLocal(entry.time))}</td>
@@ -357,26 +355,48 @@
       <td>${entry.rowCount}</td>
       <td>${entry.elapsedMs} ms</td>
       <td class="cell-sql"><span class="sql-preview">${window.adminUi.escapeHtml(sqlPreview)}</span></td>
-      <td class="cell-error"><span class="error-preview">${errorPreview ? window.adminUi.escapeHtml(errorPreview) : ''}</span></td>
     `;
 
-    // 点击 SQL 单元格弹出完整 SQL + 查询结果（懒加载）
+    // 点击 SQL 单元格弹出完整 SQL + 结果/异常信息（懒加载）
     if (entry.sql) {
       const sqlCell = tr.querySelector('.cell-sql');
       sqlCell.addEventListener('click', () => openSqlDetail(entry));
       sqlCell.classList.add('clickable');
     }
-    // 点击错误单元格弹出完整错误信息（长文本友好查看）
-    if (entry.error) {
-      const errorCell = tr.querySelector('.cell-error');
-      errorCell.addEventListener('click', () => openText('错误信息', entry.error));
-      errorCell.classList.add('clickable');
-    }
     return tr;
   }
 
-  function truncate(text, max) {
-    return text.length > max ? `${text.slice(0, max)}…` : text;
+  /** 打开 SQL 详情弹窗：成功查询懒加载结果表格；失败查询在结果区展示异常信息（取代结果集）。entry.success 为布尔。 */
+  function openSqlDetail(entry) {
+    // 清空上一次残留（表格/状态/错误/显隐）
+    el.resultTable.innerHTML = '';
+    el.resultStatus.textContent = '';
+    el.errorContent.textContent = '';
+
+    el.sqlDialogTitle.textContent = '查询语句';
+    el.sqlDialogContent.textContent = entry.sql || '';
+    el.sqlDialog.showModal();
+
+    if (entry.success !== true) {
+      // 失败查询：结果区切换为「异常信息」，不加载结果
+      el.resultTitle.textContent = '异常信息';
+      el.resultTitle.classList.add('is-error');
+      el.resultTableWrap.hidden = true;
+      el.errorContent.hidden = false;
+      el.errorContent.textContent = entry.error || '（无异常信息）';
+      el.resultSection.hidden = false;
+      return;
+    }
+
+    // 成功查询：结果区显示「查询结果」，懒加载表格
+    el.resultTitle.textContent = '查询结果';
+    el.resultTitle.classList.remove('is-error');
+    el.resultTableWrap.hidden = false;
+    el.errorContent.hidden = true;
+    el.resultSection.hidden = false;
+    el.resultStatus.textContent = '加载中…';
+    const myToken = ++resultLoadToken;
+    loadResult(entry.id, myToken);
   }
 
   function renderPager(result) {
@@ -429,36 +449,6 @@
     el.pager.appendChild(info);
     el.pager.appendChild(next);
     el.pager.appendChild(sizeWrap);
-  }
-
-  /** 通用文本弹窗：展示标题 + 完整文本，供 SQL 与错误信息复用，便于查看与复制。 */
-  function openText(title, text) {
-    el.resultSection.hidden = true;          // 错误点击路径：不露出结果区
-    el.sqlDialogTitle.textContent = title || '详情';
-    el.sqlDialogContent.textContent = text || '';
-    el.sqlDialog.showModal();
-  }
-
-  /** 打开 SQL 详情弹窗并懒加载查询结果。entry.success 为布尔。 */
-  function openSqlDetail(entry) {
-    // 清空上一次残留（表格/状态/显隐）
-    el.resultTable.innerHTML = '';
-    el.resultStatus.textContent = '';
-    el.resultSection.hidden = true;
-
-    el.sqlDialogTitle.textContent = '查询语句';
-    el.sqlDialogContent.textContent = entry.sql || '';
-    el.sqlDialog.showModal();
-
-    if (entry.success !== true) {
-      // 失败查询：不加载结果
-      return;
-    }
-
-    el.resultSection.hidden = false;
-    el.resultStatus.textContent = '加载中…';
-    const myToken = ++resultLoadToken;
-    loadResult(entry.id, myToken);
   }
 
   /** 拉取 result_json 并渲染表格。myToken 用于竞态保护（过期响应丢弃）。 */
@@ -574,6 +564,7 @@
     el.sqlDialog.addEventListener('close', () => {
       el.resultTable.innerHTML = '';
       el.resultStatus.textContent = '';
+      el.errorContent.textContent = '';
       el.resultSection.hidden = true;
     });
 
