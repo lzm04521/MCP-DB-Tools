@@ -114,3 +114,5 @@ docs/*
 doc/*
 
 .zcode/*
+
+paseo.json
