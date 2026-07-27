@@ -15,6 +15,10 @@
 
 ## 快速开始
 
+**Windows 用户**：可直接从 [GitHub Release](../../releases) 下载 zip，解压后运行 `.\install.ps1` 一键部署（无需 .NET SDK，详见[发布版本安装](#发布版本安装推荐)）。
+
+**源码部署 / 非 Windows**：
+
 ```bash
 git clone <repo>
 cd mcp-db-tools
@@ -335,23 +339,34 @@ D:\Tools\McpDbTools\                # 安装目录（程序文件，升级时可
 
 > 数据目录由 `DataDirectoryResolver` 集中解析，优先级：调用方传入 > 环境变量 `ConfigStore__ConfigPath` > `%ProgramData%\McpDbTools` > exe 同目录。多数情况下无需关心，默认值即可。
 
-### 一键部署（推荐）
+### 发布版本安装（推荐）
 
-仓库根目录的 [`build and install.ps1`](build and install.ps1) 完成"构建 → 停服 → 迁移数据 → 替换文件 → 安装自启动 → 注册 MCP"全流程：
+从 [GitHub Release](../../releases) 下载对应架构的 zip（`McpDbTools-vX.Y.Z-win-x64.zip` 或 `McpDbTools-vX.Y.Z-win-arm64.zip`），解压后里面已含 `McpDbTools.Server.exe`、`wwwroot\` 与 `install.ps1`：
+
+```powershell
+.\install.ps1
+```
+
+`install.ps1` 完成"确认 → 交互询问 → 提权 → 停服 → 迁移数据 → 替换文件 → 安装自启动 → 注册 MCP"全流程，**不编译代码**，无需 .NET SDK。脚本行为与下方「从源码构建并部署」一致，仅省去构建步骤；可用参数也相同（见参数表）。
+
+> 发布包仅提供 Windows x64 / arm64。macOS / Linux 请走下方「手动发布」自行构建。
+
+### 从源码构建并部署
+
+仓库根目录的 [`build and install.ps1`](build and install.ps1) 完成"确认 → `dotnet publish` → 委托 [`install.ps1`](install.ps1) 完成安装"。编译产物输出到临时目录，确认通过后才构建；安装逻辑全部复用 `install.ps1`：
 
 ```powershell
 .\build and install.ps1
 ```
 
-脚本行为：
+脚本行为（`build and install.ps1` 在确认后多一步 `dotnet publish` 编译，随后委托 `install.ps1` 执行下列流程；`install.ps1` 直接从发布包执行）：
 
-1. **提权前确认**：显示安装目录、数据目录、MCP 名称等部署计划，输入 `Y` 后才触发 UAC 提权
+1. **提权前确认**：显示安装目录、数据目录、MCP 名称等部署计划，输入 `Y` 后才继续（源码版先编译再提权）
 2. **交互式询问**（提权前完成，答案透传给提权进程）：Admin UI 端口（默认 `61123`）；未安装 [nssm](https://nssm.cc) 时是否用计划任务承载
-3. **构建**：`dotnet publish` 到临时目录，失败时安装目录完全不受影响
-4. **数据迁移**：把旧版数据（exe 同目录 或 `%USERPROFILE%\.mcpdbtools`）搬到 `%ProgramData%\McpDbTools`，幂等
-5. **全量替换安装目录**：用户数据已分离，可无条件清空安装目录后复制新产物
-6. **自启动安装**：有 nssm 则装 Windows 服务（`SERVICE_AUTO_START`），否则按选择装计划任务
-7. **注册 MCP**：`claude mcp add` 把 Server 注册到 Claude Code（默认作用域 `user`）
+3. **数据迁移**：把旧版数据（exe 同目录 或 `%USERPROFILE%\.mcpdbtools`）搬到 `%ProgramData%\McpDbTools`，幂等
+4. **全量替换安装目录**：用户数据已分离，可无条件清空安装目录后复制新产物
+5. **自启动安装**：有 nssm 则装 Windows 服务（`SERVICE_AUTO_START`），否则按选择装计划任务
+6. **注册 MCP**：`claude mcp add` 把 Server 注册到 Claude Code（默认作用域 `user`）
 
 常用参数：
 
@@ -375,13 +390,24 @@ powershell -Verb RunAs -Command ".\build and install.ps1"
 
 ### 手动发布
 
-如不走部署脚本（例如远程机器、便携部署）：
+如不走部署脚本（例如远程机器、便携部署、或非 Windows 平台）：
 
 ```bash
+# Windows
 dotnet publish src/McpDbTools.Server -c Release
+
+# 指定目标架构（self-contained 单文件，免装运行时）
+dotnet publish src/McpDbTools.Server -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish src/McpDbTools.Server -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true
+
+# 非 Windows（macOS / Linux）—— 官方不发布这些平台的包，需自行构建
+dotnet publish src/McpDbTools.Server -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
+dotnet publish src/McpDbTools.Server -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
 发布产物拷到目标目录后，首次运行会自动在 `%ProgramData%\McpDbTools` 创建数据目录与空配置。也可用环境变量 `ConfigStore__ConfigPath` 指定自定义路径。
+
+> `install.ps1` 仅适用于 Windows。非 Windows 平台构建产物后需自行配置常驻进程（systemd 单元、launchd 等）与 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。
 
 ### 服务自启动
 
