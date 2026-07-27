@@ -79,7 +79,7 @@ Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 J
 }
 ```
 
-也可用 Claude Code CLI 一条命令添加（等效于上面配置，默认作用域 `user`）：
+也可用 Claude Code CLI 一条命令添加（等效于上面配置；CLI 默认 scope 是 `local`，如要写用户级配置请加 `-s user`，要写项目级共享 `.mcp.json` 请加 `-s project`）：
 
 ```bash
 claude mcp add --transport http db-tools http://127.0.0.1:5123/mcp
@@ -87,11 +87,10 @@ claude mcp add --transport http db-tools http://127.0.0.1:5123/mcp
 
 #### Codex
 
-[Codex](https://developers.openai.com/codex) 在 `~/.codex/config.toml`（或项目级 `.codex/config.toml`）中用 TOML 配置，每个 server 一个 `[mcp_servers.<name>]` 表，HTTP 模式字段为 `type` / `url`：
+[Codex](https://developers.openai.com/codex) 在 `~/.codex/config.toml`（或项目级 `.codex/config.toml`）中用 TOML 配置，每个 server 一个 `[mcp_servers.<name>]` 表。Codex 通过是否存在 `url` 字段区分 stdio 与 streamable HTTP（无显式 `type` 字段），HTTP 模式只需写 `url`：
 
 ```toml
 [mcp_servers.db-tools]
-type = "http"
 url = "http://127.0.0.1:5123/mcp"
 ```
 
