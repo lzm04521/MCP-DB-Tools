@@ -139,7 +139,7 @@ function Read-AdminPort {
 }
 
 function Read-UseScheduledTaskFallback {
-    $inputValue = Read-Host "未找到 nssm。是否使用计划任务在登录时启动 Admin UI？[Y/n]"
+    $inputValue = Read-Host "未找到 nssm。HTTP 模式必须常驻服务，否则 MCP 客户端无法连接。是否用计划任务在登录时启动服务？[Y/n]"
     if ([string]::IsNullOrWhiteSpace($inputValue)) {
         return $true
     }
@@ -163,8 +163,9 @@ function Confirm-InstallDir {
     Write-Host "================ 部署计划 ================"
     Write-Host "  安装目录: $Dir"
     Write-Host "  数据目录: $(Join-Path $env:ProgramData 'McpDbTools')  (config.json / audit.db / backups)"
-    Write-Host "  MCP 名称: $McpName (作用域: $McpScope)"
+    Write-Host "  MCP 名称: $McpName (作用域: $McpScope, HTTP 模式)"
     if ($AdminServiceName) { Write-Host "  服务/任务名: $AdminServiceName" }
+    Write-Host "  MCP 端点: http://127.0.0.1:<端口>/mcp (端口下一步询问)"
     Write-Host "=========================================="
     $inputValue = Read-Host "确认按以上计划部署？[Y/n]"
 
@@ -462,7 +463,7 @@ function Install-ClaudeMcp {
         [Parameter(Mandatory = $true)]
         [string]$Scope,
         [Parameter(Mandatory = $true)]
-        [string]$ServerExePath
+        [int]$Port
     )
 
     Invoke-CheckedCommand -FilePath $ClaudePath -Arguments @(
@@ -473,16 +474,16 @@ function Install-ClaudeMcp {
         $Name
     ) -IgnoreExitCode
 
+    $mcpUrl = "http://127.0.0.1:$Port/mcp"
     Invoke-CheckedCommand -FilePath $ClaudePath -Arguments @(
         "mcp",
         "add",
         "--scope",
         $Scope,
         "--transport",
-        "stdio",
+        "http",
         $Name,
-        "--",
-        $ServerExePath
+        $mcpUrl
     )
 }
 
@@ -512,7 +513,6 @@ function Install-NssmAdminService {
         "install",
         $ServiceName,
         $ServerExePath,
-        "--admin-only",
         "--admin-port",
         $Port.ToString()
     )
@@ -520,8 +520,8 @@ function Install-NssmAdminService {
     # 服务以默认的 LocalSystem 账户运行即可。数据目录在 %ProgramData%\McpDbTools（跨用户共享），
     # LocalSystem 与当前用户进程（MCP/Claude）都能读写同一份数据。
     # C# 端 DataDirectoryResolver 会自动解析到该目录，无需任何环境变量或账户配置。
-    Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "DisplayName", "McpDbTools Admin UI")
-    Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "Description", "McpDbTools Admin UI: http://127.0.0.1:$Port/admin")
+    Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "DisplayName", "McpDbTools Server (Admin + MCP)")
+    Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "Description", "McpDbTools Server: Admin http://127.0.0.1:$Port/admin  MCP http://127.0.0.1:$Port/mcp")
     Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("set", $ServiceName, "Start", "SERVICE_AUTO_START")
     Invoke-CheckedCommand -FilePath $NssmPath -Arguments @("start", $ServiceName)
 }
@@ -544,7 +544,7 @@ function Install-AdminScheduledTask {
     }
 
     $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $taskAction = New-ScheduledTaskAction -Execute $ServerExePath -Argument "--admin-only --admin-port $Port" -WorkingDirectory $WorkingDirectory
+    $taskAction = New-ScheduledTaskAction -Execute $ServerExePath -Argument "--admin-port $Port" -WorkingDirectory $WorkingDirectory
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask `
@@ -552,7 +552,7 @@ function Install-AdminScheduledTask {
         -Action $taskAction `
         -Trigger $taskTrigger `
         -Principal $taskPrincipal `
-        -Description "McpDbTools Admin UI: http://127.0.0.1:$Port/admin" `
+        -Description "McpDbTools Server: Admin http://127.0.0.1:$Port/admin  MCP http://127.0.0.1:$Port/mcp" `
         -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
 }
@@ -636,14 +636,21 @@ if (-not $useNssm) {
     }
 }
 $adminPort = $null
-if (-not $hasExistingNssmService -and ($useNssm -or $useScheduledTask)) {
-    # 优先用提权前传入的端口，缺省时才交互询问
-    if ($AdminPortParam -gt 0) {
-        $adminPort = $AdminPortParam
+if ($hasExistingNssmService) {
+    # 已有 NSSM 服务：从 nssm 读取现有端口，避免改端口
+    $existingPort = & $nssmCommand.Source get $AdminServiceName AppParameters 2>$null
+    # AppParameters 形如 "--admin-port 5123"；简单解析
+    if ($existingPort -match "--admin-port\s+(\d+)") {
+        $adminPort = [int]$Matches[1]
+    } else {
+        $adminPort = if ($AdminPortParam -gt 0) { $AdminPortParam } else { Read-AdminPort }
     }
-    else {
-        $adminPort = Read-AdminPort
-    }
+}
+elseif ($AdminPortParam -gt 0) {
+    $adminPort = $AdminPortParam
+}
+else {
+    $adminPort = Read-AdminPort
 }
 
 Write-Host "发布目录: $installDirFull"
@@ -735,12 +742,12 @@ if (-not (Test-Path $exePath)) {
     throw "发布后未找到服务程序: $exePath"
 }
 
-Write-Host "安装 Claude Code MCP: $McpName ($McpScope)"
+Write-Host "安装 Claude Code MCP (HTTP): $McpName ($McpScope) -> http://127.0.0.1:$adminPort/mcp"
 Install-ClaudeMcp `
     -ClaudePath $claudeCommand.Source `
     -Name $McpName `
     -Scope $McpScope `
-    -ServerExePath $exePath
+    -Port $adminPort
 
 if ($useNssm) {
     if ($hasExistingNssmService) {
@@ -763,7 +770,8 @@ elseif ($useScheduledTask) {
         -Port $adminPort
 }
 else {
-    Write-Host "已跳过 Admin UI 自启动安装。"
+    Write-Host "警告：未部署常驻承载（NSSM / 计划任务）。HTTP 模式下 MCP 客户端将无法连接服务。" -ForegroundColor Yellow
+    Write-Host "请手启动: $exePath --admin-port $adminPort" -ForegroundColor Yellow
 }
 
 Write-Host ""
@@ -772,7 +780,7 @@ Write-Host "数据目录: $dataDir (config.json / audit.db / backups)"
 if (-not $hasExistingNssmService -and ($useNssm -or $useScheduledTask)) {
     Write-Host "Admin UI: http://127.0.0.1:$adminPort/admin"
 }
-Write-Host "MCP 服务已安装到 Claude Code: $McpName ($McpScope)"
+Write-Host "MCP (HTTP) 已安装到 Claude Code: $McpName ($McpScope) -> http://127.0.0.1:$adminPort/mcp"
 if ($useNssm) {
     if ($hasExistingNssmService) {
         Write-Host "Admin UI 已使用 NSSM 安装服务: $AdminServiceName"
