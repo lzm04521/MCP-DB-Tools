@@ -18,55 +18,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-AdminStartupOptions startup = AdminStartupOptions.Parse(args);
+int adminPort = AdminStartupOptions.ParsePort(args);
+await RunAsync(args, adminPort);
 
-if (startup.Mode == RunMode.Mcp)
-{
-    await RunMcpAsync(args);
-}
-else
-{
-    await RunAdminAsync(args, startup);
-}
-
-static async Task RunMcpAsync(string[] args)
-{
-    // MCP over stdio：stdout 是协议通道，所有日志必须走 stderr，否则会破坏协议
-    var builder = Host.CreateApplicationBuilder(args);
-    ConfigureLogging(builder.Logging);
-    ConfigureBusinessServices(builder.Services, builder.Configuration);
-
-    // MCP Server：stdio 传输，从程序集扫描 [McpServerToolType] 工具
-    builder.Services
-        .AddMcpServer()
-        .WithStdioServerTransport()
-        .WithToolsFromAssembly();
-
-    // host shutdown 时给 AuditLogger.DisposeAsync 排空审计队列留足时间（其内部上限 5s）
-    builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(15));
-
-    using IHost host = builder.Build();
-
-    // 进程退出兜底：Ctrl+C 取消 token → host 优雅停止 → DI Singleton DisposeAsync 排空审计。
-    // 注意：TerminateProcess 硬杀无法兜底，db_query 审计可靠性由 host 优雅停止 → AuditLogger.DisposeAsync 排空保证（stdin EOF 路径已实证）。
-    using var cts = new CancellationTokenSource();
-    Console.CancelKeyPress += (_, e) =>
-    {
-        e.Cancel = true;
-        cts.Cancel();
-    };
-
-    try
-    {
-        await host.RunAsync(cts.Token);
-    }
-    catch (OperationCanceledException)
-    {
-        // 正常关闭：Ctrl+C 或外部取消
-    }
-}
-
-static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
+static async Task RunAsync(string[] args, int adminPort)
 {
     var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
     var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -77,22 +32,22 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
     ConfigureLogging(builder.Logging);
     ConfigureBusinessServices(builder.Services, builder.Configuration);
     builder.Services.AddSingleton<AdminConfigService>();
-    // 运维清理后台服务：依赖 AdminConfigService，仅在 Admin/混合模式注册（D2 决策：方案 a）
+    // 运维清理后台服务：依赖 AdminConfigService（D2 决策：方案 a）
     builder.Services.AddHostedService<MaintenanceHostedService>();
+    // host shutdown 时给 AuditLogger.DisposeAsync 排空审计队列留足时间（其内部上限 5s）
+    builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(15));
     builder.Services.ConfigureHttpJsonOptions(options =>
     {
         options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
         options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
     });
-    builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, startup.AdminPort));
+    builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, adminPort));
 
-    if (startup.Mode == RunMode.AdminAndMcp)
-    {
-        builder.Services
-            .AddMcpServer()
-            .WithStdioServerTransport()
-            .WithToolsFromAssembly();
-    }
+    // MCP HTTP transport：与 Admin 同进程同端口，端点 /mcp
+    builder.Services
+        .AddMcpServer()
+        .WithHttpTransport()
+        .WithToolsFromAssembly();
 
     var app = builder.Build();
     string sessionSecret = GenerateAdminSessionSecret();
@@ -108,6 +63,8 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
 
     app.UseDefaultFiles();
     app.UseStaticFiles();
+    // MCP Streamable HTTP 端点（不鉴权，仅 127.0.0.1，spec 第 6 节）
+    app.MapMcp("/mcp");
     app.MapGet("/", () => Results.Redirect("/admin"));
     app.MapGet("/admin", () => Results.Redirect("/admin/index.html"));
     app.MapGet("/admin/keywords", () => Results.Redirect("/admin/#/keywords", permanent: false));
@@ -262,11 +219,8 @@ static async Task RunAdminAsync(string[] args, AdminStartupOptions startup)
         return result.Success ? Results.Ok(result) : Results.BadRequest(result);
     });
 
-    app.Logger.LogInformation("Admin UI: http://127.0.0.1:{Port}/admin", startup.AdminPort);
-    if (startup.Mode == RunMode.AdminAndMcp)
-    {
-        app.Logger.LogWarning("当前为调试混合模式：同时启用 MCP stdio 与 Admin UI，生产环境不推荐。");
-    }
+    app.Logger.LogInformation("Admin UI: http://127.0.0.1:{Port}/admin", adminPort);
+    app.Logger.LogInformation("MCP HTTP: http://127.0.0.1:{Port}/mcp", adminPort);
 
     await app.RunAsync();
 }
@@ -342,23 +296,10 @@ static bool FixedTimeEquals(string left, string right)
     return CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
 }
 
-internal enum RunMode
+internal sealed record AdminStartupOptions(int AdminPort)
 {
-    Mcp,
-    AdminOnly,
-    AdminAndMcp
-}
-
-internal sealed record AdminStartupOptions(RunMode Mode, int AdminPort)
-{
-    public static AdminStartupOptions Parse(string[] args)
+    public static int ParsePort(string[] args)
     {
-        RunMode mode = args.Any(a => a.Equals("--admin-only", StringComparison.OrdinalIgnoreCase))
-            ? RunMode.AdminOnly
-            : args.Any(a => a.Equals("--admin", StringComparison.OrdinalIgnoreCase))
-                ? RunMode.AdminAndMcp
-                : RunMode.Mcp;
-
         int port = 5123;
         for (int i = 0; i < args.Length; i++)
         {
@@ -370,7 +311,6 @@ internal sealed record AdminStartupOptions(RunMode Mode, int AdminPort)
                 }
             }
         }
-
-        return new AdminStartupOptions(mode, port);
+        return port;
     }
 }
