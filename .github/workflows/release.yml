@@ -1,6 +1,7 @@
 name: release
 
-# 打 v* 开头的 tag（如 v1.0.0、v1.0.0-beta）时触发：构建四平台 self-contained 单文件包并发布 GitHub Release。
+# 打 v* 开头的 tag（如 v1.0.0、v1.0.0-beta）时触发：构建 Windows（x64 / arm64）self-contained 单文件包并发布 GitHub Release。
+# 发布 zip 内含 install.ps1，解压即可一键部署。非 Windows 平台需用户自行 dotnet publish。
 # 不在普通 push 时触发，避免误发。
 on:
   push:
@@ -17,20 +18,12 @@ jobs:
     strategy:
       fail-fast: false   # 单个平台失败不取消其它平台，便于排查
       matrix:
-        # rid 与压缩产物名后缀保持一致；Windows 用 windows runner（zip 更顺），Linux 用 ubuntu
+        # 仅发布 Windows：x64 + arm64。Admin UI / install.ps1 仅设计用于 Windows。
         include:
           - os: windows-latest
             rid: win-x64
-            archive: zip
           - os: windows-latest
             rid: win-arm64
-            archive: zip
-          - os: ubuntu-latest
-            rid: linux-x64
-            archive: tar.gz
-          - os: ubuntu-latest
-            rid: linux-arm64
-            archive: tar.gz
 
     steps:
       - name: Checkout
@@ -55,24 +48,22 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -o publish
 
-      - name: Stage package (drop dev config.json, keep wwwroot)
+      - name: Stage package (drop dev config.json, keep wwwroot, add install.ps1)
         shell: bash
         run: |
           # 删除发布输出里的示例 config.json，避免覆盖用户既有配置；
-          # wwwroot（Admin UI 静态资源）必须保留。
+          # wwwroot（Admin UI 静态资源）必须保留；
+          # 加入 install.ps1：发布 zip 解压即可一键部署（Windows）。
           rm -f publish/config.json
           rm -f publish/*.pdb
+          cp install.ps1 publish/install.ps1
 
       - name: Archive package
         shell: bash
         run: |
           pkg="McpDbTools-${GITHUB_REF_NAME}-${{ matrix.rid }}"
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a -tzip "${pkg}.zip" ./publish/*
-          else
-            tar -czf "${pkg}.tar.gz" -C publish .
-          fi
-          echo "ASSET=${pkg}.${{ matrix.archive }}" >> "$GITHUB_ENV"
+          7z a -tzip "${pkg}.zip" ./publish/*
+          echo "ASSET=${pkg}.zip" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
