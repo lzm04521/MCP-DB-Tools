@@ -1,7 +1,7 @@
 # 横向扩展支持 PostgreSQL
 
 - 日期：2026-07-30
-- 状态：待确认
+- 状态：已完成
 - 范围：
   - `src/McpDbTools.Server/Configuration/DatabaseConfig.cs`
   - `src/McpDbTools.Server/Configuration/DatabaseTypeJsonConverter.cs`
@@ -177,3 +177,10 @@ DBCC 子命令二次校验（`ValidateDbcc`）仅对 SqlServer 触发，PG 不�
   - MCP `db_query`：对真实 PG 执行 `SELECT version();`、`SELECT * FROM <表> LIMIT 10;` 返回正确结果；`COPY t FROM '/x'` 被 SqlGuard 拦截（`SQL_BLOCKED`）。
   - 审计日志页：PG 查询记录正确显示（类型 PostgreSQL）。
 - 干净机器（无开发环境）运行发布产物，确认 Npgsql native 依赖正确加载。
+
+## 实施结果（2026-07-30）
+
+- 驱动版本：Npgsql **10.0.3**（NuGet 最新稳定，兼容 net8.0）。
+- 全量单元测试：**195 通过 / 0 失败 / 0 跳过**（新增 PG 相关：ConfigMergeTests 4 个、DatabaseProviderFactoryTests 3 个、AdminConfigServiceTests 1 个、SqlGuardTests 13 条 InlineData）。
+- Release 单文件发布：成功；产物 `McpDbTools.Server.exe`（51.5M，self-contained），Npgsql 正确内嵌，无外置依赖 dll；`wwwroot/` 与 `config.json` 正常外置。
+- 待外部验证：真实 PostgreSQL 实例的连接 / 查询 / `COPY` 拦截冒烟，与干净机器（无开发环境）运行发布产物——依赖外部 PG 环境与干净机器，本次未执行。
