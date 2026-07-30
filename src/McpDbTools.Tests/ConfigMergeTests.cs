@@ -423,4 +423,36 @@ public class ConfigMergeTests
 
         Assert.Equal("pgdb", ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["pg"].DatabaseName);
     }
+
+    [Fact]
+    public void FallsBackToBuiltin_PostgreSqlKeywords()
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["pg"] = Db(DatabaseType.PostgreSql)
+                    }
+                }
+            }
+        };
+
+        ResolvedDatabase db = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["pg"];
+
+        // 全局通用默认仍在
+        Assert.Contains("DROP", db.DisabledKeywords);
+        Assert.Contains("DELETE", db.DisabledKeywords);
+        // PG 特有按类型默认
+        Assert.Contains("COPY", db.DisabledKeywords);
+        Assert.Contains("VACUUM", db.DisabledKeywords);
+        Assert.Contains("REINDEX", db.DisabledKeywords);
+        Assert.Contains("CLUSTER", db.DisabledKeywords);
+        Assert.Contains("REFRESH MATERIALIZED VIEW", db.DisabledKeywords);
+        Assert.Contains("ANALYZE", db.DisabledKeywords);
+        Assert.Contains("NOTIFY", db.DisabledKeywords);
+    }
 }
