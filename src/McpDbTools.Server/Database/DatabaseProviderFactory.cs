@@ -19,7 +19,8 @@ public sealed class DatabaseProviderFactory
         {
             [DatabaseType.SqlServer] = new SqlServerProvider(),
             [DatabaseType.MySql] = new MySqlProvider(),
-            [DatabaseType.Oracle] = new OracleProvider()
+            [DatabaseType.Oracle] = new OracleProvider(),
+            [DatabaseType.PostgreSql] = new PostgreSqlProvider()
         };
     }
 
