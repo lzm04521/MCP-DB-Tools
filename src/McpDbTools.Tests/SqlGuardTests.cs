@@ -174,6 +174,25 @@ public class SqlGuardTests
     }
 
     [Theory]
+    [InlineData("SELECT * FROM Users", true)]
+    [InlineData("select id from t where x = 1", true)]            // 小写也放行
+    [InlineData("WITH cte AS (SELECT 1) SELECT * FROM cte", true)]
+    [InlineData("CALL my_proc()", true)]
+    [InlineData("EXPLAIN SELECT * FROM Users", true)]
+    [InlineData("SHOW server_version", true)]
+    [InlineData("TABLE Users", true)]
+    [InlineData("VALUES (1), (2)", true)]
+    [InlineData("COPY t FROM '/etc/passwd'", false)]              // PG 黑名单拦 COPY
+    [InlineData("VACUUM Users", false)]                            // PG 黑名单拦 VACUUM
+    [InlineData("REFRESH MATERIALIZED VIEW v", false)]            // 多词关键字
+    [InlineData("DELETE FROM Users", false)]                      // 全局黑名单
+    [InlineData("EXEC prepared_stmt", false)]                     // PG 白名单不含 EXECUTE/EXEC
+    public void PostgreSql_DialectSpecific(string sql, bool expected)
+    {
+        Assert.Equal(expected, _guard.Validate(sql, Db(DatabaseType.PostgreSql)).Allowed);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("/* only comment */")]

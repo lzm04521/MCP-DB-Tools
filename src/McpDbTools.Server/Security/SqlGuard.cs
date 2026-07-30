@@ -64,6 +64,10 @@ public sealed class SqlGuard : ISqlGuard
             {
                 "SELECT", "WITH", "EXEC", "EXECUTE", "CALL",
                 "DESCRIBE", "DESC"
+            },
+            [DatabaseType.PostgreSql] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "SELECT", "WITH", "CALL", "EXPLAIN", "SHOW", "TABLE", "VALUES"
             }
         };
 

@@ -60,6 +60,16 @@ public static class DefaultDisabledKeywords
                 "ALTER DATABASE",
                 "AUDIT",
                 "NOAUDIT"
+            },
+            [DatabaseType.PostgreSql] = new[]
+            {
+                "COPY",
+                "VACUUM",
+                "REINDEX",
+                "CLUSTER",
+                "REFRESH MATERIALIZED VIEW",
+                "ANALYZE",
+                "NOTIFY"
             }
         };
 }

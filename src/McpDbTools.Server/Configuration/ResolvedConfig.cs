@@ -3,6 +3,7 @@ using System.Data.Common;
 using Microsoft.Data.SqlClient;
 using MySqlConnector;
 using Oracle.ManagedDataAccess.Client;
+using Npgsql;
 using DatabaseType = McpDbTools.Server.Configuration.DatabaseType;
 
 namespace McpDbTools.Server.Configuration;
@@ -178,6 +179,7 @@ public static class ResolvedConfigBuilder
                 DatabaseType.SqlServer => new SqlConnectionStringBuilder(raw),
                 DatabaseType.MySql => new MySqlConnectionStringBuilder(raw),
                 DatabaseType.Oracle => new OracleConnectionStringBuilder(raw),
+                DatabaseType.PostgreSql => new NpgsqlConnectionStringBuilder(raw),
                 _ => null! // 理论不可达：枚举已覆盖全部类型
             };
             // 各驱动的键名不同，统一用字符串索引器写入，避免依赖具体属性名
@@ -186,6 +188,7 @@ public static class ResolvedConfigBuilder
                 DatabaseType.SqlServer => ("Max Pool Size", "Connect Timeout"),
                 DatabaseType.MySql => ("Maximum Pool Size", "Connection Timeout"),
                 DatabaseType.Oracle => ("Max Pool Size", "Connection Timeout"),
+                DatabaseType.PostgreSql => ("Maximum Pool Size", "Timeout"),
                 _ => (string.Empty, string.Empty)
             };
             b[poolKey] = maxPoolSize;
@@ -214,6 +217,7 @@ public static class ResolvedConfigBuilder
                 DatabaseType.SqlServer => new SqlConnectionStringBuilder(raw).InitialCatalog,
                 DatabaseType.MySql => new MySqlConnectionStringBuilder(raw).Database,
                 DatabaseType.Oracle => new OracleConnectionStringBuilder(raw).UserID,
+                DatabaseType.PostgreSql => new NpgsqlConnectionStringBuilder(raw).Database,
                 _ => null
             };
             return string.IsNullOrWhiteSpace(v) ? null : v;
