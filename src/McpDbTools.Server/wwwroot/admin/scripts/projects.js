@@ -192,6 +192,7 @@
                     <option value="sqlserver">SqlServer</option>
                     <option value="mysql">MySQL</option>
                     <option value="oracle">Oracle</option>
+                    <option value="postgresql">PostgreSQL</option>
                   </select>
                 </label>
                 <label class="switch-row">
