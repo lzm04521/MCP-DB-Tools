@@ -12,7 +12,8 @@ public sealed class AdminConfigService
     {
         DatabaseType.SqlServer,
         DatabaseType.MySql,
-        DatabaseType.Oracle
+        DatabaseType.Oracle,
+        DatabaseType.PostgreSql
     };
 
     private readonly ConfigStore _configStore;
@@ -627,6 +628,9 @@ public sealed class AdminConfigService
             case "oracle":
                 type = DatabaseType.Oracle;
                 return true;
+            case "postgresql":
+                type = DatabaseType.PostgreSql;
+                return true;
             default:
                 type = default;
                 return false;
@@ -638,6 +642,7 @@ public sealed class AdminConfigService
         DatabaseType.SqlServer => "sqlserver",
         DatabaseType.MySql => "mysql",
         DatabaseType.Oracle => "oracle",
+        DatabaseType.PostgreSql => "postgresql",
         _ => throw new NotSupportedException($"不支持的数据库类型: {type}")
     };
 

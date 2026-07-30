@@ -411,6 +411,41 @@ public class AdminConfigServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task Save_PreservesPostgreSqlType()
+    {
+        var (store, service, configPath) = CreateMissing();
+        using (store)
+        {
+            var result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        DefaultEnvironment = "prod",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod",
+                                Type = "postgresql",
+                                ConnectionString = "Host=localhost;Database=db;Username=u;Password=p;"
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success, string.Join("; ", result.Errors));
+            Assert.Contains("\"postgresql\"", File.ReadAllText(configPath));
+
+            AdminEnvironmentDto env = result.Config!.Projects.Single().Environments.Single();
+            Assert.Equal("postgresql", env.Type);
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }
