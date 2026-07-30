@@ -27,6 +27,7 @@ public sealed class DatabaseTypeJsonConverter : JsonConverter<DatabaseType>
             "sqlserver" => DatabaseType.SqlServer,
             "mysql" => DatabaseType.MySql,
             "oracle" => DatabaseType.Oracle,
+            "postgresql" => DatabaseType.PostgreSql,
             _ => throw new JsonException($"不支持的数据库类型: {value}")
         };
     }
@@ -38,6 +39,7 @@ public sealed class DatabaseTypeJsonConverter : JsonConverter<DatabaseType>
             DatabaseType.SqlServer => "sqlserver",
             DatabaseType.MySql => "mysql",
             DatabaseType.Oracle => "oracle",
+            DatabaseType.PostgreSql => "postgresql",
             _ => throw new JsonException($"不支持的数据库类型: {value}")
         };
     }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using McpDbTools.Server.Configuration;
 
 namespace McpDbTools.Tests;
@@ -366,5 +367,60 @@ public class ConfigMergeTests
         ResolvedDatabase db = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["e"];
 
         Assert.Null(db.DatabaseName);
+    }
+
+    [Fact]
+    public void DatabaseType_PostgreSql_JsonRoundtrip()
+    {
+        // converter: "postgresql" ↔ DatabaseType.PostgreSql
+        string json = JsonSerializer.Serialize(DatabaseType.PostgreSql);
+        Assert.Equal("\"postgresql\"", json);
+        Assert.Equal(DatabaseType.PostgreSql, JsonSerializer.Deserialize<DatabaseType>(json));
+    }
+
+    [Fact]
+    public void ConnectionString_AppendedWithPoolAndTimeout_PostgreSql()
+    {
+        var raw = new DatabasesConfig
+        {
+            DefaultMaxPoolSize = 80,
+            DefaultConnectTimeoutSeconds = 12,
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["pg"] = Db(DatabaseType.PostgreSql, cs: "Host=localhost;Database=db;Username=u;Password=p;")
+                    }
+                }
+            }
+        };
+
+        string pg = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["pg"].ConnectionString;
+
+        // Npgsql 键名：Maximum Pool Size / Timeout（不同于 MySQL/Oracle 的 Connection Timeout）
+        Assert.Contains("MAXIMUM POOL SIZE=80", pg.ToUpperInvariant());
+        Assert.Contains("TIMEOUT=12", pg.ToUpperInvariant());
+    }
+
+    [Fact]
+    public void DatabaseName_Resolved_PostgreSql()
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["pg"] = Db(DatabaseType.PostgreSql, cs: "Host=localhost;Database=pgdb;Username=u;Password=p;")
+                    }
+                }
+            }
+        };
+
+        Assert.Equal("pgdb", ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["pg"].DatabaseName);
     }
 }

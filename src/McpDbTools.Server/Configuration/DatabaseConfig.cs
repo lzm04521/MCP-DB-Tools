@@ -10,7 +10,8 @@ public enum DatabaseType
 {
     SqlServer,
     MySql,
-    Oracle
+    Oracle,
+    PostgreSql
 }
 
 /// <summary>
