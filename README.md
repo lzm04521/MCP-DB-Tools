@@ -7,6 +7,8 @@
 - **四数据库支持**：SQL Server、MySQL、Oracle（兼容 11g R2+）、PostgreSQL
 - **多环境配置**：同一项目可维护 `dev` / `test` / `prod` 等多环境，设置默认环境
 - **SQL 安全守卫**：白名单（只读语句）+ 三层黑名单双重校验，拦截多语句注入
+- **非生产环境 DB 写支持**：环境配置 `allowWrite=true` 时，允许 `INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP INDEX` / `MERGE` / `REPLACE` 等 DML/DDL 写操作并返回受影响行数 `affectedRows`；生产环境（`isProduction=true`）后端兜底强制只读，与 `allowWrite` 互斥（即便手改 `config.json` 也不生效）
+- **全局关键字分只读池/写池**：阻止关键字按环境开关分别生效；Admin UI 关键字页额外展示代码内置固定关键字（只读，无法在页面修改）
 - **配置热重载**：改 `config.json` 即时生效，无需重启
 - **并发与连接池可控**：每个 `(project, env)` 独立并发闸门，避免高并发打满连接池
 - **审计日志**：本地 SQLite 全局记录查询与阻止，支持自动/手动清理；可选记录查询结果（弹窗懒加载查看）
@@ -43,6 +45,8 @@ dotnet build
           "connectionString": "Server=.;Database=MyDb;Trusted_Connection=true;TrustServerCertificate=true;",
           "maxRows": 1000,
           "commandTimeout": 30,
+          // 非生产环境可开启写操作（生产环境即便设 true 也会被后端兜底强制只读）
+          "allowWrite": true,
           "disabledKeywords": []
         },
         "prod": {
@@ -135,7 +139,7 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 浏览器打开启动日志中的地址（如 `http://127.0.0.1:5123/admin`）即可维护配置。功能分五个页面：
 
 - **项目配置**（`#/projects`）：增删项目和环境，**key 创建后不可修改**；维护连接字符串、数据库类型、`maxRows`、`commandTimeout`、环境级并发/连接池参数与阻止关键字；内置测试连接（不落盘）。
-- **全局关键字**（`#/keywords`）：维护全局默认与按类型追加的阻止关键字。
+- **全局关键字**（`#/keywords`）：维护只读池 / 写池全局默认与按类型追加的阻止关键字；展示代码内置固定关键字（只读，无法在页面修改）。
 - **审计日志**（`#/audit-log`）：按项目/环境/类型/状态/时间/SQL 关键词筛选，分页查看，长文本点击弹窗复制。纯只读。
 - **备份管理**（`#/backups`）：列出、下载、恢复（恢复前自动快照可撤销）、删除配置备份。
 - **全局设置**（`#/settings`）：审计日志与备份文件的自动清理开关和保留天数；手动清理两者（按 10/20/30/50 天）。
@@ -178,12 +182,12 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 ### db_query
 
-在指定项目和环境上执行只读 SQL 查询。
+在指定项目和环境上执行 SQL 查询。只读环境仅允许 `SELECT` 等只读语句；写环境（`allowWrite=true` 且 `isProduction=false`）支持 `INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP INDEX` / `MERGE` / `REPLACE` 等 DML/DDL 写操作，返回受影响行数 `affectedRows`。生产环境后端兜底强制只读。
 
 | 参数          | 类型   | 必填 | 说明                                                                           |
 | ------------- | ------ | ---- | ------------------------------------------------------------------------------ |
 | `project`     | string | 是   | 项目名，对应 `config.json` 中 `databases` 的键                                 |
-| `sql`         | string | 是   | SQL 语句，仅允许只读操作                                                       |
+| `sql`         | string | 是   | SQL 语句；只读环境仅允许只读操作，写环境另支持 DML/DDL 写操作                  |
 | `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment`                                  |
 | `limit`       | int    | 否   | 临时限制返回行数，必须为正整数；最终取 `min(limit, maxRows)`，不能突破配置上限 |
 
@@ -228,6 +232,8 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 ```jsonc
 {
   "defaultDisabledKeywords": ["DROP", "DELETE", "UPDATE"],
+  // 写池：allowWrite=true 环境的全局阻止关键字，空时回退代码内置 BuiltInWrite
+  "defaultWriteDisabledKeywords": ["DROP TABLE", "TRUNCATE"],
   "defaultDisabledKeywordsByType": {
     "sqlserver": ["BULK INSERT", "xp_cmdshell"],
     "mysql": ["LOAD DATA", "FLUSH"],
@@ -281,6 +287,8 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 最终阻止列表 = 全局 ∪ 按类型 ∪ 环境。全部转大写去重；下层只能追加，不能缩减上层。
 
+> **只读池 / 写池**：`defaultDisabledKeywords` 是只读环境（`allowWrite` 缺省或 `false`）的全局阻止关键字，覆盖 `DROP` / `DELETE` / `UPDATE` / `INSERT` 等所有写动词；`defaultWriteDisabledKeywords` 是写环境（`allowWrite=true` 且非生产）的全局阻止关键字，默认放开业务写（`INSERT` / `UPDATE` / `DELETE` / `CREATE` / `ALTER` / `DROP INDEX` / `MERGE` / `REPLACE`），保留结构删除、系统级、账号权限、动态 SQL 等高危项。同一环境按 `allowWrite` 开关二选一，由后端解析时按"`isProduction=true` 强制只读，否则看环境 `allowWrite`"自动选池；`defaultDisabledKeywordsByType` 与环境级 `disabledKeywords` 在两种环境下都按上述三层规则追加。
+
 ### 并发与连接池
 
 为避免高并发下 `db_query` 因连接池耗尽或线程池饥饿而卡死：
@@ -316,6 +324,8 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 - PostgreSQL 额外：`CALL`、`EXPLAIN`、`SHOW`、`TABLE`、`VALUES`（不含 `EXECUTE`：PG 中为执行 prepared statement，动态 SQL 语义，风险高）
 
 **黑名单**：`DROP`、`DELETE`、`UPDATE`、`INSERT`、`ALTER`、`CREATE`、`TRUNCATE`、`MERGE`、`GRANT`、`REVOKE` 等，外加按类型和环境追加的关键字。
+
+**写环境追加白名单**（`allowWrite=true` 且 `isProduction=false`）：在只读白名单基础上追加 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、`REPLACE`、`CREATE`、`ALTER`、`DROP INDEX` 等写动词首关键字。这些动词在只读环境会被首关键字白名单拒绝；在写环境放行，但仍受写池黑名单（结构删除、系统级、动态 SQL 等）与多语句注入扫描约束。生产环境（`isProduction=true`）后端兜底强制只读，即使手改 `config.json` 设置 `allowWrite=true` 也不生效。
 
 校验：去注释 → 规范化空白 → 首关键字白名单 → 全文黑名单扫描，可拦截 `SELECT 1; DROP TABLE x` 这类多语句注入。
 

@@ -31,6 +31,19 @@
   },
 
   // ══════════════════════════════════════════════════════════════
+  // 写池：allowWrite=true 环境的全局阻止关键字（可选）。
+  // 未配置或为空数组时，回退代码内置 BuiltInWrite 默认集合
+  // （保留 DROP TABLE / DROP DATABASE / TRUNCATE / GRANT / 系统级 / 动态 SQL 等高危项，
+  //   放开 INSERT / UPDATE / DELETE / MERGE / REPLACE / CREATE / ALTER / DROP INDEX 等业务写）。
+  // 配置后完全替换内置默认（不追加）；按类型（defaultDisabledKeywordsByType）与环境级
+  // （disabledKeywords）仍按既有三层规则追加。
+  // ══════════════════════════════════════════════════════════════
+  "defaultWriteDisabledKeywords": [
+    "DROP TABLE",
+    "TRUNCATE"
+  ],
+
+  // ══════════════════════════════════════════════════════════════
   // 审计日志：全局开启，记录到本地 SQLite（与 config.json 同目录的 audit.db）。
   // 不自动清理，用户不主动删除则一直保留；可在 Admin UI「审计日志」页按字段筛选查看并手动清理。
   // 不再需要在此配置。
@@ -55,6 +68,18 @@
     "erp-system": {
       "defaultEnvironment": "prod",
       "environments": {
+        // 演示：非生产环境（test）设 allowWrite=true，放开 DML/DDL 业务写
+        // （INSERT / UPDATE / DELETE / MERGE / REPLACE / CREATE / ALTER / DROP INDEX），
+        // 由上面的写池 defaultWriteDisabledKeywords 兜底拦截高危项。
+        // 生产环境（isProduction=true）由后端兜底强制 AllowWrite=false，
+        // 即便手改 config.json 加 allowWrite=true 也不会生效。
+        "test": {
+          "type": "sqlserver",
+          "connectionString": "Server=.;Database=ERP_Test;Trusted_Connection=true;TrustServerCertificate=true;",
+          "maxRows": 1000,
+          "commandTimeout": 30,
+          "allowWrite": true
+        },
         "prod": {
           "type": "sqlserver",
           "connectionString": "Server=.;Database=ERP;Trusted_Connection=true;TrustServerCertificate=true;",
