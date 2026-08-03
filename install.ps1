@@ -559,14 +559,26 @@ function Install-AdminScheduledTask {
     }
 
     $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $taskAction = New-ScheduledTaskAction -Execute $ServerExePath -Argument "--admin-port $Port" -WorkingDirectory $WorkingDirectory
+    # 隐藏窗口：计划任务以 Interactive 方式直接运行控制台 exe 会在 AtLogOn 触发时把控制台窗口弹到用户桌面。
+    # 改用 powershell.exe -WindowStyle Hidden 承载 exe（共享控制台，子进程不再另开窗口）。
+    # powershell.exe 与 exe 同处用户会话，登出时一并退出；Stop-ScheduledTask 通过 Job Object 同时终止两者。
+    $powerShellExe = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $launcherScript = "& $(ConvertTo-PowerShellLiteral $ServerExePath) --admin-port $Port"
+    $encodedLauncher = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($launcherScript))
+    $taskAction = New-ScheduledTaskAction `
+        -Execute $powerShellExe `
+        -Argument "-NoProfile -WindowStyle Hidden -EncodedCommand $encodedLauncher" `
+        -WorkingDirectory $WorkingDirectory
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
+    # 忽略电源设置：电池电源也允许启动，切换到电池电源时不停止（覆盖计划任务默认的"必须接通电源才启动、断电即停止"行为）
+    $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask `
         -TaskName $TaskName `
         -Action $taskAction `
         -Trigger $taskTrigger `
         -Principal $taskPrincipal `
+        -Settings $taskSettings `
         -Description "McpDbTools Server: Admin http://127.0.0.1:$Port/admin  MCP http://127.0.0.1:$Port/mcp" `
         -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
