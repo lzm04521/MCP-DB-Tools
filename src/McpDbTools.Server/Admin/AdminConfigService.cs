@@ -120,7 +120,7 @@ public sealed class AdminConfigService
             ConfigPath = _configPath,
             DefaultDisabledKeywords = NormalizeKeywords(config.DefaultDisabledKeywords is { Count: > 0 }
                 ? config.DefaultDisabledKeywords
-                : DefaultDisabledKeywords.BuiltIn),
+                : DefaultDisabledKeywords.BuiltInReadOnly),
             DefaultDisabledKeywordsByType = ToResponseKeywordsByType(config),
             DefaultMaxConcurrency = config.DefaultMaxConcurrency ?? 0,
             DefaultMaxConcurrencyWaitSeconds = config.DefaultMaxConcurrencyWaitSeconds ?? 0,

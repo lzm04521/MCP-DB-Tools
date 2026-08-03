@@ -103,7 +103,7 @@ public sealed class ProjectConfig
 /// </summary>
 public sealed class DatabasesConfig
 {
-    /// <summary>第一层：全局通用阻止关键字。未配置时使用 <see cref="DefaultDisabledKeywords.BuiltIn"/>。</summary>
+    /// <summary>第一层：全局通用阻止关键字。未配置时使用 <see cref="DefaultDisabledKeywords.BuiltInReadOnly"/>。</summary>
     [JsonPropertyName("defaultDisabledKeywords")]
     public List<string>? DefaultDisabledKeywords { get; init; }
 

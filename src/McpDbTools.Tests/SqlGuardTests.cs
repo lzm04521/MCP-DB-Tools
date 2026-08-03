@@ -11,7 +11,7 @@ public class SqlGuardTests
     private static ResolvedDatabase Db(DatabaseType type)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string k in DefaultDisabledKeywords.BuiltIn) set.Add(k.ToUpperInvariant());
+        foreach (string k in DefaultDisabledKeywords.BuiltInReadOnly) set.Add(k.ToUpperInvariant());
         foreach (string k in DefaultDisabledKeywords.BuiltInByType[type]) set.Add(k.ToUpperInvariant());
         return new ResolvedDatabase
         {

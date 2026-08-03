@@ -97,7 +97,7 @@ public static class ResolvedConfigBuilder
         // 第一层：全局通用。未配置则用内置默认
         IEnumerable<string> global = raw.DefaultDisabledKeywords is { Count: > 0 }
             ? raw.DefaultDisabledKeywords
-            : DefaultDisabledKeywords.BuiltIn;
+            : DefaultDisabledKeywords.BuiltInReadOnly;
 
         var projects = new Dictionary<string, ResolvedProject>(StringComparer.OrdinalIgnoreCase);
         foreach ((string projectName, ProjectConfig proj) in raw.Projects)
