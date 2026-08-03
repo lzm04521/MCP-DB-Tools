@@ -1,10 +1,10 @@
 # MCP Database Tools
 
-为支持 MCP（Model Context Protocol）的 Agent（如 [Claude Code](https://docs.anthropic.com/claude-code)、[Codex](https://developers.openai.com/codex)）提供数据库只读访问能力的工具。基于 .NET 8 + 官方 `ModelContextProtocol` SDK，支持 SQL Server、MySQL、Oracle，内置 SQL 安全守卫、多环境配置、配置热重载、每环境并发限流、审计日志，以及本机 Admin UI 配置维护页面。
+为支持 MCP（Model Context Protocol）的 Agent（如 [Claude Code](https://docs.anthropic.com/claude-code)、[Codex](https://developers.openai.com/codex)）提供数据库只读访问能力的工具。基于 .NET 8 + 官方 `ModelContextProtocol` SDK，支持 SQL Server、MySQL、Oracle、PostgreSQL，内置 SQL 安全守卫、多环境配置、配置热重载、每环境并发限流、审计日志，以及本机 Admin UI 配置维护页面。
 
 ## 功能特性
 
-- **三数据库支持**：SQL Server、MySQL、Oracle（兼容 11g R2+）
+- **四数据库支持**：SQL Server、MySQL、Oracle（兼容 11g R2+）、PostgreSQL
 - **多环境配置**：同一项目可维护 `dev` / `test` / `prod` 等多环境，设置默认环境
 - **SQL 安全守卫**：白名单（只读语句）+ 三层黑名单双重校验，拦截多语句注入
 - **配置热重载**：改 `config.json` 即时生效，无需重启
@@ -231,7 +231,8 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
   "defaultDisabledKeywordsByType": {
     "sqlserver": ["BULK INSERT", "xp_cmdshell"],
     "mysql": ["LOAD DATA", "FLUSH"],
-    "oracle": ["FLASHBACK", "PURGE"]
+    "oracle": ["FLASHBACK", "PURGE"],
+    "postgresql": ["COPY", "VACUUM", "ANALYZE"]
   },
   // 并发与连接池全局默认（缺省时用内置默认 10/5/100/60）
   "defaultMaxConcurrency": 10,
@@ -253,7 +254,7 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
         "<环境>": {
           "displayName": "环境显示名",
           "isProduction": false,
-          "type": "sqlserver|mysql|oracle",
+          "type": "sqlserver|mysql|oracle|postgresql",
           "connectionString": "...",
           "maxRows": 1000,
           "commandTimeout": 600,
@@ -312,6 +313,7 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 - MySQL 额外：`CALL`、`SHOW`、`DESCRIBE` / `DESC`、`EXPLAIN`
 - Oracle 额外：`CALL`、`DESCRIBE` / `DESC`
 - SQL Server 额外：`sp_help`、`sp_tables`、`sp_columns` 等系统存储过程
+- PostgreSQL 额外：`CALL`、`EXPLAIN`、`SHOW`、`TABLE`、`VALUES`（不含 `EXECUTE`：PG 中为执行 prepared statement，动态 SQL 语义，风险高）
 
 **黑名单**：`DROP`、`DELETE`、`UPDATE`、`INSERT`、`ALTER`、`CREATE`、`TRUNCATE`、`MERGE`、`GRANT`、`REVOKE` 等，外加按类型和环境追加的关键字。
 
@@ -445,7 +447,7 @@ src/McpDbTools.Server/
 ├── Admin/             # Admin API、配置读写、测试连接、备份管理、全局设置
 ├── Audit/             # 审计日志（SQLite + Channel 异步串行写入）
 ├── Configuration/     # 配置模型、热重载、三层关键字合并、连接串拼接、DataDirectoryResolver 数据目录解析
-├── Database/          # 三种数据库 provider + 工厂 + 每环境并发限流器
+├── Database/          # 四种数据库 provider + 工厂 + 每环境并发限流器
 ├── Maintenance/       # 运维清理后台服务（审计日志/备份自动清理）
 ├── Security/          # SqlGuard SQL 安全守卫
 ├── Tools/             # db_list / db_query MCP 工具
@@ -455,7 +457,7 @@ src/McpDbTools.Server/
 
 ### 技术栈
 
-.NET 8、ASP.NET Core Minimal API、原生 HTML/CSS/JS、[ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 1.4.0、SqlClient / MySqlConnector / Oracle.ManagedDataAccess.Core、Microsoft.Data.Sqlite、xUnit。
+.NET 8、ASP.NET Core Minimal API、原生 HTML/CSS/JS、[ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 1.4.0、SqlClient / MySqlConnector / Oracle.ManagedDataAccess.Core / Npgsql、Microsoft.Data.Sqlite、xUnit。
 
 ## 已知限制
 
