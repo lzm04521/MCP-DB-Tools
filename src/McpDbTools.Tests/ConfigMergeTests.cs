@@ -455,4 +455,32 @@ public class ConfigMergeTests
         Assert.Contains("ANALYZE", db.DisabledKeywords);
         Assert.Contains("NOTIFY", db.DisabledKeywords);
     }
+
+    [Fact]
+    public void DatabaseConfig_Deserializes_AllowWrite_Default_False_When_Absent()
+    {
+        string json = @"{""type"":""sqlserver"",""connectionString"":""x""}";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        DatabaseConfig db = JsonSerializer.Deserialize<DatabaseConfig>(json, options)!;
+        Assert.False(db.AllowWrite);
+    }
+
+    [Fact]
+    public void DatabaseConfig_Deserializes_AllowWrite_True()
+    {
+        string json = @"{""type"":""sqlserver"",""connectionString"":""x"",""allowWrite"":true}";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        DatabaseConfig db = JsonSerializer.Deserialize<DatabaseConfig>(json, options)!;
+        Assert.True(db.AllowWrite);
+    }
+
+    [Fact]
+    public void DatabasesConfig_Deserializes_DefaultWriteDisabledKeywords()
+    {
+        string json = @"{""defaultWriteDisabledKeywords"":[""DROP TABLE"",""TRUNCATE""]}";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        DatabasesConfig cfg = JsonSerializer.Deserialize<DatabasesConfig>(json, options)!;
+        Assert.NotNull(cfg.DefaultWriteDisabledKeywords);
+        Assert.Equal(2, cfg.DefaultWriteDisabledKeywords!.Count);
+    }
 }
