@@ -106,6 +106,8 @@ public class DbQueryToolTests : IDisposable
         public DatabaseType DatabaseType { get; }
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
             => Task.FromResult(_result);
+        public Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+            => Task.FromResult(_result);
         public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
             => Task.FromResult<(bool, long, string?)>((true, 0, null));
     }
@@ -277,6 +279,8 @@ public class DbQueryToolTests : IDisposable
         public ThrowingProvider(Exception ex, DatabaseType type) { _ex = ex; DatabaseType = type; }
         public DatabaseType DatabaseType { get; }
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
+            => Task.FromException<QueryResult>(_ex);
+        public Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
             => Task.FromException<QueryResult>(_ex);
         public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
             => Task.FromResult<(bool, long, string?)>((false, 0, _ex.Message));

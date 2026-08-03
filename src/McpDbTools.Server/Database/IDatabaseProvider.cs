@@ -16,6 +16,9 @@ public interface IDatabaseProvider
     /// <summary>执行查询。sql 已通过 SqlGuard 校验。</summary>
     Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct);
 
+    /// <summary>执行写操作（INSERT/UPDATE/DELETE/DDL）。sql 已通过 SqlGuard 校验为写语句。返回受影响行数。</summary>
+    Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct);
+
     /// <summary>
     /// 测试连接是否可用。仅打开连接（用短超时，默认 5 秒），不执行任何 SQL。
     /// 返回 (success, elapsedMs, error)。
@@ -110,6 +113,53 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
         catch (DbException ex)
         {
             return QueryResult.Fail(project, DatabaseType.ToString(), $"查询执行错误: {ex.Message}", "QUERY_ERROR", sw.ElapsedMilliseconds, db.Environment);
+        }
+    }
+
+    /// <summary>
+    /// 执行写操作（INSERT/UPDATE/DELETE/DDL）。建连/超时骨架与 <see cref="ExecuteQueryAsync"/> 一致，
+    /// 命令执行用 <see cref="DbCommand.ExecuteNonQueryAsync(CancellationToken)"/>，返回受影响行数。
+    /// </summary>
+    public async Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            await using DbConnection conn = CreateConnection(db.ConnectionString);
+
+            // 建连阶段超时兜底：与 ExecuteQueryAsync 一致，用 CTS 控制建连超时。
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(db.ConnectTimeoutSeconds));
+            try
+            {
+                await conn.OpenAsync(connectCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // 触发的是建连超时 CTS，不是外部取消
+                sw.Stop();
+                return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
+            }
+
+            await using DbCommand cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.CommandTimeout = db.CommandTimeout;
+
+            int affected = await cmd.ExecuteNonQueryAsync(ct);
+            sw.Stop();
+            return QueryResult.OkWrite(project, DatabaseType.ToString(), affected, sw.ElapsedMilliseconds, db.Environment);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 取消向上传播，不包装
+        }
+        catch (TimeoutException ex)
+        {
+            return QueryResult.Fail(project, DatabaseType.ToString(), $"写操作超时: {ex.Message}", "QUERY_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
+        }
+        catch (DbException ex)
+        {
+            return QueryResult.Fail(project, DatabaseType.ToString(), $"写操作执行错误: {ex.Message}", "QUERY_ERROR", sw.ElapsedMilliseconds, db.Environment);
         }
     }
 
