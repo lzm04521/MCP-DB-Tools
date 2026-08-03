@@ -18,6 +18,7 @@ public class SqlGuardTests
             ProjectName = "test",
             Environment = "test",
             IsProduction = false,
+            AllowWrite = false,
             Type = type,
             ConnectionString = "",
             DatabaseName = null,
