@@ -30,15 +30,16 @@ public sealed class DbQueryTool
     }
 
     /// <summary>
-    /// 在指定项目的指定环境上执行只读 SQL 查询。
+    /// 在指定项目的指定环境上执行 SQL 查询。
     /// project 为项目名（对应 config.json 中 databases 配置）；
     /// environment 为环境名（如 dev/test/prod/xiqing-prod，可选；未传时使用项目 defaultEnvironment）；
-    /// sql 为查询语句（仅允许只读操作），limit 为可选的最大返回行数。
-    /// 返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。
+    /// sql 为查询语句，只读环境仅允许只读操作；写环境（allowWrite=true，非生产）支持 DML/DDL 写操作，返回受影响行数（affectedRows）；
+    /// limit 为可选的最大返回行数（仅对读语句生效）。
+    /// 返回包含 project、environment、columns 和 rows(二维数组) 的 JSON；写操作返回 affectedRows。
     /// 可用 db_list 工具列出所有项目及其环境。
     /// </summary>
     [McpServerTool(Name = "db_query")]
-    [Description("在指定项目的指定环境上执行只读 SQL 查询。project 为项目名(对应 config.json 中 databases 配置)，environment 为环境名(如 dev/test/prod，可选；未传时使用项目的 defaultEnvironment)，sql 为查询语句(仅允许只读操作)，limit 为可选的最大返回行数。返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。可先用 db_list() 获取项目列表，再 db_list(project=...) 获取环境详情。")]
+    [Description("在指定项目的指定环境上执行 SQL。project 为项目名(对应 config.json 中 databases 配置)，environment 为环境名(如 dev/test/prod，可选；未传时使用项目的 defaultEnvironment)，sql 为 SQL 语句，limit 为可选的最大返回行数(仅读语句生效)。只读环境仅允许 SELECT 等只读操作；写环境(allowWrite=true，非生产)支持 INSERT/UPDATE/DELETE/CREATE 等 DML/DDL 写操作，返回受影响行数(affectedRows)。返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。可先用 db_list() 获取项目列表，再 db_list(project=...) 获取环境详情。")]
     public async Task<string> ExecuteQuery(
         string project,
         string sql,
@@ -77,14 +78,18 @@ public sealed class DbQueryTool
             return QueryResult.Fail(project, db.Type.ToString(), guardResult.Reason, guardResult.ErrorCode, environment: env).ToJson();
         }
 
-        // 5. 执行查询（带每环境并发限流）
+        // 5. 执行（读走 Reader，写走 NonQuery；带每环境并发限流）
         IDatabaseProvider provider = _providerFactory.Get(db.Type);
         QueryResult result;
         try
         {
             // 申请并发槽位：超载排队，超过 MaxConcurrencyWaitSeconds 抛 QueryRateLimitedException
             await using IAsyncDisposable slot = await _limiter.AcquireAsync(project, env, db, cancellationToken);
-            result = await provider.ExecuteQueryAsync(project, db, sql, maxRows, cancellationToken);
+            // 按 SqlGuard 判定的 StatementKind 分流：写语句（DML/DDL，allowWrite=true 环境）→ NonQuery 返回受影响行数；
+            // 读语句 → 原 Reader 路径返回 columns/rows
+            result = guardResult.Kind == StatementKind.Write
+                ? await provider.ExecuteNonQueryAsync(project, db, sql, cancellationToken)
+                : await provider.ExecuteQueryAsync(project, db, sql, maxRows, cancellationToken);
         }
         catch (QueryRateLimitedException ex)
         {
