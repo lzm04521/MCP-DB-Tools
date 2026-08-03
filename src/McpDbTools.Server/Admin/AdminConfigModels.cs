@@ -11,6 +11,22 @@ public sealed class AdminConfigResponse
     [JsonPropertyName("defaultDisabledKeywords")]
     public List<string> DefaultDisabledKeywords { get; init; } = new();
 
+    /// <summary>第一层写池：AllowWrite=true 环境的全局阻止关键字。空时回退 BuiltInWrite。</summary>
+    [JsonPropertyName("defaultWriteDisabledKeywords")]
+    public List<string> DefaultWriteDisabledKeywords { get; init; } = new();
+
+    /// <summary>内置只读池关键字（只读环境默认阻止集合），前端只读展示。单一真源 = 后端 DefaultDisabledKeywords.BuiltInReadOnly。</summary>
+    [JsonPropertyName("builtInReadOnlyKeywords")]
+    public List<string> BuiltInReadOnlyKeywords { get; init; } = new();
+
+    /// <summary>内置写池关键字（写环境默认阻止集合），前端只读展示。单一真源 = 后端 DefaultDisabledKeywords.BuiltInWrite。</summary>
+    [JsonPropertyName("builtInWriteKeywords")]
+    public List<string> BuiltInWriteKeywords { get; init; } = new();
+
+    /// <summary>按数据库类型追加的内置阻止关键字。key 为 DatabaseType 枚举的 lowerInvariant 字符串。</summary>
+    [JsonPropertyName("builtInDisabledKeywordsByType")]
+    public Dictionary<string, List<string>> BuiltInDisabledKeywordsByType { get; init; } = new();
+
     [JsonPropertyName("defaultDisabledKeywordsByType")]
     public Dictionary<string, List<string>> DefaultDisabledKeywordsByType { get; init; } = new();
 
@@ -38,6 +54,10 @@ public sealed class AdminConfigRequest
 {
     [JsonPropertyName("defaultDisabledKeywords")]
     public List<string>? DefaultDisabledKeywords { get; init; }
+
+    /// <summary>写池全局阻止关键字。null 表示保持当前配置，空列表表示用内置默认 BuiltInWrite。</summary>
+    [JsonPropertyName("defaultWriteDisabledKeywords")]
+    public List<string>? DefaultWriteDisabledKeywords { get; init; }
 
     [JsonPropertyName("defaultDisabledKeywordsByType")]
     public Dictionary<string, List<string>>? DefaultDisabledKeywordsByType { get; init; }
@@ -90,6 +110,10 @@ public sealed class AdminEnvironmentDto
 
     [JsonPropertyName("isProduction")]
     public bool IsProduction { get; init; }
+
+    /// <summary>是否允许写操作（DML/DDL）。与 IsProduction 互斥；生产环境不能开启。</summary>
+    [JsonPropertyName("allowWrite")]
+    public bool AllowWrite { get; init; }
 
     [JsonPropertyName("type")]
     public string Type { get; init; } = "sqlserver";
