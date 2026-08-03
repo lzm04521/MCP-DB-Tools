@@ -3,16 +3,20 @@ using McpDbTools.Server.Configuration;
 
 namespace McpDbTools.Server.Security;
 
+/// <summary>SQL 语句分类，供 DbQueryTool 选执行路径。</summary>
+public enum StatementKind { Read, Write }
+
 /// <summary>
 /// SQL 校验结果。
 /// </summary>
 public sealed record SqlGuardResult
 {
     public bool Allowed { get; init; }
+    public StatementKind Kind { get; init; }
     public string Reason { get; init; } = string.Empty;
     public string ErrorCode { get; init; } = string.Empty;
 
-    public static SqlGuardResult Allow() => new() { Allowed = true };
+    public static SqlGuardResult Allow(StatementKind kind = StatementKind.Read) => new() { Allowed = true, Kind = kind };
     public static SqlGuardResult Deny(string reason, string code) => new() { Allowed = false, Reason = reason, ErrorCode = code };
 }
 
@@ -71,6 +75,26 @@ public sealed class SqlGuard : ISqlGuard
             }
         };
 
+    /// <summary>
+    /// 写白名单：在只读白名单基础上追加的写动词首关键字。仅用于 AllowWrite=true 环境。
+    /// <para>不放 EXEC/EXECUTE/CALL/PREPARE —— 动态 SQL 是多语句注入主路径，必须经黑名单拦截。</para>
+    /// </summary>
+    private static readonly IReadOnlySet<string> WriteVerbKeywords =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "MERGE", "REPLACE"
+        };
+
+    /// <summary>
+    /// 动态 SQL 入口关键字。写环境下即使首关键字在只读白名单也拒绝（多语句注入防线），
+    /// 只读环境继续按只读白名单放行（保持既有行为）。
+    /// </summary>
+    private static readonly IReadOnlySet<string> DynamicSqlKeywords =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "EXEC", "EXECUTE", "CALL", "PREPARE"
+        };
+
     /// <summary>SqlServer DBCC 只读诊断子命令白名单（仅基础只读形态，修复选项单独拦截）。</summary>
     private static readonly IReadOnlySet<string> SqlServerDbccReadOnlySubcommands =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -109,11 +133,24 @@ public sealed class SqlGuard : ISqlGuard
         string firstStatement = normalized.Split(';')[0].Trim();
         string firstKeyword = firstStatement.Split(' ', 2)[0];
 
-        if (!WhitelistByType.TryGetValue(database.Type, out var whitelist) ||
-            !whitelist.Contains(firstKeyword))
+        // 双白名单：AllowWrite=true 时允许只读白名单 ∪ 写动词首关键字；
+        // AllowWrite=false（含生产兜底）只放行只读白名单，行为同今天。
+        // 写环境额外排斥 EXEC/EXECUTE/CALL/PREPARE：这些是动态 SQL 入口，
+        // 即使在只读白名单也拒绝，避免绕过黑名单（如 sp_executesql）。
+        WhitelistByType.TryGetValue(database.Type, out var whitelist);
+        bool allowWrite = database.AllowWrite;
+        bool inReadOnlyWhitelist = whitelist is not null && whitelist.Contains(firstKeyword);
+        bool isWriteVerb = WriteVerbKeywords.Contains(firstKeyword);
+        bool isDynamicSql = DynamicSqlKeywords.Contains(firstKeyword);
+        bool whitelistPass = allowWrite
+            ? ((inReadOnlyWhitelist || isWriteVerb) && !isDynamicSql)
+            : inReadOnlyWhitelist;
+
+        if (!whitelistPass)
         {
             return SqlGuardResult.Deny(
-                $"不允许的语句类型: {firstKeyword}（数据库类型 {database.Type} 仅允许只读查询）",
+                $"不允许的语句类型: {firstKeyword}（数据库类型 {database.Type} " +
+                $"{(allowWrite ? "允许只读与写操作（动态 SQL 入口拒）" : "仅允许只读查询")}）",
                 "SQL_BLOCKED");
         }
 
@@ -141,7 +178,29 @@ public sealed class SqlGuard : ISqlGuard
             }
         }
 
-        return SqlGuardResult.Allow();
+        // 4. CTE 写二次判定：WITH 开头时扫整段是否含写动词（如 WITH cte AS (...) INSERT ...）。
+        //    写动词首关键字（INSERT/UPDATE/...）直接标 Write；
+        //    WITH 包裹的写语句需要二次扫描，因为首关键字是 WITH 而非写动词。
+        StatementKind kind = StatementKind.Read;
+        if (allowWrite)
+        {
+            if (isWriteVerb)
+            {
+                kind = StatementKind.Write;
+            }
+            else if (firstKeyword.Equals("WITH", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (string verb in WriteVerbKeywords)
+                {
+                    if (Regex.IsMatch(normalized, $@"\b{verb}\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    {
+                        kind = StatementKind.Write;
+                        break;
+                    }
+                }
+            }
+        }
+        return SqlGuardResult.Allow(kind);
     }
 
     /// <summary>
@@ -184,11 +243,25 @@ public sealed class SqlGuard : ISqlGuard
 
     /// <summary>
     /// 构造关键字的词边界匹配模式。
-    /// 单词关键字（DROP）用 \b 包围；多词关键字（BULK INSERT）整体用 \b 包围。
+    /// 默认按 \s+ 相邻连接多词关键字（BULK INSERT, ALTER DATABASE 等短语型）。
+    /// SELECT INTO 特殊：SELECT 与 INTO 之间可能有列/星号（"SELECT * INTO newt"），
+    /// 但又不能误伤 "SELECT ... INSERT INTO"（INSERT INTO 已有表是合法写），
+    /// 故用 negative-lookahead 排除中间出现 INSERT/UPDATE/DELETE 等写动词的场景。
     /// </summary>
     private static string BuildKeywordPattern(string keyword)
     {
-        string escaped = Regex.Escape(keyword.Trim());
-        return @$"\b{escaped}\b";
+        string trimmed = keyword.Trim();
+
+        // SELECT INTO 在 SQL Server 是建表写法，SELECT 与 INTO 间可能有列/星号；
+        // 用 negative-lookahead 排除 "SELECT ... INSERT INTO" 这种合法的 INSERT INTO 已有表场景。
+        if (trimmed.Equals("SELECT INTO", StringComparison.OrdinalIgnoreCase))
+        {
+            return @"\bSELECT\b(?:(?!\b(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|CREATE|ALTER|DROP)\b)[^;])*?\bINTO\b";
+        }
+
+        // 默认：相邻连接（仅空白），多词短语如 BULK INSERT / ALTER DATABASE / DROP TABLE
+        string[] parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string joined = string.Join(@"\s+", parts.Select(Regex.Escape));
+        return @$"\b{joined}\b";
     }
 }
