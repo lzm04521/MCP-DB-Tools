@@ -455,4 +455,100 @@ public class ConfigMergeTests
         Assert.Contains("ANALYZE", db.DisabledKeywords);
         Assert.Contains("NOTIFY", db.DisabledKeywords);
     }
+
+    [Fact]
+    public void DatabaseConfig_Deserializes_AllowWrite_Default_False_When_Absent()
+    {
+        string json = @"{""type"":""sqlserver"",""connectionString"":""x""}";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        DatabaseConfig db = JsonSerializer.Deserialize<DatabaseConfig>(json, options)!;
+        Assert.False(db.AllowWrite);
+    }
+
+    [Fact]
+    public void DatabaseConfig_Deserializes_AllowWrite_True()
+    {
+        string json = @"{""type"":""sqlserver"",""connectionString"":""x"",""allowWrite"":true}";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        DatabaseConfig db = JsonSerializer.Deserialize<DatabaseConfig>(json, options)!;
+        Assert.True(db.AllowWrite);
+    }
+
+    [Fact]
+    public void DatabasesConfig_Deserializes_DefaultWriteDisabledKeywords()
+    {
+        string json = @"{""defaultWriteDisabledKeywords"":[""DROP TABLE"",""TRUNCATE""]}";
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        DatabasesConfig cfg = JsonSerializer.Deserialize<DatabasesConfig>(json, options)!;
+        Assert.NotNull(cfg.DefaultWriteDisabledKeywords);
+        Assert.Equal(2, cfg.DefaultWriteDisabledKeywords!.Count);
+    }
+
+    [Fact]
+    public void Build_ReadOnlyEnv_Uses_ReadOnlyPool_Default_When_Unset()
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>
+            {
+                ["p"] = new() { Environments = new() { ["dev"] = new DatabaseConfig { Type = DatabaseType.SqlServer, ConnectionString = "x" } } }
+            }
+        };
+        ResolvedConfig c = ResolvedConfigBuilder.Build(raw);
+        var db = c.Projects["p"].Environments["dev"];
+        Assert.False(db.AllowWrite);
+        Assert.Contains("INSERT", db.DisabledKeywords); // 只读池默认含 INSERT
+        Assert.Contains("SELECT INTO", db.DisabledKeywords);
+    }
+
+    [Fact]
+    public void Build_WriteEnv_Uses_WritePool_Default_When_Unset()
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>
+            {
+                ["p"] = new() { Environments = new() { ["dev"] = new DatabaseConfig { Type = DatabaseType.SqlServer, ConnectionString = "x", AllowWrite = true } } }
+            }
+        };
+        ResolvedConfig c = ResolvedConfigBuilder.Build(raw);
+        var db = c.Projects["p"].Environments["dev"];
+        Assert.True(db.AllowWrite);
+        Assert.DoesNotContain("INSERT", db.DisabledKeywords); // 写池放开 INSERT
+        Assert.Contains("DROP TABLE", db.DisabledKeywords);   // 写池仍禁 DROP TABLE
+        Assert.Contains("TRUNCATE", db.DisabledKeywords);
+    }
+
+    [Fact]
+    public void Build_Production_Forces_AllowWrite_False_Even_If_Configured_True()
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>
+            {
+                ["p"] = new() { Environments = new() { ["prod"] = new DatabaseConfig { Type = DatabaseType.SqlServer, ConnectionString = "x", IsProduction = true, AllowWrite = true } } }
+            }
+        };
+        ResolvedConfig c = ResolvedConfigBuilder.Build(raw);
+        var db = c.Projects["p"].Environments["prod"];
+        Assert.False(db.AllowWrite); // 生产兜底
+        Assert.Contains("INSERT", db.DisabledKeywords); // 走只读池
+    }
+
+    [Fact]
+    public void Build_WriteEnv_Uses_Configured_WritePool_When_NonEmpty()
+    {
+        var raw = new DatabasesConfig
+        {
+            DefaultWriteDisabledKeywords = new() { "DROP TABLE" },
+            Projects = new Dictionary<string, ProjectConfig>
+            {
+                ["p"] = new() { Environments = new() { ["dev"] = new DatabaseConfig { Type = DatabaseType.SqlServer, ConnectionString = "x", AllowWrite = true } } }
+            }
+        };
+        ResolvedConfig c = ResolvedConfigBuilder.Build(raw);
+        var db = c.Projects["p"].Environments["dev"];
+        Assert.Contains("DROP TABLE", db.DisabledKeywords);
+        Assert.DoesNotContain("TRUNCATE", db.DisabledKeywords); // 配置覆盖默认，不含 TRUNCATE
+    }
 }

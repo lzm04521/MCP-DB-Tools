@@ -229,6 +229,20 @@ public class DbListToolTests : IDisposable
         Assert.Equal("OrderDb", env.GetProperty("databaseName").GetString());
     }
 
+    // ───────── T7：环境详情暴露 allowWrite（非生产透传）─────────
+
+    [Fact]
+    public async Task ListProjects_Project_Environment_Exposes_AllowWrite()
+    {
+        // dev 环境显式配置 allowWrite=true（非生产），应透传到 db_list 输出
+        var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"dev","environments":{"dev":{"type":"sqlserver","connectionString":"cs","allowWrite":true}}}}""");
+        string json = await tool.ListProjects(project: "erp-system", environment: "dev");
+
+        using var doc = JsonDocument.Parse(json);
+        JsonElement env = doc.RootElement.GetProperty("projects")[0].GetProperty("environments")[0];
+        Assert.True(env.GetProperty("allowWrite").GetBoolean());
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }

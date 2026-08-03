@@ -7,10 +7,9 @@ namespace McpDbTools.Server.Configuration;
 public static class DefaultDisabledKeywords
 {
     /// <summary>
-    /// 全局通用阻止关键字（所有数据库类型生效）。
-    /// 注意：此处为写操作的通用动词，数据库特有命令放在 defaultDisabledKeywordsByType。
+    /// 只读环境（AllowWrite=false）的全局默认阻止关键字。
     /// </summary>
-    public static readonly IReadOnlyList<string> BuiltIn = new[]
+    public static readonly IReadOnlyList<string> BuiltInReadOnly = new[]
     {
         "DROP",
         "DELETE",
@@ -26,12 +25,70 @@ public static class DefaultDisabledKeywords
         "BACKUP",
         "RESTORE",
         "KILL",
-        "SHUTDOWN"
+        "SHUTDOWN",
+        "SELECT INTO",
+        "sp_executesql",
+        "EXECUTE IMMEDIATE",
+        "PREPARE"
     };
 
     /// <summary>
-    /// 按数据库类型追加的阻止关键字。覆盖各数据库特有的危险命令。
+    /// 写环境（AllowWrite=true）的全局默认阻止关键字。
+    /// 放开 DML 业务写（INSERT/UPDATE/DELETE/MERGE/REPLACE）与 DDL 新增改（CREATE/ALTER/DROP INDEX），
+    /// 保留结构删除、字段约束删除、库级修改、账号权限、系统级、动态 SQL 等。
     /// </summary>
+    public static readonly IReadOnlyList<string> BuiltInWrite = new[]
+    {
+        // 结构删除（DROP INDEX 不在此列，允许删索引）
+        "DROP TABLE",
+        "DROP DATABASE",
+        "DROP SCHEMA",
+        "DROP VIEW",
+        "DROP PROCEDURE",
+        "DROP FUNCTION",
+        "DROP TRIGGER",
+        "DROP TYPE",
+        "DROP SYNONYM",
+        "DROP SEQUENCE",
+        // 字段/约束删除
+        "DROP COLUMN",
+        "DROP CONSTRAINT",
+        // 库级修改
+        "ALTER DATABASE",
+        "ALTER SCHEMA",
+        // 清表
+        "TRUNCATE",
+        // 快捷建表写（强制显式 CREATE+INSERT）
+        "SELECT INTO",
+        // 权限/账号
+        "GRANT",
+        "REVOKE",
+        "CREATE USER",
+        "CREATE ROLE",
+        "ALTER USER",
+        "ALTER ROLE",
+        "DROP USER",
+        "DROP ROLE",
+        // 系统级
+        "BACKUP",
+        "RESTORE",
+        "KILL",
+        "SHUTDOWN",
+        // MySQL 复制/binlog/全局配置
+        "RESET MASTER",
+        "RESET REPLICA",
+        "PURGE BINARY LOGS",
+        "SET GLOBAL",
+        "SET PERSIST",
+        // SQL Server 数据页直写
+        "DBCC WRITEPAGE",
+        // 动态 SQL（多语句注入防线）
+        "sp_executesql",
+        "EXECUTE IMMEDIATE",
+        "PREPARE"
+    };
+
+    /// <summary>按数据库类型追加的阻止关键字。覆盖各数据库特有的危险命令。</summary>
     public static readonly IReadOnlyDictionary<DatabaseType, IReadOnlyList<string>> BuiltInByType =
         new Dictionary<DatabaseType, IReadOnlyList<string>>
         {

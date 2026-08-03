@@ -11,13 +11,45 @@ public class SqlGuardTests
     private static ResolvedDatabase Db(DatabaseType type)
     {
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string k in DefaultDisabledKeywords.BuiltIn) set.Add(k.ToUpperInvariant());
+        foreach (string k in DefaultDisabledKeywords.BuiltInReadOnly) set.Add(k.ToUpperInvariant());
         foreach (string k in DefaultDisabledKeywords.BuiltInByType[type]) set.Add(k.ToUpperInvariant());
         return new ResolvedDatabase
         {
             ProjectName = "test",
             Environment = "test",
             IsProduction = false,
+            AllowWrite = false,
+            Type = type,
+            ConnectionString = "",
+            DatabaseName = null,
+            MaxRows = 1000,
+            CommandTimeout = 30,
+            MaxPoolSize = 100,
+            ConnectTimeoutSeconds = 15,
+            MaxConcurrency = 8,
+            MaxConcurrencyWaitSeconds = 5,
+            DisabledKeywords = set
+        };
+    }
+
+    /// <summary>
+    /// 构造可指定 AllowWrite/IsProduction 的环境，DisabledKeywords 按读写池内置默认合并。
+    /// 模拟 ResolvedConfigBuilder 的合并结果：allowWrite 选 BuiltInWrite，否则 BuiltInReadOnly，再并 BuiltInByType。
+    /// </summary>
+    private static ResolvedDatabase BuildResolvedDatabase(DatabaseType type, bool allowWrite, bool isProduction = false)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> global = allowWrite
+            ? DefaultDisabledKeywords.BuiltInWrite
+            : DefaultDisabledKeywords.BuiltInReadOnly;
+        foreach (string k in global) set.Add(k.ToUpperInvariant());
+        foreach (string k in DefaultDisabledKeywords.BuiltInByType[type]) set.Add(k.ToUpperInvariant());
+        return new ResolvedDatabase
+        {
+            ProjectName = "test",
+            Environment = "test",
+            IsProduction = isProduction,
+            AllowWrite = allowWrite,
             Type = type,
             ConnectionString = "",
             DatabaseName = null,
@@ -209,5 +241,87 @@ public class SqlGuardTests
         var r = _guard.Validate("DROP TABLE x", Db(DatabaseType.SqlServer));
         Assert.False(r.Allowed);
         Assert.Contains("DROP", r.Reason);
+    }
+
+    // ===== T4：双白名单 + StatementKind + CTE 二次判定 =====
+
+    [Theory]
+    [InlineData("INSERT INTO t (a) VALUES (1)", StatementKind.Write)]
+    [InlineData("UPDATE t SET a=1", StatementKind.Write)]
+    [InlineData("DELETE FROM t", StatementKind.Write)]
+    [InlineData("CREATE TABLE t (a int)", StatementKind.Write)]
+    [InlineData("ALTER TABLE t ADD b int", StatementKind.Write)]
+    [InlineData("DROP INDEX ix ON t", StatementKind.Write)]
+    [InlineData("SELECT * FROM t", StatementKind.Read)]
+    public void WriteEnv_Allows_DML_DDL_And_Reports_Kind(string sql, StatementKind expected)
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: true);
+        var r = _guard.Validate(sql, db);
+        Assert.True(r.Allowed, $"expected allow: {r.Reason}");
+        Assert.Equal(expected, r.Kind);
+    }
+
+    [Fact]
+    public void WriteEnv_Blocks_DropTable_DropColumn_Truncate()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: true);
+        Assert.False(_guard.Validate("DROP TABLE t", db).Allowed);
+        Assert.False(_guard.Validate("ALTER TABLE t DROP COLUMN c", db).Allowed);
+        Assert.False(_guard.Validate("TRUNCATE TABLE t", db).Allowed);
+    }
+
+    [Fact]
+    public void WriteEnv_Blocks_AccountDdl()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: true);
+        Assert.False(_guard.Validate("CREATE USER eve IDENTIFIED BY 'pw'", db).Allowed);
+        Assert.False(_guard.Validate("ALTER ROLE r WITH PASSWORD 'x'", db).Allowed);
+    }
+
+    [Fact]
+    public void WriteEnv_Blocks_Exec_DynamicSql_At_Whitelist()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: true);
+        // EXEC 不在写白名单
+        Assert.False(_guard.Validate("EXEC sp_help", db).Allowed);
+    }
+
+    [Fact]
+    public void ReadOnlyEnv_Blocks_SelectInto_Via_Blacklist()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: false);
+        Assert.False(_guard.Validate("SELECT * INTO newt FROM t", db).Allowed);
+    }
+
+    [Fact]
+    public void WriteEnv_Blocks_SelectInto_Via_WriteBlacklist()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: true);
+        Assert.False(_guard.Validate("SELECT * INTO newt FROM t", db).Allowed);
+    }
+
+    [Fact]
+    public void ReadOnlyEnv_Blocks_sp_executesql_DoubleInsurance()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: false);
+        Assert.False(_guard.Validate("EXEC sp_executesql N'SELECT 1'", db).Allowed);
+    }
+
+    [Fact]
+    public void Production_Forces_Read_Whitelist_Even_AllowWrite_True()
+    {
+        // 注意：ResolvedConfigBuilder 已对生产环境兜底 AllowWrite=false，
+        // 这里直接构造 allowWrite=false 模拟兜底后场景，验证 SqlGuard 行为。
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: false, isProduction: true);
+        Assert.False(_guard.Validate("INSERT INTO t (a) VALUES (1)", db).Allowed);
+    }
+
+    [Fact]
+    public void WriteEnv_CTE_Insert_Reported_As_Write()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.SqlServer, allowWrite: true);
+        var r = _guard.Validate("WITH cte AS (SELECT 1 AS a) INSERT INTO t SELECT * FROM cte", db);
+        Assert.True(r.Allowed);
+        Assert.Equal(StatementKind.Write, r.Kind);
     }
 }

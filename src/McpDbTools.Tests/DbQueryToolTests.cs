@@ -104,8 +104,19 @@ public class DbQueryToolTests : IDisposable
             DatabaseType = type;
         }
         public DatabaseType DatabaseType { get; }
+        // spy 标志：T6 路由测试断言"写语句→NonQuery、读语句→Query"用
+        public bool ExecuteQueryCalled { get; private set; }
+        public bool ExecuteNonQueryCalled { get; private set; }
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
-            => Task.FromResult(_result);
+        {
+            ExecuteQueryCalled = true;
+            return Task.FromResult(_result);
+        }
+        public Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+        {
+            ExecuteNonQueryCalled = true;
+            return Task.FromResult(_result);
+        }
         public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
             => Task.FromResult<(bool, long, string?)>((true, 0, null));
     }
@@ -276,10 +287,74 @@ public class DbQueryToolTests : IDisposable
         private readonly Exception _ex;
         public ThrowingProvider(Exception ex, DatabaseType type) { _ex = ex; DatabaseType = type; }
         public DatabaseType DatabaseType { get; }
+        // spy 标志：与 StubProvider 一致，便于复用断言路由
+        public bool ExecuteQueryCalled { get; private set; }
+        public bool ExecuteNonQueryCalled { get; private set; }
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
-            => Task.FromException<QueryResult>(_ex);
+        {
+            ExecuteQueryCalled = true;
+            return Task.FromException<QueryResult>(_ex);
+        }
+        public Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+        {
+            ExecuteNonQueryCalled = true;
+            return Task.FromException<QueryResult>(_ex);
+        }
         public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
             => Task.FromResult<(bool, long, string?)>((false, 0, _ex.Message));
+    }
+
+    /// <summary>
+    /// 构造带 spy StubProvider + allowWrite 控制的工具：用于 T6 断言按 StatementKind 路由。
+    /// allowWrite=true 时 dev 环境；否则 dev 不带 allowWrite（默认 false）。
+    /// </summary>
+    private (DbQueryTool tool, StubProvider spy) BuildToolWithSpyProvider(bool allowWrite)
+    {
+        string configPath = Path.Combine(_tempDir, "config.json");
+        string env = allowWrite
+            ? "\"dev\":{\"type\":\"sqlserver\",\"connectionString\":\"cs\",\"allowWrite\":true}"
+            : "\"dev\":{\"type\":\"sqlserver\",\"connectionString\":\"cs\"}";
+        string json = "{\"databases\":{\"erp\":{\"defaultEnvironment\":\"dev\",\"environments\":{" + env + "}}}}";
+        File.WriteAllText(configPath, json);
+
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>()));
+        var stub = new QueryResult
+        {
+            Success = true,
+            Columns = new List<string> { "id" },
+            Rows = new List<object?[]> { new object?[] { 1 } },
+            RowCount = 1
+        };
+        var spy = new StubProvider(stub, DatabaseType.SqlServer);
+        var factory = new DatabaseProviderFactory(
+            new Dictionary<DatabaseType, IDatabaseProvider>
+            {
+                [DatabaseType.SqlServer] = spy
+            });
+        return (new DbQueryTool(store, new SqlGuard(), factory, audit, new QueryConcurrencyLimiter()), spy);
+    }
+
+    [Fact]
+    public async Task WriteStatement_Routes_To_ExecuteNonQueryAsync()
+    {
+        // allowWrite=true → INSERT 首关键字在写白名单 → Kind=Write → 路由 ExecuteNonQueryAsync
+        var (tool, spy) = BuildToolWithSpyProvider(allowWrite: true);
+        await tool.ExecuteQuery("erp", "INSERT INTO t (a) VALUES (1)", "dev");
+        Assert.True(spy.ExecuteNonQueryCalled);
+        Assert.False(spy.ExecuteQueryCalled);
+    }
+
+    [Fact]
+    public async Task ReadStatement_Routes_To_ExecuteQueryAsync()
+    {
+        // SELECT 即使在 allowWrite=true 环境也属 Kind=Read → 路由 ExecuteQueryAsync
+        var (tool, spy) = BuildToolWithSpyProvider(allowWrite: true);
+        await tool.ExecuteQuery("erp", "SELECT 1", "dev");
+        Assert.True(spy.ExecuteQueryCalled);
+        Assert.False(spy.ExecuteNonQueryCalled);
     }
 
     public void Dispose()

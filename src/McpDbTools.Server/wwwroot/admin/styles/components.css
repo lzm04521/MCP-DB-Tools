@@ -198,6 +198,41 @@ textarea {
   line-height: 1.7;
 }
 
+/* ============ 关键字页固定只读区（代码内置·不可修改） ============ */
+.keyword-readonly-list {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: var(--color-muted);
+  border-radius: var(--radius-md);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  /* pre-wrap 让纯文本列表（\n 分隔）也能正确换行显示 */
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-subtle);
+  max-height: 360px;
+  overflow: auto;
+}
+
+.keyword-readonly-list em {
+  font-style: italic;
+}
+
+.keyword-readonly-list strong {
+  color: var(--color-foreground);
+  font-weight: 700;
+}
+
+/* byType 分组间留空，单行列表无 div 子元素不受影响 */
+.keyword-readonly-list div {
+  margin-bottom: 6px;
+}
+
+.keyword-readonly-list div:last-child {
+  margin-bottom: 0;
+}
+
 /* ============ 提示条 ============ */
 .warning {
   margin-top: 16px;

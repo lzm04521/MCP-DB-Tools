@@ -46,6 +46,9 @@ public sealed record ResolvedDatabase
     /// <summary>是否生产环境。供 db_list 展示给 Agent，便于在生产环境查询时谨慎操作。</summary>
     public required bool IsProduction { get; init; }
 
+    /// <summary>是否允许写操作。已应用 IsProduction 兜底（生产环境强制 false）。</summary>
+    public required bool AllowWrite { get; init; }
+
     public required DatabaseType Type { get; init; }
     public required string ConnectionString { get; init; }
 
@@ -94,17 +97,24 @@ public static class ResolvedConfigBuilder
         int globalMaxPoolSize = raw.DefaultMaxPoolSize is int p && p > 0 ? p : DefaultMaxPoolSize;
         int globalConnectTimeout = raw.DefaultConnectTimeoutSeconds is int t && t > 0 ? t : DefaultConnectTimeoutSeconds;
 
-        // 第一层：全局通用。未配置则用内置默认
-        IEnumerable<string> global = raw.DefaultDisabledKeywords is { Count: > 0 }
-            ? raw.DefaultDisabledKeywords
-            : DefaultDisabledKeywords.BuiltIn;
-
         var projects = new Dictionary<string, ResolvedProject>(StringComparer.OrdinalIgnoreCase);
         foreach ((string projectName, ProjectConfig proj) in raw.Projects)
         {
             var envs = new Dictionary<string, ResolvedDatabase>(StringComparer.OrdinalIgnoreCase);
             foreach ((string envName, DatabaseConfig db) in proj.Environments)
             {
+                // 生产环境兜底：IsProduction=true 时强制 AllowWrite=false，挡住手改 config.json
+                bool allowWrite = db.IsProduction ? false : db.AllowWrite;
+
+                // 第一层：全局通用。按环境读写选池；未配置则用内置默认
+                IEnumerable<string> global = allowWrite
+                    ? (raw.DefaultWriteDisabledKeywords is { Count: > 0 }
+                        ? raw.DefaultWriteDisabledKeywords
+                        : DefaultDisabledKeywords.BuiltInWrite)
+                    : (raw.DefaultDisabledKeywords is { Count: > 0 }
+                        ? raw.DefaultDisabledKeywords
+                        : DefaultDisabledKeywords.BuiltInReadOnly);
+
                 // 第二层：按类型。未配置则用内置默认
                 IReadOnlyList<string> byType =
                     raw.DefaultDisabledKeywordsByType is not null &&
@@ -139,6 +149,7 @@ public static class ResolvedConfigBuilder
                     ProjectName = projectName,
                     Environment = envName,
                     IsProduction = db.IsProduction,
+                    AllowWrite = allowWrite,
                     Type = db.Type,
                     ConnectionString = finalConnectionString,
                     DatabaseName = ResolveDatabaseName(db.ConnectionString, db.Type),

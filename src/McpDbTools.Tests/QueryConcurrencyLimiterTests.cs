@@ -16,6 +16,7 @@ public class QueryConcurrencyLimiterTests
             ProjectName = project,
             Environment = env,
             IsProduction = false,
+            AllowWrite = false,
             Type = DatabaseType.SqlServer,
             ConnectionString = "cs",
             DatabaseName = null,

@@ -28,6 +28,10 @@ public sealed class DatabaseConfig
     [JsonPropertyName("isProduction")]
     public bool IsProduction { get; init; }
 
+    /// <summary>是否允许写操作（DML/DDL）。与 IsProduction 互斥；生产环境运行时强制 false。</summary>
+    [JsonPropertyName("allowWrite")]
+    public bool AllowWrite { get; init; }
+
     /// <summary>数据库类型</summary>
     [JsonPropertyName("type")]
     public DatabaseType Type { get; init; }
@@ -103,9 +107,13 @@ public sealed class ProjectConfig
 /// </summary>
 public sealed class DatabasesConfig
 {
-    /// <summary>第一层：全局通用阻止关键字。未配置时使用 <see cref="DefaultDisabledKeywords.BuiltIn"/>。</summary>
+    /// <summary>第一层：全局通用阻止关键字。未配置时使用 <see cref="DefaultDisabledKeywords.BuiltInReadOnly"/>。</summary>
     [JsonPropertyName("defaultDisabledKeywords")]
     public List<string>? DefaultDisabledKeywords { get; init; }
+
+    /// <summary>第一层写池：用于 AllowWrite=true 环境的全局阻止关键字。未配置时使用 BuiltInWrite。</summary>
+    [JsonPropertyName("defaultWriteDisabledKeywords")]
+    public List<string>? DefaultWriteDisabledKeywords { get; init; }
 
     /// <summary>第二层：按数据库类型追加的阻止关键字。未配置时为空。</summary>
     [JsonPropertyName("defaultDisabledKeywordsByType")]

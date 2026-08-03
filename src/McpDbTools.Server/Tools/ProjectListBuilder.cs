@@ -83,6 +83,8 @@ public static class ProjectListBuilder
         type = e.Value.Type.ToString().ToLowerInvariant(),
         databaseName = e.Value.DatabaseName,
         isProduction = e.Value.IsProduction,
+        // T7：暴露 allowWrite，供 Agent 在调用前识别可写环境（生产兜底已强制 false）
+        allowWrite = e.Value.AllowWrite,
         maxRows = e.Value.MaxRows,
         maxConcurrency = e.Value.MaxConcurrency,
         maxPoolSize = e.Value.MaxPoolSize,

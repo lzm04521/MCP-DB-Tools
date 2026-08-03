@@ -99,6 +99,7 @@ public sealed class AdminConfigService
                         OriginalName = env.Key,
                         DisplayName = env.Value.DisplayName,
                         IsProduction = env.Value.IsProduction,
+                        AllowWrite = env.Value.AllowWrite,
                         Type = ToConfigType(env.Value.Type),
                         ConnectionString = env.Value.ConnectionString,
                         ConnectionStringMasked = string.Empty,
@@ -120,7 +121,16 @@ public sealed class AdminConfigService
             ConfigPath = _configPath,
             DefaultDisabledKeywords = NormalizeKeywords(config.DefaultDisabledKeywords is { Count: > 0 }
                 ? config.DefaultDisabledKeywords
-                : DefaultDisabledKeywords.BuiltIn),
+                : DefaultDisabledKeywords.BuiltInReadOnly),
+            // 写池：空时回退 BuiltInWrite
+            DefaultWriteDisabledKeywords = NormalizeKeywords(config.DefaultWriteDisabledKeywords is { Count: > 0 }
+                ? config.DefaultWriteDisabledKeywords
+                : DefaultDisabledKeywords.BuiltInWrite),
+            // 内置关键字只读暴露（单一真源 = 后端）
+            BuiltInReadOnlyKeywords = DefaultDisabledKeywords.BuiltInReadOnly.ToList(),
+            BuiltInWriteKeywords = DefaultDisabledKeywords.BuiltInWrite.ToList(),
+            BuiltInDisabledKeywordsByType = DefaultDisabledKeywords.BuiltInByType
+                .ToDictionary(kv => kv.Key.ToString().ToLowerInvariant(), kv => kv.Value.ToList()),
             DefaultDisabledKeywordsByType = ToResponseKeywordsByType(config),
             DefaultMaxConcurrency = config.DefaultMaxConcurrency ?? 0,
             DefaultMaxConcurrencyWaitSeconds = config.DefaultMaxConcurrencyWaitSeconds ?? 0,
@@ -208,11 +218,17 @@ public sealed class AdminConfigService
                 {
                     errors.Add($"项目 {projectName} / 环境 {envName} 的 commandTimeout 必须大于 0。");
                 }
+                // 互斥校验：生产环境与 DB 写不能同时开启
+                if (env.AllowWrite && env.IsProduction)
+                {
+                    errors.Add($"项目 {projectName} / 环境 {envName}：生产环境与 DB 写互斥，不能同时开启。");
+                }
 
                 environments[envName] = new DatabaseConfig
                 {
                     DisplayName = NullIfWhiteSpace(env.DisplayName),
                     IsProduction = env.IsProduction,
+                    AllowWrite = env.AllowWrite,
                     Type = type,
                     ConnectionString = connectionString,
                     MaxRows = env.MaxRows,
@@ -247,6 +263,10 @@ public sealed class AdminConfigService
             DefaultDisabledKeywords = request.DefaultDisabledKeywords is null
                 ? current.DefaultDisabledKeywords?.ToList()
                 : NormalizeKeywords(request.DefaultDisabledKeywords),
+            // 写池：null 保持当前；非 null 按 NormalizeKeywords 归一化（含 trim/distinct）
+            DefaultWriteDisabledKeywords = request.DefaultWriteDisabledKeywords is null
+                ? current.DefaultWriteDisabledKeywords?.ToList()
+                : NormalizeKeywords(request.DefaultWriteDisabledKeywords),
             DefaultDisabledKeywordsByType = request.DefaultDisabledKeywordsByType is null
                 ? current.DefaultDisabledKeywordsByType?.ToDictionary(
                     item => item.Key,
@@ -480,6 +500,8 @@ public sealed class AdminConfigService
         DatabasesConfig next = new()
         {
             DefaultDisabledKeywords = current.DefaultDisabledKeywords,
+            // 关键防回归：写池必须透传，否则保存 maintenance 会静默丢写池（生产数据风险）
+            DefaultWriteDisabledKeywords = current.DefaultWriteDisabledKeywords,
             DefaultDisabledKeywordsByType = current.DefaultDisabledKeywordsByType,
             DefaultMaxConcurrency = current.DefaultMaxConcurrency,
             DefaultMaxConcurrencyWaitSeconds = current.DefaultMaxConcurrencyWaitSeconds,

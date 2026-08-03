@@ -13,6 +13,8 @@ public sealed class QueryResult
     public string? Environment { get; init; }
     public string? DatabaseType { get; init; }
     public int RowCount { get; init; }
+    /// <summary>写操作受影响行数；读操作为 0。</summary>
+    public int AffectedRows { get; init; }
     public int MaxRows { get; init; }
     public bool Truncated { get; init; }
     public long ExecutionTimeMs { get; init; }
@@ -58,6 +60,18 @@ public sealed class QueryResult
         DatabaseType = dbType,
         Error = error,
         ErrorCode = errorCode,
+        ExecutionTimeMs = elapsedMs
+    };
+
+    /// <summary>构造写操作成功结果。RowCount 与 AffectedRows 同值，便于审计/UI 统一取 RowCount。</summary>
+    public static QueryResult OkWrite(string project, string dbType, int affectedRows, long elapsedMs, string? environment = null) => new()
+    {
+        Success = true,
+        Project = project,
+        Environment = environment,
+        DatabaseType = dbType,
+        AffectedRows = affectedRows,
+        RowCount = affectedRows,
         ExecutionTimeMs = elapsedMs
     };
 }

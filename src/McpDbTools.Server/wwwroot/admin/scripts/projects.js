@@ -199,6 +199,10 @@
                   <input id="isProduction" type="checkbox" />
                   <span>生产环境</span>
                 </label>
+                <label class="switch-row">
+                  <input id="allowWrite" type="checkbox" />
+                  <span>支持 DB 写</span>
+                </label>
                 <label>
                   <span>最大行数 *</span>
                   <input id="maxRows" type="number" min="1" step="1" required />
@@ -285,7 +289,7 @@
       'testConnectionBtn', 'testConnectionResult',
       'productionWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
       'environmentKeyToggle', 'environmentKeyList',
-      'databaseType', 'isProduction', 'maxRows', 'commandTimeout',
+      'databaseType', 'isProduction', 'allowWrite', 'maxRows', 'commandTimeout',
       'maxConcurrency', 'maxPoolSize', 'connectTimeoutSeconds',
       'connectionString', 'disabledKeywords'
     ];
@@ -438,6 +442,7 @@
     el.environmentDisplayName.dataset.autoSynced = env.displayName ? '0' : '1';
     el.databaseType.value = env.type || 'sqlserver';
     el.isProduction.checked = Boolean(env.isProduction);
+    el.allowWrite.checked = Boolean(env.allowWrite);
     el.maxRows.value = env.maxRows || 1000;
     el.commandTimeout.value = env.commandTimeout || 600;
     el.maxConcurrency.value = env.maxConcurrency || '';
@@ -446,7 +451,8 @@
     el.connectionString.value = env.connectionString || '';
     el.connectionString.placeholder = '请输入连接字符串';
     el.disabledKeywords.value = (env.disabledKeywords || []).join(', ');
-    el.productionWarning.classList.toggle('hidden', !env.isProduction);
+    // 互斥联动：初始化 allowWrite/isProduction 的 disabled 状态与 productionWarning 显隐
+    applyMutexState();
     // 切换到已存在环境时重置交互标记：用户尚未在新上下文里手动改过生产开关
     resetEnvInteractionMarks();
   }
@@ -469,6 +475,7 @@
       env.displayName = window.adminUi.emptyToNull(el.environmentDisplayName.value);
       env.type = el.databaseType.value;
       env.isProduction = el.isProduction.checked;
+      env.allowWrite = el.allowWrite.checked;
       env.maxRows = Number(el.maxRows.value);
       env.commandTimeout = Number(el.commandTimeout.value);
       // 0 表示未配置，后端 resolve 时回退全局默认
@@ -503,6 +510,7 @@
       originalName: null,
       displayName: null,
       isProduction: false,
+      allowWrite: false,
       type: 'sqlserver',
       connectionString: '',
       maxRows: 1000,
@@ -622,7 +630,7 @@
     [
       el.projectName, el.projectDisplayName, el.defaultEnvironment,
       el.environmentName, el.environmentDisplayName, el.databaseType,
-      el.isProduction, el.maxRows, el.commandTimeout,
+      el.isProduction, el.allowWrite, el.maxRows, el.commandTimeout,
       el.maxConcurrency, el.maxPoolSize, el.connectTimeoutSeconds,
       el.connectionString, el.disabledKeywords
     ].forEach(input => input.addEventListener('change', syncFormToState));
@@ -633,6 +641,15 @@
     setupNameSync(el.environmentName, el.environmentDisplayName);
     // 环境 key 预设：选中 Test/Prod 时填默认显示名并（Prod）自动勾选生产环境。
     setupEnvKeyPreset();
+
+    // 生产环境 ↔ DB 写 互斥联动：
+    // 勾选一方时取消并置灰另一方，同时统一管理 productionWarning 显隐。
+    // dataset.touched 保留「用户手动操作过生产开关」语义，避免预设联动覆盖用户意图。
+    el.isProduction.addEventListener('change', () => {
+      el.isProduction.dataset.touched = '1';
+      applyMutexState();
+    });
+    el.allowWrite.addEventListener('change', applyMutexState);
 
     el.addProjectBtn.addEventListener('click', addProject);
     el.addEnvironmentBtn.addEventListener('click', addEnvironment);
@@ -735,14 +752,12 @@
       }
       if (el.isProduction.dataset.touched !== '1') {
         el.isProduction.checked = preset.isProduction;
-        el.productionWarning.classList.toggle('hidden', !preset.isProduction);
+        // 由 applyMutexState 统一处理 productionWarning 显隐与 allowWrite 互斥
+        applyMutexState();
       }
     });
-    // 用户手动操作过生产环境开关后，不再被预设联动覆盖
-    el.isProduction.addEventListener('change', () => {
-      el.isProduction.dataset.touched = '1';
-      el.productionWarning.classList.toggle('hidden', !el.isProduction.checked);
-    });
+    // isProduction 的 change 监听（dataset.touched + applyMutexState）已整合到 bindEvents，
+    // 不再在此重复注册，避免 productionWarning 被切换两次（toggle 幂等抵消 bug）。
     // 自定义 combobox：替代原生 datalist（Chrome/Edge 单击不展开且 showPicker 无效）
     setupEnvKeyCombobox();
   }
@@ -954,6 +969,27 @@
    */
   function resetEnvInteractionMarks() {
     el.isProduction.dataset.touched = '';
+  }
+
+  /**
+   * 生产环境 ↔ DB 写 互斥联动。
+   * - 勾选生产 → allowWrite 取消勾选并置灰；productionWarning 显示。
+   * - 勾选 DB 写 → isProduction 取消勾选并置灰；productionWarning 隐藏。
+   * - 都未勾选 → 两框可用；productionWarning 隐藏。
+   * 由 bindEnvironment 初始化、两框 change 监听、setupEnvKeyPreset 预设联动统一调用。
+   */
+  function applyMutexState() {
+    if (el.isProduction.checked) {
+      el.allowWrite.checked = false;
+      el.allowWrite.disabled = true;
+    } else if (el.allowWrite.checked) {
+      el.isProduction.checked = false;
+      el.isProduction.disabled = true;
+    } else {
+      el.allowWrite.disabled = false;
+      el.isProduction.disabled = false;
+    }
+    el.productionWarning.classList.toggle('hidden', !el.isProduction.checked);
   }
 
   window.adminViews = window.adminViews || {};

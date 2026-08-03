@@ -412,6 +412,69 @@ public class AdminConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveConfig_Rejects_IsProduction_And_AllowWrite_Both_True()
+    {
+        // 互斥校验：同一环境不能同时 IsProduction=true 与 AllowWrite=true
+        var (store, service, _) = Create("""
+        {
+          "databases": {}
+        }
+        """);
+        using (store)
+        {
+            var request = new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        DefaultEnvironment = "prod",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod",
+                                IsProduction = true,
+                                AllowWrite = true,
+                                Type = "sqlserver",
+                                ConnectionString = "Server=.;",
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            };
+
+            AdminSaveResult result = await service.SaveConfigAsync(request, CancellationToken.None);
+            Assert.False(result.Success);
+            Assert.Contains(result.Errors, e => e.Contains("互斥"));
+        }
+    }
+
+    [Fact]
+    public void GetConfig_Exposes_BuiltIn_Keywords_And_WritePool()
+    {
+        // 内置关键字通过 API 暴露（单一真源 = 后端），写池为空时回退 BuiltInWrite
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            AdminConfigResponse resp = service.GetConfig();
+            Assert.NotEmpty(resp.BuiltInReadOnlyKeywords);
+            Assert.NotEmpty(resp.BuiltInWriteKeywords);
+            Assert.NotEmpty(resp.BuiltInDisabledKeywordsByType);
+            Assert.NotNull(resp.DefaultWriteDisabledKeywords); // 空 config 回退 BuiltInWrite
+            Assert.NotEmpty(resp.DefaultWriteDisabledKeywords);
+            // BuiltInByType 的 key 应是 lowerInvariant 字符串
+            Assert.Contains("sqlserver", resp.BuiltInDisabledKeywordsByType.Keys);
+            Assert.Contains("mysql", resp.BuiltInDisabledKeywordsByType.Keys);
+            Assert.Contains("oracle", resp.BuiltInDisabledKeywordsByType.Keys);
+            Assert.Contains("postgresql", resp.BuiltInDisabledKeywordsByType.Keys);
+        }
+    }
+
+    [Fact]
     public async Task Save_PreservesPostgreSqlType()
     {
         var (store, service, configPath) = CreateMissing();
