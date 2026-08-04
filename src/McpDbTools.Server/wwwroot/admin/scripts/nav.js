@@ -5,6 +5,7 @@
 (function () {
   const NAV_ITEMS = [
     { id: 'projects', label: '项目配置' },
+    { id: 'transfer', label: '配置迁移' },
     { id: 'keywords', label: '全局关键字' },
     { id: 'audit-log', label: '审计日志' },
     { id: 'backups', label: '备份管理' },

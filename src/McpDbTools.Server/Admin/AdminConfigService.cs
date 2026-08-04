@@ -337,6 +337,222 @@ public sealed class AdminConfigService
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? new List<string>();
 
+    // ============ 项目配置导入（环境级合并）============
+
+    /// <summary>
+    /// 预览导入：解析 JSON → 与 current 环境级合并 → 复用 ToConfig 校验。不落盘。
+    /// 返回合并计划与校验错误列表（不论是否有错误都返回，前端展示后决定）。
+    /// </summary>
+    public ImportPreviewResponse GetImportPreview(string json)
+        => BuildMergedConfig(json).Preview;
+
+    /// <summary>
+    /// 应用导入：重新合并+校验（不信任前端缓存，防预览后 config 被改），全过则原子落盘。
+    /// 任一校验失败：不落盘，返回 errors。
+    /// </summary>
+    public async Task<ImportApplyResult> ApplyImportAsync(string json, CancellationToken cancellationToken)
+    {
+        (DatabasesConfig? next, ImportPreviewResponse preview) = BuildMergedConfig(json);
+        if (preview.Errors.Count > 0 || next is null)
+        {
+            return new ImportApplyResult
+            {
+                Success = false,
+                Errors = preview.Errors,
+                Plan = preview.Plan
+            };
+        }
+
+        string backupName = await WriteAtomicallyAsync(next, cancellationToken);
+        return new ImportApplyResult
+        {
+            Success = true,
+            BackupName = backupName,
+            Plan = preview.Plan
+        };
+    }
+
+    /// <summary>
+    /// 合并核心：解析（宽容）→ 环境级合并 → 复用 ToConfig 校验。
+    /// 产出最终 DTO 列表时按「current 是否已存在」设置 originalName，
+    /// 使 ToConfig 既能校验又能转换，且不误报「key 创建后不可修改」。
+    /// </summary>
+    private (DatabasesConfig? Next, ImportPreviewResponse Preview) BuildMergedConfig(string json)
+    {
+        var plan = new ImportPlan();
+        var errors = new List<string>();
+
+        // 1. 宽容解析：接受 ① 完整 config.json（取 databases）② 纯 databases 对象 ③ 单项目片段
+        Dictionary<string, ProjectConfig> imported;
+        try
+        {
+            JsonElement root = JsonSerializer.Deserialize<JsonElement>(json, _jsonOptions);
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                errors.Add("未识别的 JSON 结构：顶层不是 JSON 对象。");
+                return (null, BuildPreview(plan, errors, 0));
+            }
+            JsonElement databasesEl = root.TryGetProperty("databases", out JsonElement dbEl) ? dbEl : root;
+            if (databasesEl.ValueKind != JsonValueKind.Object)
+            {
+                errors.Add("未识别的 JSON 结构：databases 不是 JSON 对象。");
+                return (null, BuildPreview(plan, errors, 0));
+            }
+            imported = JsonSerializer.Deserialize<Dictionary<string, ProjectConfig>>(databasesEl.GetRawText(), _jsonOptions)
+                ?? new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase);
+            // System.Text.Json 反序列化 Dictionary<string,T> 用 Ordinal 比较器（PropertyNameCaseInsensitive
+            // 只影响属性绑定，不影响字典 key 比较器）。不重建会导致 mixed-case key（如 current "ERP" vs
+            // imported "erp"）被当成两个不同项目，imported 静默丢失。此处显式重建为 OrdinalIgnoreCase。
+            imported = RebuildImportedCaseInsensitive(imported);
+        }
+        catch (JsonException ex)
+        {
+            errors.Add($"JSON 解析失败：{ex.Message}");
+            return (null, BuildPreview(plan, errors, 0));
+        }
+
+        DatabasesConfig current = _configStore.Current;
+        var result = new List<AdminProjectDto>();
+        var handled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 2a. current 已有项目：与 imported 同名则环境级合并，否则原样保留
+        foreach ((string key, ProjectConfig currentProj) in current.Projects)
+        {
+            if (imported.TryGetValue(key, out ProjectConfig? importedProj))
+            {
+                plan.UpdatedProjects.Add(key);
+                var envDtos = new List<AdminEnvironmentDto>();
+                var envHandled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach ((string envKey, DatabaseConfig currentEnv) in currentProj.Environments)
+                {
+                    if (importedProj.Environments.TryGetValue(envKey, out DatabaseConfig? importedEnv))
+                    {
+                        plan.UpdatedEnvironments.Add($"{key}/{envKey}");
+                        envDtos.Add(ToImportEnvDto(envKey, originalName: envKey, importedEnv));
+                    }
+                    else
+                    {
+                        // current 有、imported 没有：保留（originalName=envKey 表示已存在）
+                        envDtos.Add(ToImportEnvDto(envKey, originalName: envKey, currentEnv));
+                    }
+                    envHandled.Add(envKey);
+                }
+                foreach ((string envKey, DatabaseConfig importedEnv) in importedProj.Environments)
+                {
+                    if (!envHandled.Contains(envKey))
+                    {
+                        plan.AddedEnvironments.Add($"{key}/{envKey}");
+                        envDtos.Add(ToImportEnvDto(envKey, originalName: null, importedEnv));
+                    }
+                }
+
+                result.Add(new AdminProjectDto
+                {
+                    Name = key,
+                    OriginalName = key,                       // 项目已存在，不可改名
+                    DisplayName = importedProj.DisplayName,   // 项目级字段用 imported 覆盖
+                    DefaultEnvironment = importedProj.DefaultEnvironment,
+                    Environments = envDtos
+                });
+            }
+            else
+            {
+                // current 有、imported 没有：完全保留
+                result.Add(ToImportProjectDto(key, originalName: key, currentProj));
+            }
+            handled.Add(key);
+        }
+
+        // 2b. imported 有、current 没有：整体新增
+        foreach ((string key, ProjectConfig importedProj) in imported)
+        {
+            if (handled.Contains(key))
+            {
+                continue;
+            }
+            plan.AddedProjects.Add(key);
+            foreach (string envKey in importedProj.Environments.Keys)
+            {
+                plan.AddedEnvironments.Add($"{key}/{envKey}");
+            }
+            result.Add(ToImportProjectDto(key, originalName: null, importedProj));
+        }
+
+        // 3. 复用 ToConfig 做校验 + 转换（全局字段 null → 保持 current；Maintenance 透传）。
+        //    errors 与 plan 为引用类型，ToConfig 往 errors 追加的校验错误会反映到下方 BuildPreview 返回的对象。
+        var request = new AdminConfigRequest { Projects = result };
+        DatabasesConfig next = ToConfig(request, current, errors);
+
+        return (errors.Count > 0 ? null : next, BuildPreview(plan, errors, imported.Count));
+    }
+
+    /// <summary>构造预览响应。plan 与 errors 为引用类型，合并/校验阶段追加的项会反映到返回对象。</summary>
+    private static ImportPreviewResponse BuildPreview(ImportPlan plan, List<string> errors, int parsedProjectCount) => new()
+    {
+        Plan = plan,
+        Errors = errors,
+        ParsedProjectCount = parsedProjectCount
+    };
+
+    /// <summary>ProjectConfig → AdminProjectDto 映射（导入专用，按是否已存在设 originalName）。</summary>
+    private static AdminProjectDto ToImportProjectDto(string name, string? originalName, ProjectConfig p)
+    {
+        List<AdminEnvironmentDto> envs = p.Environments
+            .Select(kv => ToImportEnvDto(kv.Key, originalName: originalName is not null ? kv.Key : null, kv.Value))
+            .ToList();
+        return new AdminProjectDto
+        {
+            Name = name,
+            OriginalName = originalName,
+            DisplayName = p.DisplayName,
+            DefaultEnvironment = p.DefaultEnvironment,
+            Environments = envs
+        };
+    }
+
+    /// <summary>DatabaseConfig → AdminEnvironmentDto 映射（剥离无 originalName 的语义由调用方决定）。</summary>
+    private static AdminEnvironmentDto ToImportEnvDto(string name, string? originalName, DatabaseConfig env) => new()
+    {
+        Name = name,
+        OriginalName = originalName,
+        DisplayName = env.DisplayName,
+        IsProduction = env.IsProduction,
+        AllowWrite = env.AllowWrite,
+        Type = ToConfigType(env.Type),
+        ConnectionString = env.ConnectionString,
+        MaxRows = env.MaxRows,
+        CommandTimeout = env.CommandTimeout,
+        MaxPoolSize = env.MaxPoolSize,
+        ConnectTimeoutSeconds = env.ConnectTimeoutSeconds,
+        MaxConcurrency = env.MaxConcurrency,
+        DisabledKeywords = env.DisabledKeywords.ToList()
+    };
+
+    /// <summary>
+    /// 重建导入字典为 OrdinalIgnoreCase 比较器（含嵌套 Environments 字典）。
+    /// </summary>
+    private static Dictionary<string, ProjectConfig> RebuildImportedCaseInsensitive(
+        Dictionary<string, ProjectConfig> raw)
+    {
+        var result = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase);
+        foreach ((string key, ProjectConfig proj) in raw)
+        {
+            var envs = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase);
+            foreach ((string envKey, DatabaseConfig env) in proj.Environments)
+            {
+                envs[envKey] = env;
+            }
+            result[key] = new ProjectConfig
+            {
+                DisplayName = proj.DisplayName,
+                DefaultEnvironment = proj.DefaultEnvironment,
+                Environments = envs
+            };
+        }
+        return result;
+    }
+
     /// <summary>
     /// 原子写入 config.json：写临时文件 → 校验 → 备份当前配置 → 替换。
     /// 供 SaveConfigAsync 与 SaveMaintenanceAsync 共用，保证两处落盘一致。

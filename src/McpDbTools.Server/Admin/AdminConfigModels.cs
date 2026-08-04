@@ -160,3 +160,56 @@ public sealed class AdminSaveResult
     [JsonPropertyName("config")]
     public AdminConfigResponse? Config { get; init; }
 }
+
+/// <summary>导入请求：json 为导入文件的原始 JSON 文本（宽容解析）。</summary>
+public sealed class ImportRequest
+{
+    [JsonPropertyName("json")]
+    public string Json { get; init; } = string.Empty;
+}
+
+/// <summary>导入合并计划：将发生的变更分类。环境项格式 "projectKey/envKey"。</summary>
+public sealed class ImportPlan
+{
+    [JsonPropertyName("addedProjects")]
+    public List<string> AddedProjects { get; init; } = new();
+
+    [JsonPropertyName("updatedProjects")]
+    public List<string> UpdatedProjects { get; init; } = new();
+
+    [JsonPropertyName("addedEnvironments")]
+    public List<string> AddedEnvironments { get; init; } = new();
+
+    [JsonPropertyName("updatedEnvironments")]
+    public List<string> UpdatedEnvironments { get; init; } = new();
+}
+
+/// <summary>导入预览响应：dry-run 结果，不论是否有 errors 都返回（前端展示后由用户决定）。</summary>
+public sealed class ImportPreviewResponse
+{
+    [JsonPropertyName("plan")]
+    public ImportPlan Plan { get; init; } = new();
+
+    [JsonPropertyName("errors")]
+    public List<string> Errors { get; init; } = new();
+
+    /// <summary>导入文件解析出的项目总数（不论是否校验通过）。</summary>
+    [JsonPropertyName("parsedProjectCount")]
+    public int ParsedProjectCount { get; init; }
+}
+
+/// <summary>导入应用结果。success=true 时 backupName 为本次自动产生的备份名。</summary>
+public sealed class ImportApplyResult
+{
+    [JsonPropertyName("success")]
+    public bool Success { get; init; }
+
+    [JsonPropertyName("backupName")]
+    public string? BackupName { get; init; }
+
+    [JsonPropertyName("plan")]
+    public ImportPlan Plan { get; init; } = new();
+
+    [JsonPropertyName("errors")]
+    public List<string> Errors { get; init; } = new();
+}
