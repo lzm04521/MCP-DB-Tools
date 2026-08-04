@@ -205,10 +205,126 @@
     window.adminUi.showToast(`已导出 ${state.selected.size} 个项目`);
   }
 
+  /** 文件选择：读为文本填进 textarea，与粘贴等价（用户可继续编辑）。限制 1MB。 */
+  function onFileChange() {
+    const file = el.importFile.files && el.importFile.files[0];
+    if (!file) return;
+    if (file.size > 1024 * 1024) {
+      window.adminUi.showToast('文件超过 1MB，请检查或拆分', true);
+      el.importFile.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      el.importText.value = typeof reader.result === 'string' ? reader.result : '';
+    };
+    reader.onerror = () => window.adminUi.showToast('读取文件失败', true);
+    reader.readAsText(file, 'utf-8');
+  }
+
+  async function previewImport() {
+    const json = el.importText.value.trim();
+    if (!json) {
+      window.adminUi.showToast('请粘贴或选择 JSON 文件', true);
+      return;
+    }
+    window.adminUi.setBusy(true);
+    try {
+      const result = await window.adminApi.requestJson('/admin/api/projects/import-preview', {
+        method: 'POST',
+        body: JSON.stringify({ json })
+      });
+      state.preview = result;
+      renderReport(result);
+    } catch (error) {
+      window.adminUi.showToast(error.message, true);
+    } finally {
+      window.adminUi.setBusy(false);
+    }
+  }
+
+  function renderReport(result) {
+    const plan = result.plan || {};
+    const errors = result.errors || [];
+    const hasChange =
+      (plan.addedProjects && plan.addedProjects.length) ||
+      (plan.updatedProjects && plan.updatedProjects.length) ||
+      (plan.addedEnvironments && plan.addedEnvironments.length) ||
+      (plan.updatedEnvironments && plan.updatedEnvironments.length);
+    const canApply = errors.length === 0 && hasChange;
+
+    const esc = window.adminUi.escapeHtml;
+    const li = arr => (arr && arr.length ? arr.map(x => `<li>${esc(x)}</li>`).join('') : '<li class="muted">无</li>');
+
+    el.importReport.classList.remove('hidden');
+    el.importReport.innerHTML = `
+      <div class="report-section">
+        <h3>合并计划（解析 ${result.parsedProjectCount ?? 0} 个项目）</h3>
+        <div class="report-grid">
+          <div><h4>新增项目</h4><ul>${li(plan.addedProjects)}</ul></div>
+          <div><h4>更新项目</h4><ul>${li(plan.updatedProjects)}</ul></div>
+          <div><h4>新增环境</h4><ul>${li(plan.addedEnvironments)}</ul></div>
+          <div><h4>更新环境</h4><ul>${li(plan.updatedEnvironments)}</ul></div>
+        </div>
+      </div>
+      ${errors.length ? `
+        <div class="report-section report-errors">
+          <h3>⚠ 校验问题（${errors.length}）</h3>
+          <ul>${errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>
+          <p class="muted">修正文件后重新预览；存在校验问题时不可应用。</p>
+        </div>` : ''}
+    `;
+
+    el.applyBtn.disabled = !canApply;
+    el.applyBtn.textContent = canApply ? '确认导入' : (errors.length ? '存在校验问题' : '无变更');
+    el.cancelBtn.classList.toggle('hidden', !hasChange && !errors.length);
+  }
+
+  async function applyImport() {
+    const json = el.importText.value.trim();
+    if (!json) return;
+    // 二次确认：直接落盘操作
+    const ok = await window.adminUi.confirmAction('确认导入', '将按上述计划合并并写入 config.json（自动产生备份，可在备份管理回退）。确认继续？');
+    if (!ok) return;
+    window.adminUi.setBusy(true);
+    try {
+      const result = await window.adminApi.requestJson('/admin/api/projects/import-apply', {
+        method: 'POST',
+        body: JSON.stringify({ json })
+      });
+      window.adminUi.showToast(`导入成功，备份：${result.backupName}（可在备份管理回退）`);
+      // 清空并重载：导入已落盘，重新拉取以反映合并结果
+      el.importText.value = '';
+      el.importFile.value = '';
+      state.preview = null;
+      el.importReport.classList.add('hidden');
+      el.importReport.innerHTML = '';
+      el.applyBtn.disabled = true;
+      el.cancelBtn.classList.add('hidden');
+      await loadConfig();
+    } catch (error) {
+      window.adminUi.showToast(error.message, true);
+    } finally {
+      window.adminUi.setBusy(false);
+    }
+  }
+
+  function cancelImport() {
+    state.preview = null;
+    el.importReport.classList.add('hidden');
+    el.importReport.innerHTML = '';
+    el.applyBtn.disabled = true;
+    el.applyBtn.textContent = '确认导入';
+    el.cancelBtn.classList.add('hidden');
+  }
+
   function bindEvents() {
     el.selectAll.addEventListener('change', toggleSelectAll);
     el.exportBtn.addEventListener('click', exportSelected);
-    // 导入相关绑定在 Task 4 补充：previewBtn / applyBtn / cancelBtn / importFile
+    el.importFile.addEventListener('change', onFileChange);
+    el.previewBtn.addEventListener('click', previewImport);
+    el.applyBtn.addEventListener('click', applyImport);
+    el.cancelBtn.addEventListener('click', cancelImport);
   }
 
   window.adminViews = window.adminViews || {};

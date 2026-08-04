@@ -984,3 +984,130 @@ input[readonly] {
   color: var(--color-accent);
   border: 1px solid rgba(5, 150, 105, 0.35);
 }
+
+/* ============ 配置迁移（transfer） ============ */
+
+/* 导出项目列表 */
+.transfer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.transfer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(216, 222, 232, 0.9);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.transfer-item input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.transfer-item span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.transfer-item em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--color-subtle);
+}
+
+/* 工具条 / 操作区 */
+.transfer-toolbar {
+  margin-bottom: 8px;
+}
+
+.transfer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+/* 行内警告（非块级 .warning 的紧凑变体） */
+.warning.inline {
+  margin-top: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+/* 导入区布局 */
+.transfer-import {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.transfer-import .full {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transfer-import textarea {
+  resize: vertical;
+}
+
+/* 导入预览报告 */
+.transfer-report {
+  border: 1px solid rgba(216, 222, 232, 0.9);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  background: rgba(248, 250, 252, 0.7);
+}
+
+.transfer-report h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.transfer-report h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--color-subtle);
+}
+
+.transfer-report ul {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+/* 2×2 网格：四类变更项 */
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.report-section + .report-section {
+  margin-top: 14px;
+}
+
+/* 校验问题区：醒目暖色 */
+.report-errors {
+  border: 1px solid #f4d58d;
+  background: #fff8e6;
+  color: var(--color-warning);
+}
+
+.report-errors ul {
+  color: var(--color-foreground);
+}
