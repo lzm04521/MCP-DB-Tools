@@ -38,14 +38,17 @@ public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
 '@
             $win32 = Add-Type -Name 'ConsoleMode' -Namespace 'Win32' -MemberDefinition $sig -PassThru -ErrorAction Stop
         }
-        # STD_OUTPUT_HANDLE = -11
-        $handle = $win32::GetStdHandle([int]-11)
-        $mode = [uint32]0
-        if (-not $win32::GetConsoleMode($handle, [ref]$mode)) { return }
-        # 必须先置位 ENABLE_EXTENDED_FLAGS(0x0080)，才能关闭 ENABLE_QUICK_EDIT_MODE(0x0040)
-        $mode = $mode -bor [uint32]0x0080
-        $mode = $mode -band (-bnot [uint32]0x0040)
-        [void]$win32::SetConsoleMode($handle, $mode)
+        # QuickEdit 是「输入」模式（ENABLE_QUICK_EDIT_MODE 属于输入模式标志）：
+        # 主要对 STD_INPUT_HANDLE(-10) 生效；同时设置 STD_OUTPUT_HANDLE(-11) 兼容部分 conhost 实现。
+        # 必须先置位 ENABLE_EXTENDED_FLAGS(0x0080)，才能关闭 ENABLE_QUICK_EDIT_MODE(0x0040)。
+        foreach ($stdId in @(-10, -11)) {
+            $handle = $win32::GetStdHandle([int]$stdId)
+            $mode = [uint32]0
+            if (-not $win32::GetConsoleMode($handle, [ref]$mode)) { continue }
+            $mode = $mode -bor [uint32]0x0080
+            $mode = $mode -band (-bnot [uint32]0x0040)
+            [void]$win32::SetConsoleMode($handle, $mode)
+        }
     } catch {
         # 静默：无法禁用快速编辑不影响部署流程
     }
