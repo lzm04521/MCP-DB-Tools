@@ -119,13 +119,11 @@ public sealed class AdminConfigService
         return new AdminConfigResponse
         {
             ConfigPath = _configPath,
-            DefaultDisabledKeywords = NormalizeKeywords(config.DefaultDisabledKeywords is { Count: > 0 }
-                ? config.DefaultDisabledKeywords
-                : DefaultDisabledKeywords.BuiltInReadOnly),
-            // 写池：空时回退 BuiltInWrite
-            DefaultWriteDisabledKeywords = NormalizeKeywords(config.DefaultWriteDisabledKeywords is { Count: > 0 }
-                ? config.DefaultWriteDisabledKeywords
-                : DefaultDisabledKeywords.BuiltInWrite),
+            // 透传配置原值：空就是空（编辑框留空 = 使用系统默认，运行时由 ResolvedConfig.Build 回退内置）。
+            // 内置全集通过下方 BuiltIn*Keywords 字段单独暴露，不在展示值里回退，
+            // 避免用户清空保存后重新加载时被内置列表填回、并被当成用户配置写回 config.json。
+            DefaultDisabledKeywords = NormalizeKeywords(config.DefaultDisabledKeywords),
+            DefaultWriteDisabledKeywords = NormalizeKeywords(config.DefaultWriteDisabledKeywords),
             // 内置关键字只读暴露（单一真源 = 后端）
             BuiltInReadOnlyKeywords = DefaultDisabledKeywords.BuiltInReadOnly.ToList(),
             BuiltInWriteKeywords = DefaultDisabledKeywords.BuiltInWrite.ToList(),
@@ -287,14 +285,12 @@ public sealed class AdminConfigService
         var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (DatabaseType type in SupportedDatabaseTypes)
         {
+            // 透传配置原值：空就是空（编辑框留空 = 使用系统默认，运行时由 ResolvedConfig.Build 回退内置）
             IReadOnlyList<string> keywords =
                 config.DefaultDisabledKeywordsByType is not null &&
-                config.DefaultDisabledKeywordsByType.TryGetValue(type, out List<string>? configured) &&
-                configured is { Count: > 0 }
+                config.DefaultDisabledKeywordsByType.TryGetValue(type, out List<string>? configured)
                     ? configured
-                    : DefaultDisabledKeywords.BuiltInByType.TryGetValue(type, out IReadOnlyList<string>? builtIn)
-                        ? builtIn
-                        : Array.Empty<string>();
+                    : Array.Empty<string>();
 
             result[ToConfigType(type)] = NormalizeKeywords(keywords);
         }

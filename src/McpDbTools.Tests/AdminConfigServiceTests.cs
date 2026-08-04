@@ -62,10 +62,15 @@ public class AdminConfigServiceTests : IDisposable
             AdminConfigResponse config = service.GetConfig();
             AdminEnvironmentDto env = config.Projects.Single().Environments.Single();
 
-            Assert.Contains("DROP", config.DefaultDisabledKeywords);
-            Assert.Contains("xp_cmdshell", config.DefaultDisabledKeywordsByType["sqlserver"]);
-            Assert.Contains("LOAD DATA", config.DefaultDisabledKeywordsByType["mysql"]);
-            Assert.Contains("FLASHBACK", config.DefaultDisabledKeywordsByType["oracle"]);
+            // 空 config：编辑框字段为空（留空 = 用系统默认），内置全集通过 BuiltIn* 字段暴露
+            Assert.Empty(config.DefaultDisabledKeywords);
+            Assert.Empty(config.DefaultDisabledKeywordsByType["sqlserver"]);
+            Assert.Empty(config.DefaultDisabledKeywordsByType["mysql"]);
+            Assert.Empty(config.DefaultDisabledKeywordsByType["oracle"]);
+            Assert.Contains("DROP", config.BuiltInReadOnlyKeywords);
+            Assert.Contains("xp_cmdshell", config.BuiltInDisabledKeywordsByType["sqlserver"]);
+            Assert.Contains("LOAD DATA", config.BuiltInDisabledKeywordsByType["mysql"]);
+            Assert.Contains("FLASHBACK", config.BuiltInDisabledKeywordsByType["oracle"]);
             Assert.Equal("Server=.;Database=db;User Id=sa;Password=secret;", env.ConnectionString);
             Assert.Equal(string.Empty, env.ConnectionStringMasked);
         }
@@ -225,6 +230,47 @@ public class AdminConfigServiceTests : IDisposable
         Assert.Equal(2, root.GetProperty("defaultDisabledKeywords").GetArrayLength());
         Assert.Equal("drop", root.GetProperty("defaultDisabledKeywords")[0].GetString());
         Assert.Equal("xp_cmdshell", root.GetProperty("defaultDisabledKeywordsByType").GetProperty("sqlserver")[0].GetString());
+    }
+
+    [Fact]
+    public async Task SaveConfig_EmptyKeywords_StaysEmptyOnReload_BuiltInStillExposed()
+    {
+        // 需求3：编辑框允许留空，空 = 使用系统默认。
+        // 清空保存后重新加载，编辑框字段必须仍为空（不被内置列表填回）；
+        // 内置全集仍通过 BuiltIn* 字段暴露，运行时由 ResolvedConfig.Build 回退。
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            AdminConfigRequest request = new()
+            {
+                DefaultDisabledKeywords = new List<string>(),
+                DefaultWriteDisabledKeywords = new List<string>(),
+                DefaultDisabledKeywordsByType = new Dictionary<string, List<string>>
+                {
+                    ["sqlserver"] = new(),
+                    ["mysql"] = new(),
+                    ["oracle"] = new(),
+                    ["postgresql"] = new()
+                },
+                Projects = service.GetConfig().Projects
+            };
+
+            AdminSaveResult saved = await service.SaveConfigAsync(request, CancellationToken.None);
+            Assert.True(saved.Success, string.Join("; ", saved.Errors));
+            // 保存响应：编辑框字段为空，内置字段非空
+            Assert.Empty(saved.Config!.DefaultDisabledKeywords);
+            Assert.Empty(saved.Config!.DefaultWriteDisabledKeywords);
+            Assert.NotEmpty(saved.Config!.BuiltInReadOnlyKeywords);
+            Assert.NotEmpty(saved.Config!.BuiltInWriteKeywords);
+
+            // 重新加载：编辑框字段仍为空（核心 — 不被内置填回）
+            AdminConfigResponse reloaded = service.GetConfig();
+            Assert.Empty(reloaded.DefaultDisabledKeywords);
+            Assert.Empty(reloaded.DefaultWriteDisabledKeywords);
+            Assert.Empty(reloaded.DefaultDisabledKeywordsByType["sqlserver"]);
+            Assert.NotEmpty(reloaded.BuiltInReadOnlyKeywords);
+            Assert.NotEmpty(reloaded.BuiltInWriteKeywords);
+        }
     }
 
     [Fact]
@@ -456,7 +502,7 @@ public class AdminConfigServiceTests : IDisposable
     [Fact]
     public void GetConfig_Exposes_BuiltIn_Keywords_And_WritePool()
     {
-        // 内置关键字通过 API 暴露（单一真源 = 后端），写池为空时回退 BuiltInWrite
+        // 内置关键字通过 API 暴露（单一真源 = 后端）；编辑框字段空 config 时为空（留空 = 用系统默认）
         var (store, service, _) = Create("{\"databases\":{}}");
         using (store)
         {
@@ -464,8 +510,8 @@ public class AdminConfigServiceTests : IDisposable
             Assert.NotEmpty(resp.BuiltInReadOnlyKeywords);
             Assert.NotEmpty(resp.BuiltInWriteKeywords);
             Assert.NotEmpty(resp.BuiltInDisabledKeywordsByType);
-            Assert.NotNull(resp.DefaultWriteDisabledKeywords); // 空 config 回退 BuiltInWrite
-            Assert.NotEmpty(resp.DefaultWriteDisabledKeywords);
+            Assert.Empty(resp.DefaultDisabledKeywords);       // 空 config：编辑框不回填内置
+            Assert.Empty(resp.DefaultWriteDisabledKeywords);  // 空 config：编辑框不回填内置
             // BuiltInByType 的 key 应是 lowerInvariant 字符串
             Assert.Contains("sqlserver", resp.BuiltInDisabledKeywordsByType.Keys);
             Assert.Contains("mysql", resp.BuiltInDisabledKeywordsByType.Keys);
