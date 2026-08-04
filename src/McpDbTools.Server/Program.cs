@@ -219,6 +219,17 @@ static async Task RunAsync(string[] args, int adminPort)
         return result.Success ? Results.Ok(result) : Results.BadRequest(result);
     });
 
+    // 项目配置导入：预览（dry-run，不落盘）与应用（原子落盘 + 自动备份）。
+    // 复用 api 组的 session cookie 鉴权 filter。导出由前端直接生成，无后端端点。
+    api.MapPost("/projects/import-preview", (ImportRequest request, AdminConfigService service) =>
+        Results.Ok(service.GetImportPreview(request.Json ?? string.Empty)));
+
+    api.MapPost("/projects/import-apply", async (ImportRequest request, AdminConfigService service, CancellationToken cancellationToken) =>
+    {
+        ImportApplyResult result = await service.ApplyImportAsync(request.Json ?? string.Empty, cancellationToken);
+        return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+    });
+
     app.Logger.LogInformation("Admin UI: http://127.0.0.1:{Port}/admin", adminPort);
     app.Logger.LogInformation("MCP HTTP: http://127.0.0.1:{Port}/mcp", adminPort);
 

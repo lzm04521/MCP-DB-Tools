@@ -347,6 +347,32 @@ public sealed class AdminConfigService
         => BuildMergedConfig(json).Preview;
 
     /// <summary>
+    /// 应用导入：重新合并+校验（不信任前端缓存，防预览后 config 被改），全过则原子落盘。
+    /// 任一校验失败：不落盘，返回 errors。
+    /// </summary>
+    public async Task<ImportApplyResult> ApplyImportAsync(string json, CancellationToken cancellationToken)
+    {
+        (DatabasesConfig? next, ImportPreviewResponse preview) = BuildMergedConfig(json);
+        if (preview.Errors.Count > 0 || next is null)
+        {
+            return new ImportApplyResult
+            {
+                Success = false,
+                Errors = preview.Errors,
+                Plan = preview.Plan
+            };
+        }
+
+        string backupName = await WriteAtomicallyAsync(next, cancellationToken);
+        return new ImportApplyResult
+        {
+            Success = true,
+            BackupName = backupName,
+            Plan = preview.Plan
+        };
+    }
+
+    /// <summary>
     /// 合并核心：解析（宽容）→ 环境级合并 → 复用 ToConfig 校验。
     /// 产出最终 DTO 列表时按「current 是否已存在」设置 originalName，
     /// 使 ToConfig 既能校验又能转换，且不误报「key 创建后不可修改」。
@@ -374,6 +400,10 @@ public sealed class AdminConfigService
             }
             imported = JsonSerializer.Deserialize<Dictionary<string, ProjectConfig>>(databasesEl.GetRawText(), _jsonOptions)
                 ?? new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase);
+            // System.Text.Json 反序列化 Dictionary<string,T> 用 Ordinal 比较器（PropertyNameCaseInsensitive
+            // 只影响属性绑定，不影响字典 key 比较器）。不重建会导致 mixed-case key（如 current "ERP" vs
+            // imported "erp"）被当成两个不同项目，imported 静默丢失。此处显式重建为 OrdinalIgnoreCase。
+            imported = RebuildImportedCaseInsensitive(imported);
         }
         catch (JsonException ex)
         {
@@ -498,6 +528,30 @@ public sealed class AdminConfigService
         MaxConcurrency = env.MaxConcurrency,
         DisabledKeywords = env.DisabledKeywords.ToList()
     };
+
+    /// <summary>
+    /// 重建导入字典为 OrdinalIgnoreCase 比较器（含嵌套 Environments 字典）。
+    /// </summary>
+    private static Dictionary<string, ProjectConfig> RebuildImportedCaseInsensitive(
+        Dictionary<string, ProjectConfig> raw)
+    {
+        var result = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase);
+        foreach ((string key, ProjectConfig proj) in raw)
+        {
+            var envs = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase);
+            foreach ((string envKey, DatabaseConfig env) in proj.Environments)
+            {
+                envs[envKey] = env;
+            }
+            result[key] = new ProjectConfig
+            {
+                DisplayName = proj.DisplayName,
+                DefaultEnvironment = proj.DefaultEnvironment,
+                Environments = envs
+            };
+        }
+        return result;
+    }
 
     /// <summary>
     /// 原子写入 config.json：写临时文件 → 校验 → 备份当前配置 → 替换。

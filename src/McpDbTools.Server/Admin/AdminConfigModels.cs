@@ -197,3 +197,19 @@ public sealed class ImportPreviewResponse
     [JsonPropertyName("parsedProjectCount")]
     public int ParsedProjectCount { get; init; }
 }
+
+/// <summary>导入应用结果。success=true 时 backupName 为本次自动产生的备份名。</summary>
+public sealed class ImportApplyResult
+{
+    [JsonPropertyName("success")]
+    public bool Success { get; init; }
+
+    [JsonPropertyName("backupName")]
+    public string? BackupName { get; init; }
+
+    [JsonPropertyName("plan")]
+    public ImportPlan Plan { get; init; } = new();
+
+    [JsonPropertyName("errors")]
+    public List<string> Errors { get; init; } = new();
+}
