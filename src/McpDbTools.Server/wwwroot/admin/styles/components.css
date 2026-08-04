@@ -1007,6 +1007,10 @@ input[readonly] {
 
 .transfer-item input[type="checkbox"] {
   flex-shrink: 0;
+  /* 覆盖全局 input{width:100%}（给文本框设的），还原为 checkbox 尺寸，与 .switch-row input 一致 */
+  width: 22px;
+  height: 22px;
+  accent-color: var(--color-secondary);
 }
 
 .transfer-item span {
