@@ -555,6 +555,139 @@ public class AdminConfigServiceTests : IDisposable
         }
     }
 
+    // ============ 项目配置导入（环境级合并）============
+
+    [Theory]
+    [InlineData("""{"defaultDisabledKeywords":["DROP"],"databases":{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;","maxRows":100,"commandTimeout":30}}}}}""")]
+    [InlineData("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;","maxRows":100,"commandTimeout":30}}}}""")]
+    [InlineData("""{"crm":{"defaultEnvironment":"prod","environments":{"prod":{"type":"mysql","connectionString":"Server=localhost;","maxRows":500,"commandTimeout":30}}}}""")]
+    public void ImportPreview_AcceptsThreeJsonShapes(string importedJson)
+    {
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            ImportPreviewResponse resp = service.GetImportPreview(importedJson);
+            Assert.Empty(resp.Errors);
+            Assert.Equal(1, resp.ParsedProjectCount);
+            Assert.Single(resp.Plan.AddedProjects);
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_NewProject_PlansAllAdded()
+    {
+        var (store, service, _) = Create("""{"databases":{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=old;","maxRows":100,"commandTimeout":30}}}}}""");
+        using (store)
+        {
+            string imported = """{"crm":{"defaultEnvironment":"prod","environments":{"prod":{"type":"mysql","connectionString":"Server=l;","maxRows":500,"commandTimeout":30}}}}""";
+            ImportPreviewResponse resp = service.GetImportPreview(imported);
+            Assert.Empty(resp.Errors);
+            Assert.Contains("crm", resp.Plan.AddedProjects);
+            Assert.DoesNotContain("erp", resp.Plan.UpdatedProjects); // erp 未在导入文件，不出现在 plan
+            Assert.Contains("crm/prod", resp.Plan.AddedEnvironments);
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_ExistingProject_MergesAtEnvironmentLevel()
+    {
+        // current: erp 有 test + prod；imported: erp 有 test(新连接) + dev
+        // 期望：test → updatedEnvironment；dev → addedEnvironment；prod 保留（不在 plan，但最终 next 保留）
+        var (store, service, _) = Create("""{"databases":{"erp":{"defaultEnvironment":"prod","environments":{"test":{"type":"sqlserver","connectionString":"Server=old;","maxRows":100,"commandTimeout":30},"prod":{"type":"sqlserver","connectionString":"Server=p;","maxRows":100,"commandTimeout":30}}}}}""");
+        using (store)
+        {
+            string imported = """{"erp":{"defaultEnvironment":"test","displayName":"ERP","environments":{"test":{"type":"sqlserver","connectionString":"Server=new;","maxRows":200,"commandTimeout":40},"dev":{"type":"sqlserver","connectionString":"Server=d;","maxRows":100,"commandTimeout":30}}}}""";
+            ImportPreviewResponse resp = service.GetImportPreview(imported);
+            Assert.Empty(resp.Errors);
+            Assert.Contains("erp", resp.Plan.UpdatedProjects);
+            Assert.Contains("erp/test", resp.Plan.UpdatedEnvironments);
+            Assert.Contains("erp/dev", resp.Plan.AddedEnvironments);
+            Assert.DoesNotContain("erp/prod", resp.Plan.UpdatedEnvironments);
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_ProjectLevelFields_OverwrittenByImported()
+    {
+        // 项目级 displayName/defaultEnvironment 用 imported 覆盖
+        var (store, service, _) = Create("""{"databases":{"erp":{"displayName":"Old","defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=p;","maxRows":100,"commandTimeout":30}}}}}""");
+        using (store)
+        {
+            string imported = """{"erp":{"displayName":"New","defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=p;","maxRows":100,"commandTimeout":30}}}}""";
+            ImportPreviewResponse resp = service.GetImportPreview(imported);
+            Assert.Empty(resp.Errors);
+            // 应用后（apply 测试在 T2 验证落盘）；preview 阶段先确认 plan 标记为 updated
+            Assert.Contains("erp", resp.Plan.UpdatedProjects);
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_InvalidMaxRows_CollectsError()
+    {
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            string imported = """{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;","maxRows":0,"commandTimeout":30}}}}""";
+            ImportPreviewResponse resp = service.GetImportPreview(imported);
+            Assert.NotEmpty(resp.Errors);
+            Assert.Contains(resp.Errors, e => e.Contains("maxRows"));
+            Assert.Contains("erp", resp.Plan.AddedProjects); // plan 仍记录意图
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_ProductionAndAllowWrite_Rejected()
+    {
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            string imported = """{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"isProduction":true,"allowWrite":true,"type":"sqlserver","connectionString":"Server=.;","maxRows":100,"commandTimeout":30}}}}""";
+            ImportPreviewResponse resp = service.GetImportPreview(imported);
+            Assert.Contains(resp.Errors, e => e.Contains("互斥"));
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_MultipleErrors_AllCollected()
+    {
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            // 两项目都非法：a 的 maxRows=0，b 的连接串空
+            string imported = """{"a":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;","maxRows":0,"commandTimeout":30}}},"b":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"","maxRows":100,"commandTimeout":30}}}}""";
+            ImportPreviewResponse resp = service.GetImportPreview(imported);
+            Assert.True(resp.Errors.Count >= 2);
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_InvalidJson_ReturnsParseError()
+    {
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            ImportPreviewResponse resp = service.GetImportPreview("not a json {");
+            Assert.NotEmpty(resp.Errors);
+            Assert.Contains("JSON 解析失败", resp.Errors[0]);
+            Assert.Equal(0, resp.ParsedProjectCount);
+        }
+    }
+
+    [Fact]
+    public void ImportPreview_DoesNotMutateCurrentConfig()
+    {
+        var (store, service, configPath) = Create("""{"defaultDisabledKeywords":["DROP"],"databases":{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;","maxRows":100,"commandTimeout":30}}}}}""");
+        string before = File.ReadAllText(configPath);
+        using (store)
+        {
+            string imported = """{"crm":{"defaultEnvironment":"prod","environments":{"prod":{"type":"mysql","connectionString":"Server=l;","maxRows":500,"commandTimeout":30}}}}""";
+            service.GetImportPreview(imported);
+            // preview 不落盘、不改内存 current
+            Assert.Equal(1, service.GetConfig().Projects.Count);
+        }
+        Assert.Equal(before, File.ReadAllText(configPath));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }
