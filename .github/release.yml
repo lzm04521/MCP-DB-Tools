@@ -1,0 +1,37 @@
+# 自动生成 Release Notes 的分类规则。
+# 由 .github/workflows/release.yml 中 generate_release_notes: true 触发时读取。
+# 依据合并到 main 的 PR 携带的 label 归入对应分类；未命中的统一归“其他变更”。
+# 提示：纯 commit（非 PR 合并）不参与 label 分类，会以 commit message 原样列出。
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: ⚠️ 破坏性变更
+      labels:
+        - breaking
+    - title: 🚀 新功能
+      labels:
+        - enhancement
+        - feature
+    - title: 🐛 问题修复
+      labels:
+        - bug
+        - fix
+    - title: ♻️ 重构与优化
+      labels:
+        - refactor
+        - performance
+    - title: 📚 文档
+      labels:
+        - documentation
+        - docs
+    - title: 🔧 构建 / 运维
+      labels:
+        - chore
+        - build
+        - ci
+        - dependencies
+    - title: 其他变更
+      labels:
+        - "*"
