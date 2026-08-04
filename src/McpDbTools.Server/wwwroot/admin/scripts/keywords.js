@@ -54,8 +54,7 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Built-in</p>
-                  <h2>代码内置只读关键字</h2>
+                  <h2>代码内置只读关键字<span class="eyebrow">Built-in</span></h2>
                 </div>
                 <span class="pill">代码内置 · 不可修改</span>
               </div>
@@ -66,15 +65,14 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Editable</p>
-                  <h2>全局只读阻止关键字</h2>
+                  <h2>全局只读阻止关键字<span class="eyebrow">Editable</span></h2>
                   <p class="muted">所有只读环境都会叠加这些关键字；每行一个关键字或短语。</p>
                 </div>
                 <span id="readonlyCount" class="pill">0 个</span>
               </div>
               <label class="full">
                 <span>defaultDisabledKeywords</span>
-                <textarea id="defaultDisabledKeywords" rows="10" spellcheck="false"></textarea>
+                <textarea id="defaultDisabledKeywords" rows="10" spellcheck="false" placeholder="留空使用系统默认"></textarea>
               </label>
             </section>
           </div>
@@ -84,8 +82,7 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Built-in</p>
-                  <h2>代码内置写关键字</h2>
+                  <h2>代码内置写关键字<span class="eyebrow">Built-in</span></h2>
                 </div>
                 <span class="pill">代码内置 · 不可修改</span>
               </div>
@@ -96,15 +93,14 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Editable</p>
-                  <h2>全局写阻止关键字</h2>
+                  <h2>全局写阻止关键字<span class="eyebrow">Editable</span></h2>
                   <p class="muted">所有写环境都会叠加这些关键字；每行一个关键字或短语。</p>
                 </div>
                 <span id="writeCount" class="pill">0 个</span>
               </div>
               <label class="full">
                 <span>defaultWriteDisabledKeywords</span>
-                <textarea id="defaultWriteDisabledKeywords" rows="10" spellcheck="false"></textarea>
+                <textarea id="defaultWriteDisabledKeywords" rows="10" spellcheck="false" placeholder="留空使用系统默认"></textarea>
               </label>
             </section>
           </div>
@@ -114,8 +110,7 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Built-in</p>
-                  <h2>代码内置按类型关键字</h2>
+                  <h2>代码内置按类型关键字<span class="eyebrow">Built-in</span></h2>
                 </div>
                 <span class="pill">代码内置 · 不可修改</span>
               </div>
@@ -126,27 +121,26 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Editable</p>
-                  <h2>按类型追加关键字</h2>
+                  <h2>按类型追加关键字<span class="eyebrow">Editable</span></h2>
                   <p class="muted">这些关键字会在对应全局默认之上，按数据库类型继续叠加。</p>
                 </div>
               </div>
               <div class="grid two">
                 <label>
                   <span>SQL Server</span>
-                  <textarea id="sqlserverKeywords" rows="10" spellcheck="false"></textarea>
+                  <textarea id="sqlserverKeywords" rows="10" spellcheck="false" placeholder="留空使用系统默认"></textarea>
                 </label>
                 <label>
                   <span>MySQL</span>
-                  <textarea id="mysqlKeywords" rows="10" spellcheck="false"></textarea>
+                  <textarea id="mysqlKeywords" rows="10" spellcheck="false" placeholder="留空使用系统默认"></textarea>
                 </label>
                 <label>
                   <span>Oracle</span>
-                  <textarea id="oracleKeywords" rows="10" spellcheck="false"></textarea>
+                  <textarea id="oracleKeywords" rows="10" spellcheck="false" placeholder="留空使用系统默认"></textarea>
                 </label>
                 <label>
                   <span>PostgreSQL</span>
-                  <textarea id="postgresqlKeywords" rows="10" spellcheck="false"></textarea>
+                  <textarea id="postgresqlKeywords" rows="10" spellcheck="false" placeholder="留空使用系统默认"></textarea>
                 </label>
               </div>
             </section>
@@ -211,8 +205,8 @@
     if (items.length === 0) {
       return '<em>（无）</em>';
     }
-    // white-space: pre-wrap 会让 \n 显示为换行
-    return items.map(k => window.adminUi.escapeHtml(k)).join('\n');
+    // 与按类型内置列表一致：单行逗号分隔输出（长串由 CSS word-break 自然折行）
+    return items.map(k => window.adminUi.escapeHtml(k)).join(', ');
   }
 
   /** 把 builtInDisabledKeywordsByType 渲染为按 DBMS 分组的 innerHTML（每种类型一行）。 */

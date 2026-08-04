@@ -111,8 +111,7 @@
         <form method="dialog">
           <div class="card-title">
             <div>
-              <p class="eyebrow">SQL</p>
-              <h2 id="sqlDialogTitle">查询语句</h2>
+              <h2 id="sqlDialogTitle">查询语句<span class="eyebrow">SQL</span></h2>
             </div>
             <button id="copySqlBtn" type="button" class="button secondary">复制</button>
           </div>

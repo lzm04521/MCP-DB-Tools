@@ -54,6 +54,12 @@ h2 {
   text-transform: uppercase;
 }
 
+/* 卡片标题内的 eyebrow 后缀：与顶栏 eyebrow 同款（辅助色 + 大写 + 字间距），
+   加左间距模拟顶栏 topbar__title 的 flex gap。 */
+h2 .eyebrow {
+  margin-left: 8px;
+}
+
 .muted,
 small {
   color: var(--color-subtle);

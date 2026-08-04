@@ -23,8 +23,7 @@
         <section class="card settings-card">
           <div class="card-title">
             <div>
-              <p class="eyebrow">Audit Log</p>
-              <h2>审计日志</h2>
+              <h2>审计日志<span class="eyebrow">Audit Log</span></h2>
             </div>
           </div>
           <p class="muted">开启后后台服务按保留天数自动删除过期审计记录；也可立即手动清理。</p>
@@ -60,8 +59,7 @@
         <section class="card settings-card">
           <div class="card-title">
             <div>
-              <p class="eyebrow">Backup</p>
-              <h2>备份文件</h2>
+              <h2>备份文件<span class="eyebrow">Backup</span></h2>
             </div>
           </div>
           <p class="muted">开启后后台服务按保留天数自动删除过期备份（按文件时间判断）；也可立即手动清理。</p>

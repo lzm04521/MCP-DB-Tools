@@ -70,9 +70,17 @@
   top: 18px;
 }
 
-.project-list,
+.project-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* 环境列表：固定列宽（约等于左侧 project-item 宽度），auto-fill 按容器宽度排多列；
+   不用 1fr 弹性，保持每列宽度稳定 */
 .env-tabs {
   display: grid;
+  grid-template-columns: repeat(auto-fill, 280px);
   gap: 10px;
   margin-top: 16px;
 }
@@ -94,6 +102,21 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* 字段横排（项目配置卡片：项目 key + 显示名 + 默认环境）。
+   与连接配置 conn-header 一致的紧凑横排；窄屏自动堆叠。 */
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 16px;
+  margin-top: 18px;
+}
+.field-row > label,
+.field-row > .field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
 .grid.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -107,6 +130,66 @@
   align-content: center;
   grid-template-columns: auto 1fr;
   min-height: 44px;
+}
+
+/* 连接配置头部：环境 key + 显示名 + 开关 横排（窄屏堆叠）。
+   环境 key combobox 限宽，显示名弹性填充，开关组按内容宽。
+   替代原 .switch-pair 独立块——开关移到环境 key 右侧同行。 */
+.conn-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.conn-header > .field,
+.conn-header > label {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* 环境 key combobox 限宽，给右侧开关留位 */
+.conn-header .envkey-combobox--narrow {
+  flex: 0 1 220px;
+}
+
+/* 开关组：用 grid + 标题占位对齐左右 field 的「span + 控件」两行结构，
+   使 checkbox 与 input 同一水平线 */
+.switch-group {
+  display: grid;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* 「选项」标题加粗，与左右 field 的 span 标题视觉一致 */
+.switch-group > span {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* 两个开关纵向堆叠（生产环境 / 支持 DB 写 上下结构） */
+.switch-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.switch-inline .switch-row {
+  margin: 0;
+  min-height: 0;
+  /* 复选框 + 文案横排，文案不占满剩余宽度 */
+  grid-template-columns: auto auto;
+}
+
+/* 环境 key 帮助提示（从 combobox.field 内移出到 conn-header 之后独立成行） */
+.env-key-help {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-subtle);
+  font-weight: 400;
 }
 
 /* 响应式：窄屏改单列 */
@@ -139,5 +222,19 @@
   }
   .filter-actions .button {
     flex: 1;
+  }
+}
+
+/* 连接配置头部：窄屏纵向堆叠（环境 key / 显示名 / 开关 各占整行） */
+@media (max-width: 700px) {
+  .conn-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .conn-header > .field,
+  .conn-header > label,
+  .conn-header .envkey-combobox--narrow {
+    flex: 1 1 auto;
   }
 }

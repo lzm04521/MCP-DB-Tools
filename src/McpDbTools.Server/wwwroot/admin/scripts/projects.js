@@ -68,8 +68,7 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Project</p>
-                  <h2>项目配置</h2>
+                  <h2>项目配置<span class="eyebrow">Project</span></h2>
                 </div>
                 <button
                   id="deleteProjectBtn"
@@ -79,7 +78,7 @@
                   删除项目
                 </button>
               </div>
-              <div class="grid two">
+              <div class="field-row">
                 <label>
                   <span>项目 key *</span>
                   <input
@@ -104,8 +103,7 @@
             <section class="card">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Environment</p>
-                  <h2>环境</h2>
+                  <h2>环境<span class="eyebrow">Environment</span></h2>
                 </div>
                 <button
                   id="addEnvironmentBtn"
@@ -121,8 +119,7 @@
             <section id="environmentEditor" class="card hidden">
               <div class="card-title">
                 <div>
-                  <p class="eyebrow">Connection</p>
-                  <h2>连接配置</h2>
+                  <h2>连接配置<span class="eyebrow">Connection</span></h2>
                 </div>
                 <div class="card-title-actions">
                   <button
@@ -149,12 +146,22 @@
                 请在修改连接字符串、数据库类型、项目 key、环境 key 或删除环境前仔细核对。
               </div>
 
-              <div class="grid two">
+              <div id="allowWriteWarning" class="warning hidden" role="status">
+                当前环境已开启 DB 写。db_query 将允许执行 INSERT/UPDATE/DELETE 等写操作；
+                DROP TABLE、TRUNCATE 等危险关键字仍被默认阻止（详见「阻止关键字」页）。
+                请在修改连接字符串或执行写操作前，仔细核对目标环境与数据库。
+              </div>
+
+              <!-- 连接配置头部：环境 key + 显示名 + 开关 横排（窄屏堆叠）。
+                   环境 key combobox 限宽，两个开关紧跟其后；显示名弹性填充中间。
+                   switch-group 用 grid +「选项」标题占位，与左右 field/label 的
+                   「span 标题 + 控件」两行结构对齐，使 checkbox 与 input 同一水平线。 -->
+              <div class="conn-header">
                 <!-- 环境 key：自定义 combobox（input + 下拉按钮 + 浮层）。
                      原生 datalist 在 Chrome/Edge 单击不展开且 showPicker() 无效，故自实现。
                      仅新建态可编辑时显示下拉；已保存环境 readonly 时只保留 input。
                      外层不用 <label>，避免点击下拉项时 label 把 click 转发给 input 触发重开。 -->
-                <div class="field envkey-combobox">
+                <div class="field envkey-combobox envkey-combobox--narrow">
                   <span>环境 key *</span>
                   <div class="combobox-wrap">
                     <input
@@ -176,7 +183,19 @@
                     >▾</button>
                     <ul id="environmentKeyList" class="combobox-list hidden" role="listbox"></ul>
                   </div>
-                  <small id="environmentNameHelp">创建后不可修改。可下拉选 Test/Prod，或直接输入自定义值。</small>
+                </div>
+                <div class="switch-group">
+                  <span>选项</span>
+                  <div class="switch-inline">
+                    <label class="switch-row">
+                      <input id="isProduction" type="checkbox" />
+                      <span>生产环境</span>
+                    </label>
+                    <label class="switch-row">
+                      <input id="allowWrite" type="checkbox" />
+                      <span>支持 DB 写</span>
+                    </label>
+                  </div>
                 </div>
                 <label>
                   <span>显示名</span>
@@ -186,6 +205,11 @@
                     autocomplete="off"
                   />
                 </label>
+              </div>
+              <small id="environmentNameHelp" class="env-key-help">创建后不可修改。可下拉选 Test/Prod，或直接输入自定义值。</small>
+
+              <!-- 连接参数：3 列紧凑（6 字段正好 2 行） -->
+              <div class="grid three env-params">
                 <label>
                   <span>数据库类型</span>
                   <select id="databaseType">
@@ -194,14 +218,6 @@
                     <option value="oracle">Oracle</option>
                     <option value="postgresql">PostgreSQL</option>
                   </select>
-                </label>
-                <label class="switch-row">
-                  <input id="isProduction" type="checkbox" />
-                  <span>生产环境</span>
-                </label>
-                <label class="switch-row">
-                  <input id="allowWrite" type="checkbox" />
-                  <span>支持 DB 写</span>
                 </label>
                 <label>
                   <span>最大行数 *</span>
@@ -287,7 +303,7 @@
       'defaultEnvironment', 'deleteProjectBtn', 'addEnvironmentBtn',
       'environmentTabs', 'environmentEditor', 'deleteEnvironmentBtn',
       'testConnectionBtn', 'testConnectionResult',
-      'productionWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
+      'productionWarning', 'allowWriteWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
       'environmentKeyToggle', 'environmentKeyList',
       'databaseType', 'isProduction', 'allowWrite', 'maxRows', 'commandTimeout',
       'maxConcurrency', 'maxPoolSize', 'connectTimeoutSeconds',
@@ -408,7 +424,15 @@
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `env-tab${index === state.selectedEnvironment ? ' active' : ''}`;
-      button.innerHTML = `<strong>${formatKeyLabel(env.name, env.displayName, '未命名环境')}${env.isProduction ? ' ⚠' : ''}</strong><span>${window.adminUi.escapeHtml(env.type)} · maxRows ${env.maxRows}</span>`;
+      // 生产 / 可写 badge：替代原 ⚠ 字符，用颜色区分（生产红、可写绿）；互斥不会同时出现
+      const envBadges = [];
+      if (env.isProduction) {
+        envBadges.push('<span class="env-badge env-badge--prod">生产</span>');
+      }
+      if (env.allowWrite) {
+        envBadges.push('<span class="env-badge env-badge--write">可写</span>');
+      }
+      button.innerHTML = `<strong>${formatKeyLabel(env.name, env.displayName, '未命名环境')}${envBadges.length ? ' ' + envBadges.join('') : ''}</strong><span>${window.adminUi.escapeHtml(env.type)} · maxRows ${env.maxRows}</span>`;
       button.addEventListener('click', () => {
         syncFormToState();
         state.selectedEnvironment = index;
@@ -642,14 +666,22 @@
     // 环境 key 预设：选中 Test/Prod 时填默认显示名并（Prod）自动勾选生产环境。
     setupEnvKeyPreset();
 
-    // 生产环境 ↔ DB 写 互斥联动：
-    // 勾选一方时取消并置灰另一方，同时统一管理 productionWarning 显隐。
+    // 生产环境 ↔ DB 写 软互斥：勾选一方时取消另一方勾选（不置灰，两框始终可编辑）。
+    // productionWarning 显隐统一由 applyMutexState 处理。
     // dataset.touched 保留「用户手动操作过生产开关」语义，避免预设联动覆盖用户意图。
     el.isProduction.addEventListener('change', () => {
       el.isProduction.dataset.touched = '1';
+      if (el.isProduction.checked) {
+        el.allowWrite.checked = false;
+      }
       applyMutexState();
     });
-    el.allowWrite.addEventListener('change', applyMutexState);
+    el.allowWrite.addEventListener('change', () => {
+      if (el.allowWrite.checked) {
+        el.isProduction.checked = false;
+      }
+      applyMutexState();
+    });
 
     el.addProjectBtn.addEventListener('click', addProject);
     el.addEnvironmentBtn.addEventListener('click', addEnvironment);
@@ -752,7 +784,11 @@
       }
       if (el.isProduction.dataset.touched !== '1') {
         el.isProduction.checked = preset.isProduction;
-        // 由 applyMutexState 统一处理 productionWarning 显隐与 allowWrite 互斥
+        // 预设勾选生产时，按互斥清掉 DB 写（applyMutexState 现在不管勾选取消）
+        if (preset.isProduction) {
+          el.allowWrite.checked = false;
+        }
+        // 由 applyMutexState 统一处理 productionWarning 显隐
         applyMutexState();
       }
     });
@@ -973,23 +1009,14 @@
 
   /**
    * 生产环境 ↔ DB 写 互斥联动。
-   * - 勾选生产 → allowWrite 取消勾选并置灰；productionWarning 显示。
-   * - 勾选 DB 写 → isProduction 取消勾选并置灰；productionWarning 隐藏。
-   * - 都未勾选 → 两框可用；productionWarning 隐藏。
+   * 互斥的「勾选取消」由各 change 监听负责（勾一方 → 清另一方）；
+   * 此处统一管理 productionWarning / allowWriteWarning 显隐（互斥，两者不会同时显示）。
+   * 不再 disabled 对方——编辑模式下两框始终可点击，避免「被错误禁止编辑」的困惑。
    * 由 bindEnvironment 初始化、两框 change 监听、setupEnvKeyPreset 预设联动统一调用。
    */
   function applyMutexState() {
-    if (el.isProduction.checked) {
-      el.allowWrite.checked = false;
-      el.allowWrite.disabled = true;
-    } else if (el.allowWrite.checked) {
-      el.isProduction.checked = false;
-      el.isProduction.disabled = true;
-    } else {
-      el.allowWrite.disabled = false;
-      el.isProduction.disabled = false;
-    }
     el.productionWarning.classList.toggle('hidden', !el.isProduction.checked);
+    el.allowWriteWarning.classList.toggle('hidden', !el.allowWrite.checked);
   }
 
   window.adminViews = window.adminViews || {};
