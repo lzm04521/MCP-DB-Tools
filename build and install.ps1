@@ -21,6 +21,38 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 禁用控制台「快速编辑模式」：防止鼠标点击窗口进入标记模式，导致脚本输出/执行长时间暂停。
+# 仅在真实控制台（ConsoleHost）执行；ISE/VSCode/无控制台环境跳过；失败静默，不阻断部署。
+function Disable-ConsoleQuickEdit {
+    if ($Host.Name -ne 'ConsoleHost') { return }
+    try {
+        $win32 = 'Win32.ConsoleMode' -as [type]
+        if ($null -eq $win32) {
+            $sig = @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@
+            $win32 = Add-Type -Name 'ConsoleMode' -Namespace 'Win32' -MemberDefinition $sig -PassThru -ErrorAction Stop
+        }
+        # STD_OUTPUT_HANDLE = -11
+        $handle = $win32::GetStdHandle([int]-11)
+        $mode = [uint32]0
+        if (-not $win32::GetConsoleMode($handle, [ref]$mode)) { return }
+        # 必须先置位 ENABLE_EXTENDED_FLAGS(0x0080)，才能关闭 ENABLE_QUICK_EDIT_MODE(0x0040)
+        $mode = $mode -bor [uint32]0x0080
+        $mode = $mode -band (-bnot [uint32]0x0040)
+        [void]$win32::SetConsoleMode($handle, $mode)
+    } catch {
+        # 静默：无法禁用快速编辑不影响部署流程
+    }
+}
+
+Disable-ConsoleQuickEdit
+
 # 部署计划确认门（前置）。本函数在 install.ps1 中有一份相同文案副本，修改需同步。
 function Confirm-InstallDir {
     param([string]$Dir)
@@ -96,6 +128,14 @@ $scriptRoot = Split-Path -Parent $PSCommandPath
 $installScriptPath = Join-Path $scriptRoot "install.ps1"
 $projectPath = Join-Path $scriptRoot "src\McpDbTools.Server\McpDbTools.Server.csproj"
 
+# 安装目录：未通过 -InstallDir 显式传入且非自动确认模式时交互询问；回车保留默认值
+if (-not $Confirmed -and -not $PSBoundParameters.ContainsKey('InstallDir')) {
+    $inputDir = Read-Host "请输入安装目录（直接回车使用默认: $InstallDir）"
+    if (-not [string]::IsNullOrWhiteSpace($inputDir)) {
+        $InstallDir = $inputDir.Trim()
+    }
+}
+
 # 1. 确认门（前置）：未带 -Confirmed 则先确认部署计划，取消则直接退出，不编译
 if (-not $Confirmed) {
     $ok = Confirm-InstallDir -Dir $InstallDir
@@ -146,6 +186,8 @@ try {
     $delegateParams = @{} + $PSBoundParameters
     $delegateParams['Confirmed'] = $true
     $delegateParams['SourceDir'] = $publishStagingDir
+    # 交互输入的目录不在 PSBoundParameters 中，显式透传当前值，避免 install.ps1 回退默认
+    $delegateParams['InstallDir'] = $InstallDir
     & $installScriptPath @delegateParams
 }
 finally {

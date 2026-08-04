@@ -23,6 +23,38 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 禁用控制台「快速编辑模式」：防止鼠标点击窗口进入标记模式，导致脚本输出/执行长时间暂停。
+# 仅在真实控制台（ConsoleHost）执行；ISE/VSCode/无控制台环境跳过；失败静默，不阻断部署。
+function Disable-ConsoleQuickEdit {
+    if ($Host.Name -ne 'ConsoleHost') { return }
+    try {
+        $win32 = 'Win32.ConsoleMode' -as [type]
+        if ($null -eq $win32) {
+            $sig = @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@
+            $win32 = Add-Type -Name 'ConsoleMode' -Namespace 'Win32' -MemberDefinition $sig -PassThru -ErrorAction Stop
+        }
+        # STD_OUTPUT_HANDLE = -11
+        $handle = $win32::GetStdHandle([int]-11)
+        $mode = [uint32]0
+        if (-not $win32::GetConsoleMode($handle, [ref]$mode)) { return }
+        # 必须先置位 ENABLE_EXTENDED_FLAGS(0x0080)，才能关闭 ENABLE_QUICK_EDIT_MODE(0x0040)
+        $mode = $mode -bor [uint32]0x0080
+        $mode = $mode -band (-bnot [uint32]0x0040)
+        [void]$win32::SetConsoleMode($handle, $mode)
+    } catch {
+        # 静默：无法禁用快速编辑不影响部署流程
+    }
+}
+
+Disable-ConsoleQuickEdit
+
 function Test-IsAdministrator {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
@@ -589,6 +621,14 @@ $scriptRoot = Split-Path -Parent $PSCommandPath
 # 源文件目录：优先用 -SourceDir（build and install.ps1 委托时指向临时发布目录），留空则用本脚本所在目录（发布 zip 解压目录）。
 $sourceDir = if ($SourceDir) { $SourceDir } else { $scriptRoot }
 $sourceExePath = Join-Path $sourceDir "McpDbTools.Server.exe"
+
+# 安装目录：未通过 -InstallDir 显式传入且非自动确认模式时交互询问；回车保留默认值
+if (-not $Confirmed -and -not $PSBoundParameters.ContainsKey('InstallDir')) {
+    $inputDir = Read-Host "请输入安装目录（直接回车使用默认: $InstallDir）"
+    if (-not [string]::IsNullOrWhiteSpace($inputDir)) {
+        $InstallDir = $inputDir.Trim()
+    }
+}
 
 # 部署计划确认门（-Confirmed 表示调用方已确认，跳过）
 if (-not $Confirmed) {
