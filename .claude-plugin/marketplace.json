@@ -1,0 +1,34 @@
+{
+  "name": "mcp-db-tools",
+  "id": "mcp-db-tools",
+  "owner": {
+    "name": "lzm04521"
+  },
+  "metadata": {
+    "description": "db-tools MCP 配套 skill 集：教 Claude 用 db_list/db_query 安全查询多项目多环境数据库（SQL Server/MySQL/Oracle/PostgreSQL）",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "db-tools",
+      "source": "./",
+      "description": "针对 db-tools MCP 的查询 skill：项目/环境两级层级、四 DBMS schema 与分页语法、SqlGuard 只读约束",
+      "version": "1.0.0",
+      "author": {
+        "name": "lzm04521"
+      },
+      "keywords": [
+        "database",
+        "sql",
+        "mcp",
+        "db-tools",
+        "readonly",
+        "sqlserver",
+        "mysql",
+        "oracle",
+        "postgresql"
+      ],
+      "category": "developer-tools"
+    }
+  ]
+}

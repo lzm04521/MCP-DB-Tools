@@ -1,0 +1,16 @@
+{
+  "name": "db-tools",
+  "description": "针对 db-tools MCP 的查询 skill 集合",
+  "version": "1.0.0",
+  "author": {
+    "name": "lzm04521"
+  },
+  "license": "MIT",
+  "keywords": [
+    "database",
+    "sql",
+    "mcp",
+    "db-tools"
+  ],
+  "skills": []
+}
