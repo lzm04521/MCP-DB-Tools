@@ -225,7 +225,7 @@
   async function checkUpdate() {
     window.adminUi.setBusy(true);
     try {
-      const s = await window.adminApi.requestJson('/admin/api/update/check');
+      const s = await window.adminApi.requestJson('/admin/api/update/check', { method: 'POST' });
       bindUpdate(s);
       window.adminUi.showToast(state.update.hasUpdate
         ? `发现新版本 ${state.update.targetVersion}`
@@ -240,7 +240,7 @@
   async function downloadUpdate() {
     window.adminUi.setBusy(true);
     try {
-      const s = await window.adminApi.requestJson('/admin/api/update/download');
+      const s = await window.adminApi.requestJson('/admin/api/update/download', { method: 'POST' });
       bindUpdate(s);
       window.adminUi.showToast(s.downloaded ? '下载完成，可安装。' : (s.error || '下载未完成'));
     } catch (error) {

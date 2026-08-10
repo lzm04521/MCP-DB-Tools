@@ -76,8 +76,10 @@ internal sealed class TrayHost : IDisposable
         {
             Assembly asm = typeof(TrayHost).Assembly;
             // 枚举资源名找 app.ico（不依赖确切逻辑名前缀），找不到则回退系统图标
+            // 资源名可能是 "app.ico"（无前缀）或 "命名空间.app.ico"，两种都匹配
             string? name = asm.GetManifestResourceNames()
-                .FirstOrDefault(n => n.EndsWith(".app.ico", StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(n => n.Equals("app.ico", StringComparison.OrdinalIgnoreCase)
+                                  || n.EndsWith(".app.ico", StringComparison.OrdinalIgnoreCase));
             if (name is null)
             {
                 return SystemIcons.Application;
