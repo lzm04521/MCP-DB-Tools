@@ -1,36 +1,25 @@
 name: release
 
-# 打 v* 开头的 tag（如 v1.0.0、v1.0.0-beta）时触发：构建 Windows（x64 / arm64）self-contained 单文件包并发布 GitHub Release。
-# 发布 zip 内含 install.ps1，解压即可一键部署。非 Windows 平台需用户自行 dotnet publish。
-# 不在普通 push 时触发，避免误发。
+# 打 v* tag 自动：dotnet publish + vpk pack（Velopack 安装包）+ 上传到对应 GitHub Release。
+# 后续发版只需 git tag vX.Y.Z && git push origin vX.Y.Z，无需本地打包上传。
+# 应用内「系统设置 → 应用更新」从 Release 的 releases.win.json 检查更新。
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write   # 创建 Release 与上传产物需要写权限
+  contents: write   # 创建 Release 与上传 assets 需要写权限
 
 jobs:
-  build:
-    name: build (${{ matrix.rid }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false   # 单个平台失败不取消其它平台，便于排查
-      matrix:
-        # 仅发布 Windows：x64 + arm64。Admin UI / install.ps1 仅设计用于 Windows。
-        include:
-          - os: windows-latest
-            rid: win-x64
-          - os: windows-latest
-            rid: win-arm64
+  release:
+    name: build & release (win-x64)
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout（fetch-depth=0，git describe 需要 tag 历史注入版本号）
         uses: actions/checkout@v4
         with:
-          # 浅克隆默认不带 tag；用 fetch-depth: 0 全量拉取历史（含 tags），让 build 时 git describe 注入正确版本；
-          # 不能用 fetch-tags: true：annotated tag 指向特定 commit SHA 时会与 ref 拉取冲突（git 报 "Cannot fetch both X and refs/tags/vY to refs/tags/vY"）
           fetch-depth: 0
 
       - name: Setup .NET 8
@@ -38,54 +27,21 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Publish (self-contained single-file)
-        run: >
-          dotnet publish src/McpDbTools.Server/McpDbTools.Server.csproj
-          -c Release
-          -r ${{ matrix.rid }}
-          --self-contained true
-          -p:PublishSingleFile=true
-          -p:EnableCompressionInSingleFile=true
-          -o publish
+      - name: Install vpk
+        run: dotnet tool install -g vpk
 
-      - name: Stage package (drop dev config.json, keep wwwroot, add install.ps1)
-        shell: bash
-        run: |
-          # 删除发布输出里的示例 config.json，避免覆盖用户既有配置；
-          # wwwroot（Admin UI 静态资源）必须保留；
-          # 加入 install.ps1：发布 zip 解压即可一键部署（Windows）。
-          rm -f publish/config.json
-          rm -f publish/*.pdb
-          cp install.ps1 publish/install.ps1
+      - name: Publish + vpk pack（release.ps1：dotnet publish self-contained + vpk pack --icon app.ico）
+        shell: pwsh
+        run: ./release.ps1
 
-      - name: Archive package
-        shell: bash
-        run: |
-          pkg="McpDbTools-${GITHUB_REF_NAME}-${{ matrix.rid }}"
-          7z a -tzip "${pkg}.zip" ./publish/*
-          echo "ASSET=${pkg}.zip" >> "$GITHUB_ENV"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.rid }}
-          path: ${{ env.ASSET }}
-          retention-days: 7
-
-  release:
-    name: create release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: assets
-          merge-multiple: true
-
-      - name: Create GitHub Release
+      - name: Create Release + upload assets（含 releases.win.json 供应用内更新检查）
         uses: softprops/action-gh-release@v2
         with:
-          # 不手写 tag_name：workflow 由 tag push 触发，会自动用触发 tag 建 Release
-          generate_release_notes: true
-          files: assets/*
+          generate_release_notes: true   # 读取 .github/release.yml 的分类规则
+          files: |
+            Releases/McpDbTools-win-Setup.exe
+            Releases/McpDbTools-*-full.nupkg
+            Releases/McpDbTools-win-Portable.zip
+            Releases/releases.win.json
+            Releases/assets.win.json
+            Releases/RELEASES
