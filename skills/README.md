@@ -49,4 +49,4 @@ frontmatter 用 YAML 三横线包围，只需 `name` + `description`：
     # 仓库更新后，拉取最新 marketplace 清单
     /plugin marketplace update mcp-db-tools
 
-> 当前 `plugin.json` 的 `skills` 为空 —— 尚未发布具体 skill。按上面「新增 skill」加入第一个 skill 并填好路径后即可正常安装。
+> `plugin.json` 的 `skills` 当前已含 `./skills/db-query`。新增更多 skill 时按上面「新增 skill」步骤加入路径，commit + push 后用户执行 `/plugin marketplace update mcp-db-tools` 重装即可拿到。

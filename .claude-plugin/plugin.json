@@ -12,5 +12,7 @@
     "mcp",
     "db-tools"
   ],
-  "skills": []
+  "skills": [
+    "./skills/db-query"
+  ]
 }
