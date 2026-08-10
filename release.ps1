@@ -39,9 +39,21 @@ try {
     & $vpkPath pack --packId $PackId --packVersion $version --packDir $publishDir --mainExe $MainExe --outputDir $OutputDir --icon (Join-Path $repoRoot "app.ico")
     if ($LASTEXITCODE -ne 0) { throw "vpk pack 失败（退出码 $LASTEXITCODE）" }
 
+    # 给安装器与便携包追加版本号，便于 Release 页面下载识别
+    # （应用内更新走 nupkg + releases.win.json，不依赖这两个文件名）
+    $setupSrc = Join-Path $OutputDir "${PackId}-win-Setup.exe"
+    $portableSrc = Join-Path $OutputDir "${PackId}-win-Portable.zip"
+    if (Test-Path $setupSrc) {
+        Rename-Item -Path $setupSrc -NewName "${PackId}-win-Setup-${version}.exe"
+    }
+    if (Test-Path $portableSrc) {
+        Rename-Item -Path $portableSrc -NewName "${PackId}-win-Portable-${version}.zip"
+    }
+
     Write-Host ""
     Write-Host "发布完成：$OutputDir"
-    Write-Host "  安装包：$OutputDir\${PackId}-Setup.exe（双击安装）"
+    Write-Host "  安装包：$OutputDir\${PackId}-win-Setup-${version}.exe（双击安装）"
+    Write-Host "  便携包：$OutputDir\${PackId}-win-Portable-${version}.zip（解压即用）"
     Write-Host "  更新元数据：$OutputDir\releases.win.json（上传到 UpdateSource 指向的 URL 目录）"
     Write-Host "应用内更新：系统设置页 → 应用更新 → 检查更新（更新源默认为 GitHub Releases）"
     Write-Host ""

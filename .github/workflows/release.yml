@@ -39,9 +39,9 @@ jobs:
         with:
           generate_release_notes: true   # 读取 .github/release.yml 的分类规则
           files: |
-            Releases/McpDbTools-win-Setup.exe
+            Releases/McpDbTools-win-Setup-*.exe
             Releases/McpDbTools-*-full.nupkg
-            Releases/McpDbTools-win-Portable.zip
+            Releases/McpDbTools-win-Portable-*.zip
             Releases/releases.win.json
             Releases/assets.win.json
             Releases/RELEASES

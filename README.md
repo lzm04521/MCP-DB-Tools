@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-**Windows 用户**：从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup.exe` 双击安装（Velopack 安装包，无需 .NET SDK，自动建快捷方式，支持应用内在线更新，详见[发布版本安装](#发布版本安装推荐)）。
+**Windows 用户**：从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup-<版本号>.exe` 双击安装（Velopack 安装包，无需 .NET SDK，自动建快捷方式，支持应用内在线更新，详见[发布版本安装](#发布版本安装推荐)）。
 
 **源码构建 / 非 Windows**：
 
@@ -69,7 +69,7 @@ dotnet build
 
 ### 接入 MCP 客户端
 
-本工具通过 MCP Streamable HTTP 与 Agent 通信。服务须先启动（开发时 `dotnet run --project src/McpDbTools.Server`；安装版双击 `McpDbTools-win-Setup.exe` 后运行托盘应用，可在系统设置页开启开机自启），再让 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。下面给出 Claude Code 与 Codex 的配置示例，其它 MCP 客户端按各自文档以 HTTP URL 接入即可。
+本工具通过 MCP Streamable HTTP 与 Agent 通信。服务须先启动（开发时 `dotnet run --project src/McpDbTools.Server`；安装版双击 `McpDbTools-win-Setup-<版本号>.exe` 后运行托盘应用，可在系统设置页开启开机自启），再让 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。下面给出 Claude Code 与 Codex 的配置示例，其它 MCP 客户端按各自文档以 HTTP URL 接入即可。
 
 > 建议先用 Admin UI 测试连接、确认配置无误，再接入客户端：`dotnet run --project src/McpDbTools.Server`，浏览器打开 `http://127.0.0.1:61123/admin`（默认端口 61123，可由 config.json `port` 字段或 `--admin-port` 覆盖）。
 
@@ -356,14 +356,14 @@ Velopack 安装版：程序与用户数据物理分离，应用更新（增量 d
 
 ### 发布版本安装（推荐）
 
-从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup.exe` 双击安装（Velopack 安装包，self-contained win-x64，免装 .NET 运行时）：
+从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup-<版本号>.exe` 双击安装（Velopack 安装包，self-contained win-x64，免装 .NET 运行时）：
 
 - 安装后自动建开始菜单 / 桌面快捷方式，运行后常驻系统托盘
 - 在 Admin UI「系统设置」页开启**开机自启**（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，当前用户级，无需管理员）
 - 在「系统设置」页**一键注册 MCP** 到 Claude Code
 - **应用更新**：「系统设置 → 应用更新」检查并安装新版本（Velopack 增量 delta，更新源默认 GitHub Releases）
 
-便携使用可下载 `McpDbTools-win-Portable.zip`，解压后直接运行 `McpDbTools.Server.exe`。
+便携使用可下载 `McpDbTools-win-Portable-<版本号>.zip`，解压后直接运行 `McpDbTools.Server.exe`。
 
 > 当前仅发布 Windows x64。macOS / Linux 请走下方「手动发布」自行构建（注意 Velopack 仅 Windows，需自行配置常驻进程）。
 
@@ -375,7 +375,7 @@ Velopack 安装版：程序与用户数据物理分离，应用更新（增量 d
 .\release.ps1
 ```
 
-依赖 `dotnet` SDK 与 [vpk](https://github.com/velopack/velopack) 全局工具（`dotnet tool install -g vpk`）。版本号取最近 git tag（去前缀 `v`），产物输出到 `Releases\`：`McpDbTools-win-Setup.exe`（安装器）、`McpDbTools-win-Portable.zip`（便携包）、`McpDbTools-*-full.nupkg` + 增量 delta、`releases.win.json`（更新元数据）。
+依赖 `dotnet` SDK 与 [vpk](https://github.com/velopack/velopack) 全局工具（`dotnet tool install -g vpk`）。版本号取最近 git tag（去前缀 `v`），产物输出到 `Releases\`：`McpDbTools-win-Setup-<版本号>.exe`（安装器）、`McpDbTools-win-Portable-<版本号>.zip`（便携包）、`McpDbTools-*-full.nupkg` + 增量 delta、`releases.win.json`（更新元数据）。
 
 发到 GitHub Releases 供应用内检查更新（需 Personal Access Token）：
 
