@@ -33,6 +33,7 @@
     <PackageReference Include="MySqlConnector" Version="2.6.0" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="Oracle.ManagedDataAccess.Core" Version="3.21.210" />
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <!-- 配置文件不随构建复制；发布时仍复制到输出目录以便部署初始化 -->

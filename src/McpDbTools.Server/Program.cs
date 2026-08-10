@@ -19,7 +19,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Velopack;
 
+VelopackApp.Build().Run();
 int adminPort = AdminStartupOptions.ParsePort(args);
 await RunAsync(args, adminPort);
 
@@ -37,6 +39,8 @@ static async Task RunAsync(string[] args, int adminPort)
     // 系统设置页依赖：自启动注册表读写、Claude MCP 注册、运行时端口状态
     builder.Services.AddSingleton<AutostartService>();
     builder.Services.AddSingleton<ClaudeMcpRegistrar>();
+    // 应用更新（Velopack）：更新源 URL 由 UpdateSource 环境变量/appsettings 配置，未配置则禁用检查
+    builder.Services.AddSingleton(new UpdateChecker(builder.Configuration["UpdateSource"]));
     builder.Services.AddSingleton(new RunningState { Port = adminPort });
     // 运维清理后台服务：依赖 AdminConfigService（D2 决策：方案 a）
     builder.Services.AddHostedService<MaintenanceHostedService>();
@@ -173,6 +177,37 @@ static async Task RunAsync(string[] args, int adminPort)
         return result.Success
             ? Results.Ok(result)
             : Results.Json(result, statusCode: StatusCodes.Status400BadRequest);
+    });
+
+    // ============ 应用更新（Velopack）============
+
+    // 更新状态：currentVersion（当前版本）+ 检查结果。页面加载时调用，反映是否已安装/有新版
+    api.MapGet("/update/status", async (UpdateChecker uc) =>
+    {
+        UpdateStatus s = await uc.CheckAsync();
+        return Results.Ok(new
+        {
+            currentVersion = AppVersion.Current,
+            s.Configured,
+            s.Installed,
+            s.HasUpdate,
+            s.TargetVersion,
+            s.Downloaded,
+            s.Error
+        });
+    });
+
+    // 手动触发检查
+    api.MapPost("/update/check", async (UpdateChecker uc) => Results.Ok(await uc.CheckAsync()));
+
+    // 下载上次检查到的更新
+    api.MapPost("/update/download", async (UpdateChecker uc) => Results.Ok(await uc.DownloadAsync()));
+
+    // 应用已下载的更新并重启（Velopack 接管退出+替换+重启，响应返回后本进程随即结束）
+    api.MapPost("/update/apply", (UpdateChecker uc) =>
+    {
+        uc.ApplyAndRestart();
+        return Results.Ok(new { applying = true });
     });
 
     // 审计日志查询：GET /admin/api/audit-logs?project=&environment=&databaseType=&success=&fromTime=&toTime=&sqlContains=&page=&pageSize=

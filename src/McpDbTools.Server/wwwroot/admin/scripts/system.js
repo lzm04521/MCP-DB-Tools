@@ -1,9 +1,10 @@
 /* 系统设置视图（SPA 视图模块）。
-   负责：服务端口配置（改后重启生效）、登录自启动开关、Claude Code MCP 注册、应用重启。
+   负责：服务端口配置（改后重启生效）、登录自启动开关、Claude Code MCP 注册、应用更新（Velopack）、应用重启。
    数据流：
      - 端口：GET /admin/api/port（runningPort + configPort）→ 输入框 → PUT /admin/api/port → toast 提示重启
      - 自启动：GET /admin/api/autostart → 开关 → PUT /admin/api/autostart
      - MCP 注册：POST /admin/api/register-mcp {scope}（用当前 runningPort）
+     - 更新：GET /admin/api/update/status → POST /check → POST /download → POST /apply（Velopack 接管重启）
      - 重启：POST /admin/api/restart（confirmAction 确认；旧实例退出，新实例起来）
    只读视图：各 section 独立按钮操作，不使用顶栏"保存配置"（saveLabel 为空，shell 自动隐藏保存按钮）。
    公共能力（toast/confirm/busy）来自 window.adminUi / window.adminApi。 */
@@ -11,7 +12,8 @@
   const state = {
     runningPort: null,
     configPort: null,
-    autostart: false
+    autostart: false,
+    update: { currentVersion: null, configured: false, installed: false, hasUpdate: false, targetVersion: null, downloaded: false, error: null }
   };
   let el = null; // mount 后填充
 
@@ -63,6 +65,17 @@
         </section>
 
         <section class="card settings-card">
+          <div class="card-title"><div><h2>应用更新<span class="eyebrow">Update</span></h2></div></div>
+          <p class="muted">当前版本 <code id="sysVersion">?</code>。通过 Velopack 检查并安装新版本。</p>
+          <div class="settings-row">
+            <button id="sysCheckUpdateBtn" type="button" class="button primary" disabled>检查更新</button>
+            <button id="sysDownloadUpdateBtn" type="button" class="button secondary" disabled>下载</button>
+            <button id="sysApplyUpdateBtn" type="button" class="button danger subtle" disabled>安装并重启</button>
+          </div>
+          <p class="muted hint-inline" id="sysUpdateHint"></p>
+        </section>
+
+        <section class="card settings-card">
           <div class="card-title"><div><h2>应用控制<span class="eyebrow">Process</span></h2></div></div>
           <p class="muted">重启会先停止当前实例再启动新实例（读取最新端口）；退出请用托盘图标右键菜单。</p>
           <div class="settings-row">
@@ -78,6 +91,7 @@
       'sysRunningPort', 'sysPortInput', 'sysSavePortBtn',
       'sysAutostartToggle',
       'sysMcpScope', 'sysRegisterMcpBtn', 'sysMcpUrl',
+      'sysVersion', 'sysCheckUpdateBtn', 'sysDownloadUpdateBtn', 'sysApplyUpdateBtn', 'sysUpdateHint',
       'sysRestartBtn'
     ];
     const refs = {};
@@ -104,6 +118,7 @@
       const auto = await window.adminApi.requestJson('/admin/api/autostart');
       state.autostart = Boolean(auto.enabled);
       bindValues();
+      await loadUpdate();
     } catch (error) {
       window.adminUi.showToast(error.message, true);
     } finally {
@@ -168,6 +183,88 @@
     }
   }
 
+  // ============ 应用更新（Velopack）============
+
+  async function loadUpdate() {
+    try {
+      const s = await window.adminApi.requestJson('/admin/api/update/status');
+      bindUpdate(s);
+    } catch (error) {
+      el.sysUpdateHint.textContent = `更新状态加载失败：${error.message}`;
+    }
+  }
+
+  function bindUpdate(s) {
+    // /update/check、/download 返回的字段不含 currentVersion，合并保留
+    state.update = { ...state.update, ...s };
+    const u = state.update;
+    el.sysVersion.textContent = u.currentVersion || '?';
+
+    let hint;
+    if (!u.configured) {
+      hint = '未配置更新源（UpdateSource）。需运维设置后才能检查更新。';
+    } else if (!u.installed) {
+      hint = '当前为开发模式运行（非 Velopack 安装包），无法检查更新。安装正式版后可用。';
+    } else if (u.error) {
+      hint = `检查失败：${u.error}`;
+    } else if (u.downloaded) {
+      hint = `已下载新版本 ${u.targetVersion}，点"安装并重启"应用。`;
+    } else if (u.hasUpdate) {
+      hint = `发现新版本 ${u.targetVersion}，点"下载"。`;
+    } else {
+      hint = '已是最新版本。';
+    }
+    el.sysUpdateHint.textContent = hint;
+
+    const canCheck = u.configured && u.installed;
+    el.sysCheckUpdateBtn.disabled = !canCheck;
+    el.sysDownloadUpdateBtn.disabled = !(canCheck && u.hasUpdate && !u.downloaded);
+    el.sysApplyUpdateBtn.disabled = !u.downloaded;
+  }
+
+  async function checkUpdate() {
+    window.adminUi.setBusy(true);
+    try {
+      const s = await window.adminApi.requestJson('/admin/api/update/check');
+      bindUpdate(s);
+      window.adminUi.showToast(state.update.hasUpdate
+        ? `发现新版本 ${state.update.targetVersion}`
+        : '已是最新版本');
+    } catch (error) {
+      window.adminUi.showToast(error.message, true);
+    } finally {
+      window.adminUi.setBusy(false);
+    }
+  }
+
+  async function downloadUpdate() {
+    window.adminUi.setBusy(true);
+    try {
+      const s = await window.adminApi.requestJson('/admin/api/update/download');
+      bindUpdate(s);
+      window.adminUi.showToast(s.downloaded ? '下载完成，可安装。' : (s.error || '下载未完成'));
+    } catch (error) {
+      window.adminUi.showToast(error.message, true);
+    } finally {
+      window.adminUi.setBusy(false);
+    }
+  }
+
+  async function applyUpdate() {
+    const ok = await window.adminUi.confirmAction('安装并重启', '将应用已下载的更新并重启应用。');
+    if (!ok) {
+      return;
+    }
+    window.adminUi.setBusy(true);
+    try {
+      await window.adminApi.requestJson('/admin/api/update/apply', { method: 'POST' });
+    } catch (error) {
+      // 应用重启过程连接断开属正常（Velopack 接管退出）
+    }
+    window.adminUi.setBusy(false);
+    window.adminUi.showToast('正在应用更新并重启，请稍候…');
+  }
+
   async function restart() {
     const portChanged = state.configPort && state.configPort !== state.runningPort;
     const hint = portChanged
@@ -184,7 +281,7 @@
     try {
       await window.adminApi.requestJson('/admin/api/restart', { method: 'POST' });
     } catch (error) {
-      // 重启过程连接断开属正常（旧实例退出），不作为错误
+      // 重启过程连接断开属正常（旧实例退出）
     }
     window.adminUi.setBusy(false);
     window.adminUi.showToast(portChanged
@@ -196,6 +293,9 @@
     el.sysSavePortBtn.addEventListener('click', savePort);
     el.sysAutostartToggle.addEventListener('change', toggleAutostart);
     el.sysRegisterMcpBtn.addEventListener('click', registerMcp);
+    el.sysCheckUpdateBtn.addEventListener('click', checkUpdate);
+    el.sysDownloadUpdateBtn.addEventListener('click', downloadUpdate);
+    el.sysApplyUpdateBtn.addEventListener('click', applyUpdate);
     el.sysRestartBtn.addEventListener('click', restart);
   }
 
