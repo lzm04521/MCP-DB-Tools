@@ -70,21 +70,17 @@ internal sealed class TrayHost : IDisposable
     }
 
     /// <summary>从嵌入资源加载品牌图标（app.ico），失败回退系统默认图标。</summary>
+    /// <para>
+    /// csproj 给 Resource 项设 <c>&lt;LogicalName&gt;app.ico&lt;/LogicalName&gt;</c>，使图标成为顶层
+    /// manifest 资源（命名 <c>app.ico</c>）。否则 SDK 会把图标打包进 <c>*.g.resources</c> 容器，
+    /// <see cref="Assembly.GetManifestResourceNames"/> 看不到顶层 <c>app.ico</c>，无法直接读取。
+    /// </para>
     private static Icon LoadAppIcon()
     {
         try
         {
             Assembly asm = typeof(TrayHost).Assembly;
-            // 枚举资源名找 app.ico（不依赖确切逻辑名前缀），找不到则回退系统图标
-            // 资源名可能是 "app.ico"（无前缀）或 "命名空间.app.ico"，两种都匹配
-            string? name = asm.GetManifestResourceNames()
-                .FirstOrDefault(n => n.Equals("app.ico", StringComparison.OrdinalIgnoreCase)
-                                  || n.EndsWith(".app.ico", StringComparison.OrdinalIgnoreCase));
-            if (name is null)
-            {
-                return SystemIcons.Application;
-            }
-            using Stream? stream = asm.GetManifestResourceStream(name);
+            using Stream? stream = asm.GetManifestResourceStream("app.ico");
             return stream is not null ? new Icon(stream) : SystemIcons.Application;
         }
         catch

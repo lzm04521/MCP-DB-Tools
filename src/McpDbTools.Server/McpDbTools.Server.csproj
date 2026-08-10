@@ -50,9 +50,13 @@
     </Content>
   </ItemGroup>
 
-  <!-- 托盘/关于图标：嵌入托管资源，TrayHost.LoadAppIcon 用 GetManifestResourceStream 读取 -->
+  <!-- 托盘/关于图标：EmbeddedResource + LogicalName 让 app.ico 成为顶层 manifest 资源。
+       注意：<Resource> 项会被 SDK 打包进 *.g.resources 容器（顶层 GetManifestResourceNames 看不到），
+       故必须用 EmbeddedResource。TrayHost.LoadAppIcon 用 GetManifestResourceStream("app.ico") 读取。 -->
   <ItemGroup>
-    <Resource Include="..\..\app.ico" Link="app.ico" />
+    <EmbeddedResource Include="..\..\app.ico" Link="app.ico">
+      <LogicalName>app.ico</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>
