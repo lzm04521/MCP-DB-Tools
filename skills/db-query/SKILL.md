@@ -6,7 +6,9 @@ description: >
   索引查询、分页语法、字符串拼接差异；maxRows 静默截断与索引逐环境核验；写业务 SQL 前的 schema 验证；
   可写库谨慎；性能计数器列名特例；审批人/单据快照类 SQL 的范围确认。
   触发词：查数据库、连库、查表结构、查列、查索引、查 schema、写 SQL、拼 SQL、分页、SQL Server、
-  MySQL、Oracle、PostgreSQL、性能计数器、审批人快照、单据快照、db_list、db_query、db-tools。
+  MySQL、Oracle、PostgreSQL、性能计数器、审批人快照、单据快照、db_list、db_query、db-tools；
+  以及"用 DB Prod/Test/UAT/Dev 环境验证"、"DB Prod 环境"、"Prod 环境"、"去数据库验证/确认"、
+  "查生产数据/生产库"、"验证一下数据"、"确认数据"等带环境名或"验证/确认"措辞的查库请求。
   只要调用 mcp__db-tools__db_list 或 mcp__db-tools__db_query 就应加载本 skill。
 ---
 
