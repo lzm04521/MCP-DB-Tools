@@ -39,8 +39,9 @@ static async Task RunAsync(string[] args, int adminPort)
     // 系统设置页依赖：自启动注册表读写、Claude MCP 注册、运行时端口状态
     builder.Services.AddSingleton<AutostartService>();
     builder.Services.AddSingleton<ClaudeMcpRegistrar>();
-    // 应用更新（Velopack）：更新源 URL 由 UpdateSource 环境变量/appsettings 配置，未配置则禁用检查
-    builder.Services.AddSingleton(new UpdateChecker(builder.Configuration["UpdateSource"]));
+    // 应用更新（Velopack）：更新源为 GitHub Releases，repoUrl 由 UpdateGithubRepo 配置，缺省用项目仓库
+    builder.Services.AddSingleton(new UpdateChecker(
+        builder.Configuration["UpdateGithubRepo"] ?? "https://github.com/lzm04521/MCP-DB-Tools"));
     builder.Services.AddSingleton(new RunningState { Port = adminPort });
     // 运维清理后台服务：依赖 AdminConfigService（D2 决策：方案 a）
     builder.Services.AddHostedService<MaintenanceHostedService>();

@@ -1,4 +1,5 @@
 using Velopack;
+using Velopack.Sources;
 
 namespace McpDbTools.Server.Admin;
 
@@ -19,11 +20,12 @@ public sealed class UpdateChecker
     private readonly UpdateManager? _mgr;
     private UpdateInfo? _lastInfo;
 
-    public UpdateChecker(string? updateSourceUrl)
+    public UpdateChecker(string? githubRepoUrl)
     {
-        if (!string.IsNullOrWhiteSpace(updateSourceUrl))
+        // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）
+        if (!string.IsNullOrWhiteSpace(githubRepoUrl))
         {
-            _mgr = new UpdateManager(updateSourceUrl);
+            _mgr = new UpdateManager(new GithubSource(githubRepoUrl, null, false));
         }
     }
 

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Drawing;
+using System.Reflection;
 using System.Windows.Forms;
 using McpDbTools.Server;
 using Microsoft.Extensions.Hosting;
@@ -38,7 +40,7 @@ internal sealed class TrayHost : IDisposable
 
         _notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = LoadAppIcon(),
             // NotifyIcon.Text 上限 63 字符
             Text = $"McpDbTools v{AppVersion.Current}",
             Visible = true,
@@ -64,6 +66,28 @@ internal sealed class TrayHost : IDisposable
         catch (Exception)
         {
             // 忽略：用户可手动访问 URL
+        }
+    }
+
+    /// <summary>从嵌入资源加载品牌图标（app.ico），失败回退系统默认图标。</summary>
+    private static Icon LoadAppIcon()
+    {
+        try
+        {
+            Assembly asm = typeof(TrayHost).Assembly;
+            // 枚举资源名找 app.ico（不依赖确切逻辑名前缀），找不到则回退系统图标
+            string? name = asm.GetManifestResourceNames()
+                .FirstOrDefault(n => n.EndsWith(".app.ico", StringComparison.OrdinalIgnoreCase));
+            if (name is null)
+            {
+                return SystemIcons.Application;
+            }
+            using Stream? stream = asm.GetManifestResourceStream(name);
+            return stream is not null ? new Icon(stream) : SystemIcons.Application;
+        }
+        catch
+        {
+            return SystemIcons.Application;
         }
     }
 

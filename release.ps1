@@ -42,7 +42,10 @@ try {
     Write-Host "发布完成：$OutputDir"
     Write-Host "  安装包：$OutputDir\${PackId}-Setup.exe（双击安装）"
     Write-Host "  更新元数据：$OutputDir\releases.win.json（上传到 UpdateSource 指向的 URL 目录）"
-    Write-Host "应用内更新：系统设置页 → 应用更新 → 检查更新（需 UpdateSource 环境变量/appsettings 指向 releases 目录 URL）"
+    Write-Host "应用内更新：系统设置页 → 应用更新 → 检查更新（更新源默认为 GitHub Releases）"
+    Write-Host ""
+    Write-Host "上传到 GitHub Releases（供应用内检查更新）："
+    Write-Host "  vpk upload github -o $OutputDir --repoUrl https://github.com/lzm04521/MCP-DB-Tools --token <GITHUB_TOKEN> --publish"
 }
 finally {
     Remove-Item -Recurse -Force $publishDir -ErrorAction SilentlyContinue

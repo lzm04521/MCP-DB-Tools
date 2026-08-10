@@ -10,6 +10,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- exe 图标（资源管理器显示）；托盘图标从嵌入资源读取（见下方 Resource） -->
+    <ApplicationIcon>..\..\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- 单文件发布：托管程序集打包进 exe，native 依赖内嵌，启用压缩减体积。
@@ -46,6 +48,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+  </ItemGroup>
+
+  <!-- 托盘/关于图标：嵌入托管资源，TrayHost.LoadAppIcon 用 GetManifestResourceStream 读取 -->
+  <ItemGroup>
+    <Resource Include="..\..\app.ico" Link="app.ico" />
   </ItemGroup>
 
 </Project>
