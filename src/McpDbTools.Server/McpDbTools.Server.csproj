@@ -1,8 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- WinExe：托盘应用无控制台黑窗（OutputType=Exe 启动会弹出控制台窗口）。诊断走文件日志。
+         不影响 WebApplication/WinForms 行为，仅决定 PE 子系统（Console→Windows）。 -->
+    <OutputType>WinExe</OutputType>
+    <!-- net8.0-windows：托盘模式使用 WinForms NotifyIcon（Windows 专属 API）。
+         项目本就 Windows-only（NSSM/计划任务/single-file win-x64），无跨平台影响。 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

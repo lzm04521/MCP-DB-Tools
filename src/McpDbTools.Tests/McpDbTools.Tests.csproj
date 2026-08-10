@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- 同步 Server 的 net8.0-windows：net8.0 无法引用 platform-specific 的 net8.0-windows 项目（NU1201）。
+         本机 Windows 运行，无跨平台影响；测试不使用 WinForms，不启用 UseWindowsForms。 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 

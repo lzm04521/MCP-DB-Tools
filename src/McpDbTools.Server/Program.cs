@@ -6,6 +6,8 @@ using McpDbTools.Server.Admin;
 using McpDbTools.Server.Audit;
 using McpDbTools.Server.Configuration;
 using McpDbTools.Server.Database;
+using McpDbTools.Server.Hosting;
+using McpDbTools.Server.Logging;
 using McpDbTools.Server.Maintenance;
 using McpDbTools.Server.Security;
 using McpDbTools.Server.Tools;
@@ -32,6 +34,10 @@ static async Task RunAsync(string[] args, int adminPort)
     ConfigureLogging(builder.Logging);
     ConfigureBusinessServices(builder.Services, builder.Configuration);
     builder.Services.AddSingleton<AdminConfigService>();
+    // 系统设置页依赖：自启动注册表读写、Claude MCP 注册、运行时端口状态
+    builder.Services.AddSingleton<AutostartService>();
+    builder.Services.AddSingleton<ClaudeMcpRegistrar>();
+    builder.Services.AddSingleton(new RunningState { Port = adminPort });
     // 运维清理后台服务：依赖 AdminConfigService（D2 决策：方案 a）
     builder.Services.AddHostedService<MaintenanceHostedService>();
     // host shutdown 时给 AuditLogger.DisposeAsync 排空审计队列留足时间（其内部上限 5s）
@@ -110,6 +116,63 @@ static async Task RunAsync(string[] args, int adminPort)
         {
             return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
         }
+    });
+
+    // ============ 系统设置：端口 / 自启动 / 重启 / MCP 注册 ============
+
+    // 端口：runningPort=本次启动实际端口（只读，重启前不变）；configPort=config.json 的 port（下次启动生效）
+    api.MapGet("/port", (RunningState rs, AdminConfigService svc) => Results.Ok(new
+    {
+        runningPort = rs.Port,
+        configPort = svc.GetConfigPort()
+    }));
+
+    // 端口写入：仅改 port 字段，透传其余。改后需重启（Kestrel 启动时绑定），前端保存后引导重启
+    api.MapPut("/port", async (PortRequest request, AdminConfigService svc, CancellationToken cancellationToken) =>
+    {
+        try
+        {
+            int saved = await svc.SavePortAsync(request.Port, cancellationToken);
+            return Results.Ok(new { port = saved });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+    });
+
+    // 自启动开关：读写 HKCU\...\Run（当前用户级，无需管理员）
+    api.MapGet("/autostart", (AutostartService svc) => Results.Ok(new { enabled = svc.IsEnabled() }));
+
+    api.MapPut("/autostart", (AutostartRequest request, AutostartService svc) =>
+    {
+        if (request.Enabled)
+        {
+            svc.Enable();
+        }
+        else
+        {
+            svc.Disable();
+        }
+        return Results.Ok(new { enabled = svc.IsEnabled() });
+    });
+
+    // 重启服务：延迟拉新实例 + 停当前实例。响应返回后旧实例退出，新实例在新端口（若改了）启动
+    api.MapPost("/restart", (IHostApplicationLifetime lifetime) =>
+    {
+        RestartHelper.RestartAndExit(lifetime);
+        return Results.Ok(new { restarting = true });
+    });
+
+    // 注册到 Claude Code CLI：claude mcp add --transport http --scope <scope> db-tools <url>
+    api.MapPost("/register-mcp", async (McpRegisterRequest request, RunningState rs,
+        ClaudeMcpRegistrar registrar, CancellationToken cancellationToken) =>
+    {
+        string scope = string.IsNullOrWhiteSpace(request.Scope) ? "user" : request.Scope;
+        McpRegisterResult result = await registrar.RegisterAsync(rs.Port, scope, cancellationToken);
+        return result.Success
+            ? Results.Ok(result)
+            : Results.Json(result, statusCode: StatusCodes.Status400BadRequest);
     });
 
     // 审计日志查询：GET /admin/api/audit-logs?project=&environment=&databaseType=&success=&fromTime=&toTime=&sqlContains=&page=&pageSize=
@@ -233,7 +296,26 @@ static async Task RunAsync(string[] args, int adminPort)
     app.Logger.LogInformation("Admin UI: http://127.0.0.1:{Port}/admin", adminPort);
     app.Logger.LogInformation("MCP HTTP: http://127.0.0.1:{Port}/mcp", adminPort);
 
-    await app.RunAsync();
+    // 托盘模式：Web 宿主在后台 Task 运行（不阻塞），主线程跑 WinForms 消息循环。
+    // Web 宿主异常退出时触发 StopApplication，让 TrayHost 的 ApplicationStopped 回调退出消息循环。
+    var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await app.RunAsync();
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError(ex, "Web 宿主异常退出");
+            lifetime.StopApplication();
+        }
+    });
+
+    // 主线程消息循环；TrayHost 退出（Web 宿主已优雅停止）后返回，随后 DisposeAsync 释放资源
+    using var tray = new TrayHost(lifetime, adminPort);
+    tray.Run();
+    await app.DisposeAsync();
 }
 
 static void ConfigureBusinessServices(IServiceCollection services, IConfiguration configuration)
@@ -262,7 +344,14 @@ static void ConfigureBusinessServices(IServiceCollection services, IConfiguratio
 }
 
 static void ConfigureLogging(ILoggingBuilder logging)
-    => logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+{
+    // console → stderr：服务/计划任务承载下不可见，交互式启动时仍有用，保留。
+    logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
+    // 文件日志：托盘模式无控制台窗口，文件是唯一可见的诊断通道。
+    // 写入数据目录 logs/app-yyyyMMdd.txt，UTF-8、按日滚动、启动清理 30 天前旧文件。
+    string logDir = Path.Combine(DataDirectoryResolver.EnsureExists(), "logs");
+    logging.AddDailyFile(logDir);
+}
 
 const string adminSessionCookieName = "McpDbTools.AdminSession";
 
@@ -309,19 +398,63 @@ static bool FixedTimeEquals(string left, string right)
 
 internal sealed record AdminStartupOptions(int AdminPort)
 {
+    /// <summary>
+    /// 解析启动端口，优先级：命令行 --admin-port &gt; config.json 的 port 字段 &gt; 默认 61123。
+    /// </summary>
     public static int ParsePort(string[] args)
     {
-        int port = 5123;
+        const int defaultPort = 61123;
+
+        // 优先级 1：命令行 --admin-port（调试/一次性覆盖）
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i].Equals("--admin-port", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
-                if (!int.TryParse(args[i + 1], out port) || port <= 0 || port > 65535)
+                if (!int.TryParse(args[i + 1], out int cli) || cli <= 0 || cli > 65535)
                 {
                     throw new ArgumentException($"无效的 --admin-port: {args[i + 1]}");
                 }
+                return cli;
             }
         }
-        return port;
+
+        // 优先级 2：config.json 的 port 字段
+        int? configPort = TryReadPortFromConfig();
+        if (configPort is int cp && cp > 0 && cp <= 65535)
+        {
+            return cp;
+        }
+
+        // 优先级 3：内置默认
+        return defaultPort;
+    }
+
+    /// <summary>
+    /// 直接读 config.json 的 port 字段（容错：文件缺失/解析失败/无字段 → null）。
+    /// 在 DI 容器构造前调用，不能走 ConfigStore，按 DataDirectoryResolver 定位文件用 JsonDocument 轻量读取。
+    /// </summary>
+    private static int? TryReadPortFromConfig()
+    {
+        try
+        {
+            string configPath = Path.Combine(DataDirectoryResolver.Resolve(), "config.json");
+            if (!File.Exists(configPath))
+            {
+                return null;
+            }
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(configPath));
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("port", out JsonElement portEl) &&
+                portEl.ValueKind == JsonValueKind.Number &&
+                portEl.TryGetInt32(out int p))
+            {
+                return p;
+            }
+        }
+        catch
+        {
+            // 读取失败不阻断启动，回落默认端口
+        }
+        return null;
     }
 }

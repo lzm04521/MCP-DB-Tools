@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Timer = System.Threading.Timer;
 
 namespace McpDbTools.Server.Configuration;
 

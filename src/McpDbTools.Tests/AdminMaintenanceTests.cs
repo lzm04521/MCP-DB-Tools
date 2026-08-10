@@ -337,6 +337,95 @@ public class AdminMaintenanceTests : IDisposable
         }
     }
 
+    // ============ 端口配置（阶段2：独立读写 + 两条保存路径透传防回归）============
+
+    [Fact]
+    public async Task SavePort_WritesAndReadsBack()
+    {
+        var (store, service, configPath) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            Assert.Null(service.GetConfigPort()); // 初始无 port 字段
+
+            int saved = await service.SavePortAsync(63399, CancellationToken.None);
+            Assert.Equal(63399, saved);
+
+            // 保存写文件 → ConfigStore 热重载（500ms 去抖），等待刷新后再回读
+            await WaitForReloadAsync(store, () => store.Current.Port == 63399);
+            Assert.Equal(63399, service.GetConfigPort());
+        }
+
+        // config.json 应含 port 节点
+        string json = File.ReadAllText(configPath);
+        using JsonDocument doc = JsonDocument.Parse(json);
+        Assert.Equal(63399, doc.RootElement.GetProperty("port").GetInt32());
+    }
+
+    [Fact]
+    public async Task SavePort_OutOfRange_Throws()
+    {
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            await Assert.ThrowsAsync<ArgumentException>(() => service.SavePortAsync(0, CancellationToken.None));
+            await Assert.ThrowsAsync<ArgumentException>(() => service.SavePortAsync(70000, CancellationToken.None));
+        }
+    }
+
+    [Fact]
+    public async Task SaveMaintenance_PreservesPort()
+    {
+        // 防回归：保存 maintenance 不应丢失 port（与写池透传同类风险，已加 Port=current.Port）
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            await service.SavePortAsync(51234, CancellationToken.None);
+            await WaitForReloadAsync(store, () => store.Current.Port == 51234);
+
+            await service.SaveMaintenanceAsync(new MaintenanceSettingsRequest
+            {
+                AuditLogAutoCleanup = true,
+                AuditLogRetentionDays = 30
+            }, CancellationToken.None);
+
+            await WaitForReloadAsync(store,
+                () => store.Current.Port == 51234 && store.Current.Maintenance?.AuditLogAutoCleanup == true);
+            Assert.Equal(51234, service.GetConfigPort());
+        }
+    }
+
+    [Fact]
+    public async Task SaveConfig_PreservesPort()
+    {
+        // 防回归：保存 projects（全量替换路径）不应丢失 port（ToConfig 已加 Port=current.Port）
+        var (store, service, _) = Create("{\"databases\":{}}");
+        using (store)
+        {
+            await service.SavePortAsync(51234, CancellationToken.None);
+            await WaitForReloadAsync(store, () => store.Current.Port == 51234);
+
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        DefaultEnvironment = "test",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new() { Name = "test", Type = "sqlserver", ConnectionString = "Server=.;", MaxRows = 100, CommandTimeout = 30 }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success);
+            await WaitForReloadAsync(store, () => store.Current.Port == 51234);
+            Assert.Equal(51234, service.GetConfigPort());
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理 */ }

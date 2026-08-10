@@ -3,6 +3,7 @@ using McpDbTools.Server.Audit;
 using McpDbTools.Server.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Timer = System.Threading.Timer;
 
 namespace McpDbTools.Server.Maintenance;
 

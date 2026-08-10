@@ -274,7 +274,8 @@ public sealed class AdminConfigService
             DefaultMaxConcurrencyWaitSeconds = request.DefaultMaxConcurrencyWaitSeconds ?? current.DefaultMaxConcurrencyWaitSeconds,
             DefaultMaxPoolSize = request.DefaultMaxPoolSize ?? current.DefaultMaxPoolSize,
             DefaultConnectTimeoutSeconds = request.DefaultConnectTimeoutSeconds ?? current.DefaultConnectTimeoutSeconds,
-            // maintenance 节点独立保存：保存 projects/keywords 时原样透传，避免全量替换丢失
+            // port/maintenance 独立于 projects/keywords：保存 projects 时原样透传，避免全量替换丢失
+            Port = current.Port,
             Maintenance = current.Maintenance,
             Projects = projects
         };
@@ -719,6 +720,8 @@ public sealed class AdminConfigService
             DefaultMaxConcurrencyWaitSeconds = current.DefaultMaxConcurrencyWaitSeconds,
             DefaultMaxPoolSize = current.DefaultMaxPoolSize,
             DefaultConnectTimeoutSeconds = current.DefaultConnectTimeoutSeconds,
+            // 关键防回归：port 必须透传，否则保存 maintenance 会把端口写丢（重启后回退默认）
+            Port = current.Port,
             Maintenance = new MaintenanceConfig
             {
                 AuditLogAutoCleanup = request.AuditLogAutoCleanup,
@@ -731,6 +734,41 @@ public sealed class AdminConfigService
         };
         await WriteAtomicallyAsync(next, cancellationToken);
         return ToMaintenanceResponse(next.Maintenance!);
+    }
+
+    // ============ 端口配置（独立读写，仅改 port 字段，透传其余）============
+
+    /// <summary>读取 config.json 的 port 字段（null 表示未配置，启动回退默认 61123）。</summary>
+    public int? GetConfigPort() => _configStore.Current.Port;
+
+    /// <summary>
+    /// 保存端口到 config.json（仅改 port，透传其余字段）。校验 1-65535，否则抛 ArgumentException。
+    /// <para>注意：写入后需重启进程才生效（Kestrel 端口启动时绑定）。</para>
+    /// </summary>
+    public async Task<int> SavePortAsync(int port, CancellationToken cancellationToken)
+    {
+        if (port <= 0 || port > 65535)
+        {
+            throw new ArgumentException("端口必须在 1-65535 之间。");
+        }
+
+        DatabasesConfig current = _configStore.Current;
+        // 与 SaveMaintenanceAsync 同模式：手动重建透传所有字段，仅 Port 用入参
+        DatabasesConfig next = new()
+        {
+            DefaultDisabledKeywords = current.DefaultDisabledKeywords,
+            DefaultWriteDisabledKeywords = current.DefaultWriteDisabledKeywords,
+            DefaultDisabledKeywordsByType = current.DefaultDisabledKeywordsByType,
+            DefaultMaxConcurrency = current.DefaultMaxConcurrency,
+            DefaultMaxConcurrencyWaitSeconds = current.DefaultMaxConcurrencyWaitSeconds,
+            DefaultMaxPoolSize = current.DefaultMaxPoolSize,
+            DefaultConnectTimeoutSeconds = current.DefaultConnectTimeoutSeconds,
+            Port = port,
+            Maintenance = current.Maintenance,
+            Projects = current.Projects
+        };
+        await WriteAtomicallyAsync(next, cancellationToken);
+        return port;
     }
 
     /// <summary>开关开启时校验天数 &gt; 0；关闭时不校验（天数可能任意值，忽略不生效）。</summary>

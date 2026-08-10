@@ -136,6 +136,13 @@ public sealed class DatabasesConfig
     public int? DefaultConnectTimeoutSeconds { get; init; }
 
     /// <summary>
+    /// 服务监听端口（Admin UI 与 MCP 共用同一端口）。null/未配置时启动用内置默认 61123。
+    /// 改后需重启进程才生效（Kestrel 启动时绑定端口）。保存 projects/keywords/maintenance 时原样透传。
+    /// </summary>
+    [JsonPropertyName("port")]
+    public int? Port { get; init; }
+
+    /// <summary>
     /// 运维清理设置（审计日志/备份自动清理）。缺省时为 null，按内置默认（全部关闭）处理。
     /// 保存 projects/keywords 时由后端 ToConfig 原样透传，不会被全量替换丢失。
     /// </summary>
