@@ -115,5 +115,7 @@ doc/*
 
 .zcode/*
 
+codegraph.json
 paseo.json
 .superpowers/*Releases/
+Releases/*
