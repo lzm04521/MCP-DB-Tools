@@ -13,13 +13,14 @@
 - **并发与连接池可控**：每个 `(project, env)` 独立并发闸门，避免高并发打满连接池
 - **审计日志**：本地 SQLite 全局记录查询与阻止，支持自动/手动清理；可选记录查询结果（弹窗懒加载查看）
 - **AI 友好返回**：columns 与 rows 分离，rows 用二维数组压缩 token
-- **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、备份管理、审计查看与全局设置
+- **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、备份管理、审计查看、全局设置与系统设置（端口/开机自启/MCP 注册/应用更新）
+- **系统托盘应用**：WinExe 单 exe，双击运行常驻系统托盘（无控制台黑窗）；Velopack 打包，支持应用内在线更新
 
 ## 快速开始
 
-**Windows 用户**：可直接从 [GitHub Release](../../releases) 下载 zip，解压后运行 `.\install.ps1` 一键部署（无需 .NET SDK，详见[发布版本安装](#发布版本安装推荐)）。
+**Windows 用户**：从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup.exe` 双击安装（Velopack 安装包，无需 .NET SDK，自动建快捷方式，支持应用内在线更新，详见[发布版本安装](#发布版本安装推荐)）。
 
-**源码部署 / 非 Windows**：
+**源码构建 / 非 Windows**：
 
 ```bash
 git clone <repo>
@@ -64,24 +65,24 @@ dotnet build
 }
 ```
 
-> 程序默认读取 `%ProgramData%\McpDbTools\config.json`（Windows 跨用户共享数据目录，与程序目录分离便于升级；LocalSystem 服务与当前用户进程共享同一份数据），可用环境变量 `ConfigStore__ConfigPath` 覆盖。**首次部署后，config.json 位于 `%ProgramData%\McpDbTools\`，不在 exe 同目录**——请通过 Admin UI 维护，或直接编辑该文件。文件不存在时空配置启动，可后续通过 Admin UI 补齐。开发时若用源码目录下的 config.json，需显式设置该环境变量。
+> 程序默认读取 `%ProgramData%\McpDbTools\config.json`（Windows 跨用户共享数据目录，与程序目录分离便于升级，Velopack 每版本解压到 `%LocalAppData%` 不影响数据），可用环境变量 `ConfigStore__ConfigPath` 覆盖。**首次部署后，config.json 位于 `%ProgramData%\McpDbTools\`，不在 exe 同目录**——请通过 Admin UI 维护，或直接编辑该文件。文件不存在时空配置启动，可后续通过 Admin UI 补齐。开发时若用源码目录下的 config.json，需显式设置该环境变量。
 
 ### 接入 MCP 客户端
 
-本工具通过 MCP Streamable HTTP 与 Agent 通信。服务须先启动（开发时 `dotnet run --project src/McpDbTools.Server`；生产环境用 NSSM 服务或登录计划任务），再让 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。下面给出 Claude Code 与 Codex 的配置示例，其它 MCP 客户端按各自文档以 HTTP URL 接入即可。
+本工具通过 MCP Streamable HTTP 与 Agent 通信。服务须先启动（开发时 `dotnet run --project src/McpDbTools.Server`；安装版双击 `McpDbTools-win-Setup.exe` 后运行托盘应用，可在系统设置页开启开机自启），再让 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。下面给出 Claude Code 与 Codex 的配置示例，其它 MCP 客户端按各自文档以 HTTP URL 接入即可。
 
-> 建议先用 Admin UI 测试连接、确认配置无误，再接入客户端：`dotnet run --project src/McpDbTools.Server`，浏览器打开 `http://127.0.0.1:5123/admin`。
+> 建议先用 Admin UI 测试连接、确认配置无误，再接入客户端：`dotnet run --project src/McpDbTools.Server`，浏览器打开 `http://127.0.0.1:61123/admin`（默认端口 61123，可由 config.json `port` 字段或 `--admin-port` 覆盖）。
 
 #### Claude Code
 
-Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 JSON 配置 `mcpServers`。HTTP 模式下只需指定 URL，服务须先单独启动（开发时 `dotnet run --project src/McpDbTools.Server`，可用 `ConfigStore__ConfigPath` 指向源码目录的 config.json；生产环境用 NSSM 服务或计划任务）：
+Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 JSON 配置 `mcpServers`。HTTP 模式下只需指定 URL，服务须先单独启动（开发时 `dotnet run --project src/McpDbTools.Server`，可用 `ConfigStore__ConfigPath` 指向源码目录的 config.json；安装版用托盘应用，可在系统设置页开启开机自启）：
 
 ```json
 {
   "mcpServers": {
     "db-tools": {
       "type": "http",
-      "url": "http://127.0.0.1:5123/mcp"
+      "url": "http://127.0.0.1:61123/mcp"
     }
   }
 }
@@ -90,7 +91,7 @@ Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 J
 也可用 Claude Code CLI 一条命令添加（等效于上面配置；CLI 默认 scope 是 `local`，如要写用户级配置请加 `-s user`，要写项目级共享 `.mcp.json` 请加 `-s project`）：
 
 ```bash
-claude mcp add --transport http db-tools http://127.0.0.1:5123/mcp
+claude mcp add --transport http db-tools http://127.0.0.1:61123/mcp
 ```
 
 #### Codex
@@ -99,7 +100,7 @@ claude mcp add --transport http db-tools http://127.0.0.1:5123/mcp
 
 ```toml
 [mcp_servers.db-tools]
-url = "http://127.0.0.1:5123/mcp"
+url = "http://127.0.0.1:61123/mcp"
 ```
 
 > Codex 默认工具执行超时 `tool_timeout_sec = 60` 秒。如果数据库查询可能较慢，可在 `[mcp_servers.db-tools]` 下追加 `tool_timeout_sec = 120` 调大。
@@ -114,35 +115,36 @@ url = "http://127.0.0.1:5123/mcp"
 
 ## 运行模式
 
-默认即单一 Web 进程，同端口同时提供 Admin UI（`/admin`）与 MCP Streamable HTTP（`/mcp`）：
+默认即系统托盘应用（WinExe，无控制台黑窗）：单进程同时承载系统托盘 UI、Admin UI（`/admin`）与 MCP Streamable HTTP（`/mcp`），仅监听 `127.0.0.1`。主线程跑 WinForms 消息循环（托盘 UI），Web 宿主在后台 Task 运行：
 
 | 参数            | 说明                                                       |
 | --------------- | ---------------------------------------------------------- |
-| 无参数          | 默认。启动 Web 服务，同端口出 `/admin` + `/mcp`             |
-| `--admin-port`  | 覆盖默认端口 `5123`（取值 1-65535）                        |
+| 无参数          | 默认。启动托盘应用，同端口出 `/admin` + `/mcp`             |
+| `--admin-port`  | 覆盖默认端口（取值 1-65535）                              |
 
-旧的 `--admin-only` / `--admin` 参数已移除。Admin UI 默认端口 `5123`（`--admin-port` 可改），只监听 `127.0.0.1`。首次访问 `/admin` 自动设置仅限该路径的 HttpOnly、SameSite=Strict 本机会话 cookie，secret 只存于进程内存。
+端口优先级：命令行 `--admin-port` > config.json 的 `port` 字段 > 默认 `61123`。旧的 `--admin-only` / `--admin` 参数已移除，只监听 `127.0.0.1`。首次访问 `/admin` 自动设置仅限该路径的 HttpOnly、SameSite=Strict 本机会话 cookie，secret 只存于进程内存。
 
-服务须常驻（NSSM 服务或登录计划任务，见 [发布与部署](#发布与部署)）；不常驻则 MCP 客户端无法连接。
+托盘应用常驻后台（可在系统设置页开启开机自启，见 [发布与部署](#发布与部署)）；不常驻则 MCP 客户端无法连接。托盘应用无控制台，诊断日志写入 `%ProgramData%\McpDbTools\logs\app-yyyyMMdd.txt`。
 
 > **安全提示（本机信任模型）：** HTTP 合一后 `/admin` 与 `/mcp` 同进程同端口，均仅监听 `127.0.0.1`，且 `/mcp` 与 `/admin/api/*` **均不鉴权**——`/admin` 的会话 cookie 仅限浏览器 `/admin` 路径，不保护 API 调用。任何能访问 `127.0.0.1:<port>` 的本机进程或 Agent 都可调用 `/admin/api/*` 修改配置，或经 `/mcp` 查询数据库。远程访问、TLS、端点鉴权留作后续独立设计（本次不做）；多用户主机或不受信任环境暂不适用。
 
 ```bash
-# 开发时
+# 开发时（控制台直接跑，便于看实时日志）
 dotnet run --project src/McpDbTools.Server
-ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json \
-  dotnet run --project src/McpDbTools.Server -- --admin-port 5123
+ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json \
+  dotnet run --project src/McpDbTools.Server -- --admin-port 61123
 ```
 
 ## Admin UI
 
-浏览器打开启动日志中的地址（如 `http://127.0.0.1:5123/admin`）即可维护配置。功能分五个页面：
+浏览器打开启动日志中的地址（默认 `http://127.0.0.1:61123/admin`）即可维护配置。功能分六个页面：
 
 - **项目配置**（`#/projects`）：增删项目和环境，**key 创建后不可修改**；维护连接字符串、数据库类型、`maxRows`、`commandTimeout`、环境级并发/连接池参数与阻止关键字；内置测试连接（不落盘）。
 - **全局关键字**（`#/keywords`）：维护只读池 / 写池全局默认与按类型追加的阻止关键字；展示代码内置固定关键字（只读，无法在页面修改）。
 - **审计日志**（`#/audit-log`）：按项目/环境/类型/状态/时间/SQL 关键词筛选，分页查看，长文本点击弹窗复制。纯只读。
 - **备份管理**（`#/backups`）：列出、下载、恢复（恢复前自动快照可撤销）、删除配置备份。
 - **全局设置**（`#/settings`）：审计日志与备份文件的自动清理开关和保留天数；手动清理两者（按 10/20/30/50 天）。
+- **系统设置**（`#/system`）：查看/修改 Web 端口（改后自动重启生效）、开机自启开关（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，当前用户级，无需管理员）、一键注册 MCP 到 Claude Code、应用更新（检查/下载/安装 Velopack 增量更新）。
 
 写入安全：保存前自动备份当前 `config.json`，经临时文件校验后原子替换，避免 MCP 进程读到半写入文件。生产环境显示风险提示。保存会重写为标准 JSON，原注释与手工排版不保留。
 
@@ -333,72 +335,55 @@ ConfigStore__ConfigPath=D:/GitHub/mcp-db-tools/src/McpDbTools.Server/config.json
 
 ### 目录结构
 
-程序与用户数据物理分离，升级时安装目录可全量替换、用户数据不丢失：
+Velopack 安装版：程序与用户数据物理分离，应用更新（增量 delta）只切换程序，用户数据不丢失：
 
 ```text
-D:\Tools\McpDbTools\                # 安装目录（程序文件，升级时可全量替换）
-├── McpDbTools.Server.exe
-├── wwwroot\admin\                  # SPA 静态资源
+%LocalAppData%\McpDbTools\                # Velopack 安装目录（每版本解压到此，更新自动切换）
+├── current\McpDbTools.Server.exe
+├── current\wwwroot\admin\                # SPA 静态资源
 └── ...
 
-%ProgramData%\McpDbTools\            # 用户数据目录（跨用户共享，与程序目录分离）
-├── config.json                     # 配置
-├── audit.db                        # 审计日志（首次写入自动创建）
-└── backups\                        # 配置备份（保存自动生成）
+%ProgramData%\McpDbTools\                  # 用户数据目录（跨版本、跨用户共享，更新不丢）
+├── config.json                           # 配置
+├── audit.db                              # 审计日志（首次写入自动创建）
+├── logs\app-yyyyMMdd.txt                 # 托盘应用文件日志
+└── backups\                              # 配置备份（保存自动生成）
 ```
 
-数据目录选用 `%ProgramData%\McpDbTools`（Windows 跨用户共享数据目录），保证 **LocalSystem 服务**（NSSM / 计划任务承载的统一 Web 进程）与**当前用户进程**（开发时手动 `dotnet run`）读写同一份数据。部署脚本会自动给 Users 组授予 Modify 权限。
+数据目录选用 `%ProgramData%\McpDbTools`（Windows 跨用户共享数据目录），与 Velopack 安装目录（`%LocalAppData%`）分离，确保应用增量更新不丢配置与审计数据。
 
 > 数据目录由 `DataDirectoryResolver` 集中解析，优先级：调用方传入 > 环境变量 `ConfigStore__ConfigPath` > `%ProgramData%\McpDbTools` > exe 同目录。多数情况下无需关心，默认值即可。
 
 ### 发布版本安装（推荐）
 
-从 [GitHub Release](../../releases) 下载对应架构的 zip（`McpDbTools-vX.Y.Z-win-x64.zip` 或 `McpDbTools-vX.Y.Z-win-arm64.zip`），解压后里面已含 `McpDbTools.Server.exe`、`wwwroot\` 与 `install.ps1`：
+从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup.exe` 双击安装（Velopack 安装包，self-contained win-x64，免装 .NET 运行时）：
+
+- 安装后自动建开始菜单 / 桌面快捷方式，运行后常驻系统托盘
+- 在 Admin UI「系统设置」页开启**开机自启**（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，当前用户级，无需管理员）
+- 在「系统设置」页**一键注册 MCP** 到 Claude Code
+- **应用更新**：「系统设置 → 应用更新」检查并安装新版本（Velopack 增量 delta，更新源默认 GitHub Releases）
+
+便携使用可下载 `McpDbTools-win-Portable.zip`，解压后直接运行 `McpDbTools.Server.exe`。
+
+> 当前仅发布 Windows x64。macOS / Linux 请走下方「手动发布」自行构建（注意 Velopack 仅 Windows，需自行配置常驻进程）。
+
+### 从源码打包发布
+
+仓库根目录的 [`release.ps1`](release.ps1) 完成"`dotnet publish`（self-contained win-x64）→ `vpk pack` 生成 Velopack 安装包"：
 
 ```powershell
-.\install.ps1
+.\release.ps1
 ```
 
-`install.ps1` 完成"确认 → 交互询问 → 提权 → 停服 → 迁移数据 → 替换文件 → 安装自启动 → 注册 MCP"全流程，**不编译代码**，无需 .NET SDK。脚本行为与下方「从源码构建并部署」一致，仅省去构建步骤；可用参数也相同（见参数表）。
+依赖 `dotnet` SDK 与 [vpk](https://github.com/velopack/velopack) 全局工具（`dotnet tool install -g vpk`）。版本号取最近 git tag（去前缀 `v`），产物输出到 `Releases\`：`McpDbTools-win-Setup.exe`（安装器）、`McpDbTools-win-Portable.zip`（便携包）、`McpDbTools-*-full.nupkg` + 增量 delta、`releases.win.json`（更新元数据）。
 
-> 发布包仅提供 Windows x64 / arm64。macOS / Linux 请走下方「手动发布」自行构建。
-
-### 从源码构建并部署
-
-仓库根目录的 [`build and install.ps1`](build and install.ps1) 完成"确认 → `dotnet publish` → 委托 [`install.ps1`](install.ps1) 完成安装"。编译产物输出到临时目录，确认通过后才构建；安装逻辑全部复用 `install.ps1`：
+发到 GitHub Releases 供应用内检查更新（需 Personal Access Token）：
 
 ```powershell
-.\build and install.ps1
+vpk upload github -o Releases --repoUrl https://github.com/lzm04521/MCP-DB-Tools --token <TOKEN> --publish
 ```
 
-脚本行为（`build and install.ps1` 在确认后多一步 `dotnet publish` 编译，随后委托 `install.ps1` 执行下列流程；`install.ps1` 直接从发布包执行）：
-
-1. **提权前确认**：显示安装目录、数据目录、MCP 名称等部署计划，输入 `Y` 后才继续（源码版先编译再提权）
-2. **交互式询问**（提权前完成，答案透传给提权进程）：Admin UI 端口（默认 `61123`）；未安装 [nssm](https://nssm.cc) 时是否用计划任务承载
-3. **数据迁移**：把旧版数据（exe 同目录 或 `%USERPROFILE%\.mcpdbtools`）搬到 `%ProgramData%\McpDbTools`，幂等
-4. **全量替换安装目录**：用户数据已分离，可无条件清空安装目录后复制新产物
-5. **自启动安装**：有 nssm 则装 Windows 服务（`SERVICE_AUTO_START`），否则按选择装计划任务
-6. **注册 MCP**：`claude mcp add` 把 Server 注册到 Claude Code（默认作用域 `user`）
-
-常用参数：
-
-| 参数 | 默认值 | 说明 |
-| ---- | ------ | ---- |
-| `-InstallDir` | `E:\Software\FreeInstall\Mcp-db-Tools` | 安装目录 |
-| `-McpName` | `db-tools` | 注册到 Claude Code 的 MCP 名称 |
-| `-McpScope` | `user` | MCP 作用域：`local` / `user` / `project` |
-| `-AdminServiceName` | `McpDbTools.Admin` | NSSM 服务名 / 计划任务名 |
-| `-PauseOnExit` | 关 | 结束时暂停等待回车（便于查看管理员窗口输出） |
-
-示例：
-
-```powershell
-# 自定义安装目录与 MCP 作用域
-.\build and install.ps1 -InstallDir D:\Tools\McpDbTools -McpScope local
-
-# 当前已是管理员，跳过 UAC 直接部署
-powershell -Verb RunAs -Command ".\build and install.ps1"
-```
+CI 自动发布：打 `v*` tag 触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)，自动执行 `release.ps1` + 创建 Release + 上传 assets（含 `releases.win.json`）。
 
 ### 手动发布
 
@@ -419,20 +404,15 @@ dotnet publish src/McpDbTools.Server -c Release -r linux-x64 --self-contained tr
 
 发布产物拷到目标目录后，首次运行会自动在 `%ProgramData%\McpDbTools` 创建数据目录与空配置。也可用环境变量 `ConfigStore__ConfigPath` 指定自定义路径。
 
-> `install.ps1` 仅适用于 Windows。非 Windows 平台构建产物后需自行配置常驻进程（systemd 单元、launchd 等）与 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`。
+> 非 Windows 平台构建产物后需自行配置常驻进程（systemd 单元、launchd 等）与 MCP 客户端连接 `http://127.0.0.1:<port>/mcp`；系统托盘 UI（WinForms）与 Velopack 在线更新仅 Windows 可用。
 
-### 服务自启动
+### 常驻与开机自启
 
-HTTP 模式下，MCP 客户端通过 `http://127.0.0.1:<port>/mcp` 连接服务，**服务必须常驻**。生产环境推荐用 NSSM 装成 Windows 服务（部署脚本已自动安装），或用登录计划任务承载：
+托盘应用（Windows）常驻后台，开机自启由 Admin UI「系统设置」页控制（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，当前用户级，无需管理员），无需 NSSM 服务或登录计划任务：
 
 ```bash
 # 前台运行（调试）
-McpDbTools.Server.exe --admin-port 5123
-
-# 后台服务（推荐，部署脚本已自动安装）
-# 或手工用 nssm：
-nssm install McpDbTools.Server "D:\Tools\McpDbTools\McpDbTools.Server.exe" --admin-port 61123
-nssm start McpDbTools.Server
+McpDbTools.Server.exe --admin-port 61123
 ```
 
 服务启动后同时暴露 Admin UI（`/admin`）与 MCP HTTP（`/mcp`）；MCP 客户端只需配置 URL，不感知承载方式。
@@ -443,12 +423,12 @@ nssm start McpDbTools.Server
 dotnet build
 dotnet test                                    # 全部测试
 dotnet test --filter "FullyQualifiedName~SqlGuardTests"   # 单个测试类
-dotnet run --project src/McpDbTools.Server                                  # 启动 Web 服务（/admin + /mcp）
-dotnet run --project src/McpDbTools.Server -- --admin-port 5123            # 指定端口
+dotnet run --project src/McpDbTools.Server                                  # 启动托盘应用（/admin + /mcp）
+dotnet run --project src/McpDbTools.Server -- --admin-port 61123            # 指定端口（默认 61123）
 dotnet publish src/McpDbTools.Server -c Release
 ```
 
-> 服务运行时 stdout 不再是协议通道（MCP 改用 HTTP），日志走标准 ASP.NET Core logging 管道。
+> MCP 改用 HTTP 后 stdout 不再是协议通道。托盘应用（WinExe）无控制台，日志走文件（数据目录 `logs/app-yyyyMMdd.txt`）；开发时 `dotnet run` 仍走控制台 + ASP.NET Core logging 管道。
 
 ### 项目结构
 
@@ -459,6 +439,8 @@ src/McpDbTools.Server/
 ├── Configuration/     # 配置模型、热重载、三层关键字合并、连接串拼接、DataDirectoryResolver 数据目录解析
 ├── Database/          # 四种数据库 provider + 工厂 + 每环境并发限流器
 ├── Maintenance/       # 运维清理后台服务（审计日志/备份自动清理）
+├── Hosting/           # TrayHost 托盘宿主、RunningState、RestartHelper（改端口延迟重启）
+├── Logging/           # FileLoggerProvider（托盘无控制台时文件日志）
 ├── Security/          # SqlGuard SQL 安全守卫
 ├── Tools/             # db_list / db_query MCP 工具
 ├── wwwroot/admin/     # 静态 Admin UI（无 npm 构建链 SPA）
@@ -467,7 +449,7 @@ src/McpDbTools.Server/
 
 ### 技术栈
 
-.NET 8、ASP.NET Core Minimal API、原生 HTML/CSS/JS、[ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 1.4.0、SqlClient / MySqlConnector / Oracle.ManagedDataAccess.Core / Npgsql、Microsoft.Data.Sqlite、xUnit。
+.NET 8（net8.0-windows + WinForms 托盘）、ASP.NET Core Minimal API、原生 HTML/CSS/JS、[ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 1.4.0、[Velopack](https://github.com/velopack/velopack)（Windows 安装包 + 应用内在线更新）、SqlClient / MySqlConnector / Oracle.ManagedDataAccess.Core / Npgsql、Microsoft.Data.Sqlite、xUnit。
 
 ## 已知限制
 
@@ -475,3 +457,4 @@ src/McpDbTools.Server/
 - 不支持存储过程参数化传入，不支持跨环境/多连接 JOIN（同一连接内跨 schema 由数据库决定）
 - Admin UI 仅设计为本机访问；远程访问需另行设计认证、授权、TLS 与审计
 - 实际数据库连接需在目标环境用真实数据库验证（单测只覆盖纯逻辑层）
+- 系统托盘 UI（WinForms）与 Velopack 在线更新仅 Windows 可用；macOS / Linux 仅能以无托盘的 Web 进程方式运行
