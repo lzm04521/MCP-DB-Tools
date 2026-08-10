@@ -15,10 +15,11 @@ $repoRoot = Split-Path -Parent $PSCommandPath
 $project = Join-Path $repoRoot "src\McpDbTools.Server\McpDbTools.Server.csproj"
 $publishDir = Join-Path ([System.IO.Path]::GetTempPath()) ("McpDbTools.publish.{0}" -f [guid]::NewGuid())
 
-# vpk 必须可用
-$vpk = Get-Command vpk -ErrorAction SilentlyContinue
-if ($null -eq $vpk) {
-    throw "未找到 vpk。请先安装：dotnet tool install -g vpk"
+# vpk 必须可用：优先 PATH，fallback 到 dotnet global tool 默认路径（装后 PATH 未刷新场景）
+$vpkCmd = Get-Command vpk -ErrorAction SilentlyContinue
+$vpkPath = if ($vpkCmd) { $vpkCmd.Source } else { Join-Path $env:USERPROFILE ".dotnet\tools\vpk.exe" }
+if (-not (Test-Path $vpkPath)) {
+    throw "未找到 vpk。请先安装：dotnet tool install -g vpk（装后可能需重开终端刷新 PATH）"
 }
 
 # 版本号取最近 git tag（去前缀 v）
@@ -35,7 +36,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish 失败（退出码 $LASTEXITCODE）" }
 
     Write-Host "2. vpk pack -> $OutputDir"
-    & vpk pack --packId $PackId --packVersion $version --packDir $publishDir --mainExe $MainExe --outputDir $OutputDir
+    & $vpkPath pack --packId $PackId --packVersion $version --packDir $publishDir --mainExe $MainExe --outputDir $OutputDir --icon (Join-Path $repoRoot "app.ico")
     if ($LASTEXITCODE -ne 0) { throw "vpk pack 失败（退出码 $LASTEXITCODE）" }
 
     Write-Host ""
