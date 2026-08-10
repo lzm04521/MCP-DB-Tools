@@ -45,6 +45,8 @@ static async Task RunAsync(string[] args, int adminPort)
     builder.Services.AddSingleton(new RunningState { Port = adminPort });
     // 运维清理后台服务：依赖 AdminConfigService（D2 决策：方案 a）
     builder.Services.AddHostedService<MaintenanceHostedService>();
+    // 应用更新自动检查后台服务：启动后 5 分钟检查一次，当天不再重复（UpdateChecker 持久化去重）
+    builder.Services.AddHostedService<UpdateCheckHostedService>();
     // host shutdown 时给 AuditLogger.DisposeAsync 排空审计队列留足时间（其内部上限 5s）
     builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(15));
     builder.Services.ConfigureHttpJsonOptions(options =>
@@ -182,15 +184,19 @@ static async Task RunAsync(string[] args, int adminPort)
 
     // ============ 应用更新（Velopack）============
 
-    // 更新状态：currentVersion（当前版本）+ 检查结果。页面加载时调用，反映是否已安装/有新版
-    api.MapGet("/update/status", async (UpdateChecker uc) =>
+    // 更新状态：currentVersion（当前版本）+ 最近一次检查的缓存结果。只读，不触发网络检查。
+    // 自动检查由 UpdateCheckHostedService 每天 1 次驱动；手动检查走 POST /update/check。
+    // 未检查过时返回 Checked=false，UI 提示"尚未自动检查更新"。
+    api.MapGet("/update/status", (UpdateChecker uc) =>
     {
-        UpdateStatus s = await uc.CheckAsync();
+        UpdateStatus s = uc.GetCachedStatus()
+            ?? new UpdateStatus { Configured = uc.IsConfigured, Installed = uc.IsInstalled };
         return Results.Ok(new
         {
             currentVersion = AppVersion.Current,
             s.Configured,
             s.Installed,
+            s.Checked,
             s.HasUpdate,
             s.TargetVersion,
             s.Downloaded,

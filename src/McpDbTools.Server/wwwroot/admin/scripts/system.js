@@ -51,7 +51,7 @@
           <div class="card-title"><div><h2>Claude Code MCP 注册<span class="eyebrow">MCP</span></h2></div></div>
           <p class="muted">将本服务注册到 Claude Code CLI（<code>claude mcp add</code>），MCP 客户端即可连接。</p>
           <div class="settings-row">
-            <label class="retention-field">
+            <label class="retention-field mcp-scope-field">
               <span>作用域</span>
               <select id="sysMcpScope">
                 <option value="user">user（当前用户，推荐）</option>
@@ -205,6 +205,8 @@
       hint = '未配置更新源（UpdateSource）。需运维设置后才能检查更新。';
     } else if (!u.installed) {
       hint = '当前为开发模式运行（非 Velopack 安装包），无法检查更新。安装正式版后可用。';
+    } else if (!u.checked) {
+      hint = '尚未自动检查更新，点"检查更新"。';
     } else if (u.error) {
       hint = `检查失败：${u.error}`;
     } else if (u.downloaded) {

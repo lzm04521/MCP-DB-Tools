@@ -812,6 +812,11 @@ input[readonly] {
   width: 100%;
 }
 
+/* MCP 作用域下拉框：选项文案较长（如"user（当前用户，推荐）"），放宽列宽避免截断 */
+.mcp-scope-field {
+  grid-template-columns: auto minmax(180px, 240px);
+}
+
 /* 手动清理行：标签 + 天数下拉 + 按钮 紧凑同行 */
 .manual-cleanup {
   display: flex;
