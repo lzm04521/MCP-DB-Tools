@@ -1,0 +1,76 @@
+using McpDbTools.Server.Admin;
+using McpDbTools.Server.Configuration;
+using McpDbTools.Server.Database;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace McpDbTools.Tests;
+
+// 验证保存配置遇到写权限/IO 阻塞时：不假成功、返回明确中文提示（供 Admin UI 展示）。
+public class ConfigSavePermissionTests : IDisposable
+{
+    private readonly string _tempDir;
+
+    public ConfigSavePermissionTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), "mcpdbsaveperm-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_tempDir, recursive: true); } catch { }
+    }
+
+    [Fact]
+    public async Task SaveConfigAsync_WhenWriteBlocked_ReturnsExplicitError()
+    {
+        // 用只读 config.json 制造写入阻塞：File.Replace 对只读目标失败（UnauthorizedAccessException / IOException）
+        string configPath = Path.Combine(_tempDir, "config.json");
+        File.WriteAllText(configPath, "{\"databases\":{}}");
+        File.SetAttributes(configPath, FileAttributes.ReadOnly);
+        try
+        {
+            var (_, service) = BuildService(configPath);
+
+            var request = new AdminConfigRequest { Projects = new List<AdminProjectDto>() };
+            AdminSaveResult result = await service.SaveConfigAsync(request, CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.NotEmpty(result.Errors);
+            Assert.StartsWith("保存失败", result.Errors[0]);
+        }
+        finally
+        {
+            File.SetAttributes(configPath, FileAttributes.Normal);
+        }
+    }
+
+    [Theory]
+    [InlineData(typeof(UnauthorizedAccessException), "没有写权限")]
+    [InlineData(typeof(IOException), "I/O 错误")]
+    public void TryConfigWriteErrorMessage_MapsKnownExceptions(Type exType, string expectedFragment)
+    {
+        var ex = (Exception)Activator.CreateInstance(exType)!;
+        string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex);
+
+        Assert.NotNull(msg);
+        Assert.Contains(expectedFragment, msg);
+    }
+
+    [Fact]
+    public void TryConfigWriteErrorMessage_UnmappedException_ReturnsNull()
+    {
+        // 非权限/IO 异常不处理，继续上冒（由上层框架兜底）
+        Assert.Null(AdminConfigService.TryConfigWriteErrorMessage(new InvalidOperationException()));
+    }
+
+    private static (ConfigStore store, AdminConfigService service) BuildService(string configPath)
+    {
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
+        var service = new AdminConfigService(store, new DatabaseProviderFactory(), options);
+        return (store, service);
+    }
+}

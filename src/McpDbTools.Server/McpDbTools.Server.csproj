@@ -59,4 +59,9 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <!-- 测试项目访问 internal（DataDirectoryResolver.ApplyUsersModify / EnsureSharedWritable 等） -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="McpDbTools.Tests" />
+  </ItemGroup>
+
 </Project>

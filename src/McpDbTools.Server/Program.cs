@@ -123,6 +123,12 @@ static async Task RunAsync(string[] args, int adminPort)
         {
             return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
         }
+        catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
+        {
+            // 配置落盘权限/IO 阻塞：明确中文提示，不静默 500
+            string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex);
+            return Results.Json(new { error = msg ?? ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
     });
 
     // ============ 系统设置：端口 / 自启动 / 重启 / MCP 注册 ============
@@ -145,6 +151,12 @@ static async Task RunAsync(string[] args, int adminPort)
         catch (ArgumentException ex)
         {
             return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
+        {
+            // 配置落盘权限/IO 阻塞：明确中文提示，不静默 500
+            string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex);
+            return Results.Json(new { error = msg ?? ex.Message }, statusCode: StatusCodes.Status400BadRequest);
         }
     });
 
