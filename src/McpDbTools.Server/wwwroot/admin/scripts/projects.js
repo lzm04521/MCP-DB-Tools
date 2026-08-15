@@ -70,13 +70,22 @@
                 <div>
                   <h2>项目配置<span class="eyebrow">Project</span></h2>
                 </div>
-                <button
-                  id="deleteProjectBtn"
-                  type="button"
-                  class="button danger subtle"
-                >
-                  删除项目
-                </button>
+                <div class="card-title-actions">
+                  <button
+                    id="copyProjectBtn"
+                    type="button"
+                    class="button secondary"
+                  >
+                    复制新增
+                  </button>
+                  <button
+                    id="deleteProjectBtn"
+                    type="button"
+                    class="button danger subtle"
+                  >
+                    删除项目
+                  </button>
+                </div>
               </div>
               <div class="field-row">
                 <label>
@@ -303,7 +312,7 @@
   function collectElements(root) {
     const ids = [
       'projectList', 'emptyState', 'editor', 'projectName', 'projectNameHelp', 'projectDisplayName',
-      'defaultEnvironment', 'deleteProjectBtn', 'addEnvironmentBtn',
+      'defaultEnvironment', 'copyProjectBtn', 'deleteProjectBtn', 'addEnvironmentBtn',
       'environmentTabs', 'environmentEditor', 'deleteEnvironmentBtn',
       'testConnectionBtn', 'testConnectionResult',
       'productionWarning', 'allowWriteWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
@@ -534,6 +543,31 @@
     render();
   }
 
+  /** 复制新增：深拷贝当前项目为未保存的新项目（key 默认 原key-copy），保存后才写入 config.json。 */
+  function copyProject() {
+    const project = activeProject();
+    if (!project) {
+      return;
+    }
+    syncFormToState();
+    const clone = JSON.parse(JSON.stringify(project));
+    // key 默认 原key-copy（重复时 -copy-2 递增）；originalName 清空 = 全新身份，key 可编辑
+    const base = project.name ? `${project.name}-copy` : 'new-project';
+    clone.name = window.adminUi.uniqueName(base, state.config.projects.map(p => p.name));
+    clone.originalName = null;
+    clone.environments.forEach(env => {
+      env.originalName = null;
+    });
+    state.config.projects.push(clone);
+    state.selectedProject = state.config.projects.length - 1;
+    state.selectedEnvironment = 0;
+    render();
+    // 复制后用户最常做的就是改 key：聚焦并全选
+    el.projectName.focus();
+    el.projectName.select();
+    window.adminUi.showToast(`已复制为 ${clone.name}，保存后写入 config.json`);
+  }
+
   function createEnvironment(name) {
     // key 命中预设（Test/Prod/Dev）时在数据层预填显示名与生产标识，等价于用户
     // 手动选中该 key 时的联动；程序化设置输入框 value 不触发 input 事件，不能依赖
@@ -689,6 +723,7 @@
 
     el.addProjectBtn.addEventListener('click', addProject);
     el.addEnvironmentBtn.addEventListener('click', addEnvironment);
+    el.copyProjectBtn.addEventListener('click', copyProject);
     el.deleteProjectBtn.addEventListener('click', deleteProject);
     el.deleteEnvironmentBtn.addEventListener('click', deleteEnvironment);
     el.testConnectionBtn.addEventListener('click', testConnection);
