@@ -421,6 +421,17 @@
       option.textContent = name ? `${env.name}(${name})` : env.name;
       el.defaultEnvironment.appendChild(option);
     });
+    // 环境 key 改名后 state 里的 defaultEnvironment 仍指旧名（改名输入不触发 render）。
+    // 与后端保存逻辑同语义（AdminConfigService 按 originalName 单跳重映射）：无匹配 option 时
+    // 按旧名定位改名环境回填新名，避免 select 空白、再被 syncFormToState 静默洗成 null。
+    const defaultEnvName = project.defaultEnvironment;
+    if (defaultEnvName && !project.environments.some(env => env.name === defaultEnvName)) {
+      const renamed = project.environments.find(
+        env => env.originalName && env.originalName.trim() === defaultEnvName);
+      if (renamed) {
+        project.defaultEnvironment = renamed.name;
+      }
+    }
     el.defaultEnvironment.value = project.defaultEnvironment || '';
   }
 
