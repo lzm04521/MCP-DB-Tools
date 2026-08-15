@@ -452,17 +452,17 @@ public class AdminConfigServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveConfig_EnvironmentKeyChange_Rejected()
+    public async Task SaveConfig_EnvironmentKeyRename_RemapsDefaultEnvironment()
     {
-        // 环境键同样不可修改
-        var (store, service, _) = Create("""
+        // 环境 key 改名：defaultEnvironment 引用旧名时自动跟随为新名；空连接串按旧身份回填
+        var (store, service, configPath) = Create("""
         {
-          "audit": { "enabled": false, "logPath": "logs/audit.log", "maxFileSizeMB": 10, "maxRetentionDays": 30 },
           "databases": {
             "erp": {
               "defaultEnvironment": "prod",
               "environments": {
-                "prod": { "type": "sqlserver", "connectionString": "Server=.;", "maxRows": 100, "commandTimeout": 30 }
+                "prod": { "type": "sqlserver", "connectionString": "Server=old;", "maxRows": 100, "commandTimeout": 30 },
+                "test": { "type": "sqlserver", "connectionString": "Server=t;", "maxRows": 100, "commandTimeout": 30 }
               }
             }
           }
@@ -484,10 +484,151 @@ public class AdminConfigServiceTests : IDisposable
                         {
                             new()
                             {
-                                Name = "prod-renamed",
+                                Name = "UAT",
                                 OriginalName = "prod",
                                 Type = "sqlserver",
-                                ConnectionString = "Server=.;",
+                                ConnectionString = null,
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            },
+                            new()
+                            {
+                                Name = "test",
+                                OriginalName = "test",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=t;",
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success, string.Join("; ", result.Errors));
+        }
+
+        string saved = File.ReadAllText(configPath);
+        using JsonDocument doc = JsonDocument.Parse(saved);
+        JsonElement project = doc.RootElement.GetProperty("databases").GetProperty("erp");
+        JsonElement envs = project.GetProperty("environments");
+        Assert.False(envs.TryGetProperty("prod", out _));
+        Assert.Equal("Server=old;", envs.GetProperty("UAT").GetProperty("connectionString").GetString());
+        Assert.Equal("UAT", project.GetProperty("defaultEnvironment").GetString());
+    }
+
+    [Fact]
+    public async Task SaveConfig_EnvironmentNamesSwapped_DefaultEnvironmentFollowsIdentity()
+    {
+        // Test↔Prod 互换：默认环境按旧身份跟随（原 Test 环境现名 prod），连接串互不掉包
+        var (store, service, configPath) = Create("""
+        {
+          "databases": {
+            "erp": {
+              "defaultEnvironment": "test",
+              "environments": {
+                "test": { "type": "sqlserver", "connectionString": "Server=t;", "maxRows": 100, "commandTimeout": 30 },
+                "prod": { "type": "sqlserver", "connectionString": "Server=p;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            }
+          }
+        }
+        """);
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        OriginalName = "erp",
+                        DefaultEnvironment = "test",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod",
+                                OriginalName = "test",
+                                Type = "sqlserver",
+                                ConnectionString = null,
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            },
+                            new()
+                            {
+                                Name = "test",
+                                OriginalName = "prod",
+                                Type = "sqlserver",
+                                ConnectionString = null,
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success, string.Join("; ", result.Errors));
+        }
+
+        string saved = File.ReadAllText(configPath);
+        using JsonDocument doc = JsonDocument.Parse(saved);
+        JsonElement project = doc.RootElement.GetProperty("databases").GetProperty("erp");
+        JsonElement envs = project.GetProperty("environments");
+        Assert.Equal("prod", project.GetProperty("defaultEnvironment").GetString());
+        Assert.Equal("Server=t;", envs.GetProperty("prod").GetProperty("connectionString").GetString());
+        Assert.Equal("Server=p;", envs.GetProperty("test").GetProperty("connectionString").GetString());
+    }
+
+    [Fact]
+    public async Task SaveConfig_EnvironmentKeyRename_CollisionWithSibling_Rejected()
+    {
+        // prod 改名为 test，同时 test 原样保留 → 请求内两个 test，环境级查重拒绝
+        var (store, service, _) = Create("""
+        {
+          "databases": {
+            "erp": {
+              "defaultEnvironment": "prod",
+              "environments": {
+                "prod": { "type": "sqlserver", "connectionString": "Server=p;", "maxRows": 100, "commandTimeout": 30 },
+                "test": { "type": "sqlserver", "connectionString": "Server=t;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            }
+          }
+        }
+        """);
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        OriginalName = "erp",
+                        DefaultEnvironment = "test",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "test",
+                                OriginalName = "prod",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=p;",
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            },
+                            new()
+                            {
+                                Name = "test",
+                                OriginalName = "test",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=t;",
                                 MaxRows = 100,
                                 CommandTimeout = 30
                             }
@@ -497,7 +638,7 @@ public class AdminConfigServiceTests : IDisposable
             }, CancellationToken.None);
 
             Assert.False(result.Success);
-            Assert.Contains(result.Errors, e => e.Contains("环境 key") && e.Contains("不可修改"));
+            Assert.Contains(result.Errors, e => e.Contains("环境 key 重复") && e.Contains("test"));
         }
     }
 

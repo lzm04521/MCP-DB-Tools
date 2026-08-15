@@ -195,13 +195,8 @@ public sealed class AdminConfigService
                     continue;
                 }
 
+                // originalName = 改名前旧身份定位器（空连接串回填依赖），改名不再报错
                 DatabaseConfig? currentEnv = FindCurrentEnvironment(currentProject, env);
-                // 环境 key 创建后不可修改：同项目 key 规则
-                string? originalEnvName = NullIfWhiteSpace(env.OriginalName);
-                if (currentProject is not null && originalEnvName is not null && !string.Equals(originalEnvName, envName, StringComparison.Ordinal))
-                {
-                    errors.Add($"环境 key 创建后不可修改：项目 {projectName} 下原 “{originalEnvName}” 不能改为 “{envName}”。");
-                }
                 string connectionString = env.ConnectionString?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(connectionString) && currentEnv is not null)
                 {
@@ -246,6 +241,18 @@ public sealed class AdminConfigService
             }
 
             string? defaultEnvironment = NullIfWhiteSpace(project.DefaultEnvironment);
+            // 环境改名跟随：defaultEnvironment 命中某环境的旧名（originalName）时重映射为新名。
+            // 按旧身份定位（Ordinal）：Test↔Prod 互换时默认环境跟随原环境，而非字面同名。
+            if (defaultEnvironment is not null)
+            {
+                var renamed = project.Environments.FirstOrDefault(e =>
+                    !string.IsNullOrWhiteSpace(e.OriginalName) &&
+                    string.Equals(e.OriginalName.Trim(), defaultEnvironment, StringComparison.Ordinal));
+                if (renamed is not null)
+                {
+                    defaultEnvironment = renamed.Name.Trim();
+                }
+            }
             if (defaultEnvironment is not null && !environments.ContainsKey(defaultEnvironment))
             {
                 errors.Add($"项目 {projectName} 的默认环境不存在: {defaultEnvironment}");
