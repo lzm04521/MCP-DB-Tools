@@ -96,7 +96,7 @@
                     required
                     autocomplete="off"
                   />
-                  <small id="projectNameHelp">MCP 调用参数 project，创建后不可修改。</small>
+                  <small id="projectNameHelp">MCP 调用参数 project，修改后 MCP 调用需使用新 key。</small>
                 </label>
                 <label>
                   <span>显示名</span>
@@ -218,7 +218,7 @@
                   />
                 </label>
               </div>
-              <small id="environmentNameHelp" class="env-key-help">创建后不可修改。可下拉选 Test/Prod，或直接输入自定义值。</small>
+              <small id="environmentNameHelp" class="env-key-help">可改名。可下拉选 Test/Prod，或直接输入自定义值。</small>
 
               <!-- 连接参数：3 列紧凑（6 字段正好 2 行） -->
               <div class="grid three env-params">
@@ -406,13 +406,8 @@
   function bindProject() {
     const project = activeProject();
     el.projectName.value = project.name || '';
-    // 项目 key 创建后不可编辑：仅新建（originalName 为 null）时允许输入
-    const projectLocked = Boolean(project.originalName);
-    el.projectName.readOnly = projectLocked;
-    el.projectName.classList.toggle('readonly-field', projectLocked);
-    el.projectNameHelp.textContent = projectLocked
-      ? '创建后不可修改（已持久化）。'
-      : 'MCP 调用参数 project，创建后不可修改。';
+    // 项目 key 可改名：后端按 originalName 定位旧身份，改名保存后 MCP 调用需使用新 key
+    el.projectNameHelp.textContent = 'MCP 调用参数 project，修改后 MCP 调用需使用新 key。';
 
     el.projectDisplayName.value = project.displayName || '';
     // 切换项目时重置跟随标记：显示名为空→跟随 key；已有值→视为用户已定，不跟随
@@ -462,16 +457,9 @@
     }
 
     el.environmentName.value = env.name || '';
-    // 环境 key 创建后不可编辑：仅新建时允许输入
-    const envLocked = Boolean(env.originalName);
-    el.environmentName.readOnly = envLocked;
-    el.environmentName.classList.toggle('readonly-field', envLocked);
-    // 已保存环境 readonly：隐藏 ▾ 下拉按钮与浮层，避免误操作
-    el.environmentKeyToggle.classList.toggle('hidden', envLocked);
+    // 环境 key 可改名：已保存环境也显示 ▾ 建议下拉（仅建议，预设联动见 setupEnvKeyPreset 的 gate）
     el.environmentKeyList.classList.add('hidden');
-    el.environmentNameHelp.textContent = envLocked
-      ? '创建后不可修改（已持久化）。'
-      : '创建后不可修改。';
+    el.environmentNameHelp.textContent = '可改名：下拉选 Test/Prod 或自定义；修改后 MCP 调用 environment 需使用新值。';
 
     el.environmentDisplayName.value = env.displayName || '';
     // 切换环境时重置跟随标记：显示名为空→跟随 key；等于当前 key 的预设显示名
@@ -649,10 +637,16 @@
           projects: state.config.projects
         })
       });
+      // key 变更提示：响应会重置 originalName = 新 key，须在替换前基于旧 state 判断
+      const keyRenamed = state.config.projects.some(p =>
+        p.originalName && p.originalName !== p.name) ||
+        state.config.projects.some(p =>
+          p.environments.some(e => e.originalName && e.originalName !== e.name));
       state.config = result.config;
       render();
       markClean();
-      window.adminUi.showToast(`保存成功，备份：${result.backupName}`);
+      window.adminUi.showToast(
+        `保存成功，备份：${result.backupName}${keyRenamed ? '；注意：key 已变更，MCP 调用需使用新 key' : ''}`);
       return true;
     } catch (error) {
       window.adminUi.showToast(error.message, true);
@@ -814,6 +808,10 @@
    */
   function setupEnvKeyPreset() {
     el.environmentName.addEventListener('input', () => {
+      // 预设联动仅对新建环境生效：已保存环境改 key 是重命名，不自动翻转 isProduction/覆盖 displayName
+      if (activeEnvironment()?.originalName) {
+        return;
+      }
       const preset = ENV_KEY_PRESETS[el.environmentName.value];
       if (!preset) {
         return;
