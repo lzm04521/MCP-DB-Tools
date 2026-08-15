@@ -132,26 +132,33 @@
   min-height: 44px;
 }
 
-/* 连接配置头部：环境 key + 显示名 + 开关 横排（窄屏堆叠）。
-   环境 key combobox 限宽，显示名弹性填充，开关组按内容宽。
-   替代原 .switch-pair 独立块——开关移到环境 key 右侧同行。 */
+/* 连接配置头部：与下方 env-params（.grid.three）同列模板/gap，列线对齐。
+   第 1 列 = conn-header-primary（环境 key combobox + 开关组横排），
+   显示名横跨第 2、3 列。替代原 .switch-pair 独立块——开关在环境 key 右侧同行。 */
 .conn-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: start;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 18px;
 }
 
-.conn-header > .field,
-.conn-header > label {
-  flex: 1 1 200px;
+/* 第 1 列包裹层：环境 key combobox 弹性拉长，开关组按内容宽 */
+.conn-header-primary {
+  display: flex;
+  gap: 16px;
+  align-items: start;
   min-width: 0;
 }
 
-/* 环境 key combobox 限宽，给右侧开关留位 */
-.conn-header .envkey-combobox--narrow {
-  flex: 0 1 220px;
+.conn-header-primary > .field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 显示名横跨第 2、3 列，与下方 env-params 对应列对齐 */
+.conn-header > label {
+  grid-column: 2 / -1;
+  min-width: 0;
 }
 
 /* 开关组：用 grid + 标题占位对齐左右 field 的「span + 控件」两行结构，
@@ -211,8 +218,14 @@
   }
 
   .grid.two,
-  .grid.three {
+  .grid.three,
+  .conn-header {
     grid-template-columns: 1fr;
+  }
+
+  /* 单列下取消显示名跨列，避免显式列线落到隐式网格 */
+  .conn-header > label {
+    grid-column: auto;
   }
 
   /* 审计筛选栏：窄屏下每个字段占满整行，避免挤压 */
@@ -225,16 +238,9 @@
   }
 }
 
-/* 连接配置头部：窄屏纵向堆叠（环境 key / 显示名 / 开关 各占整行） */
+/* 连接配置头部：窄屏第 1 列内纵向堆叠（环境 key 与开关各占整行） */
 @media (max-width: 700px) {
-  .conn-header {
+  .conn-header-primary {
     flex-direction: column;
-    align-items: stretch;
-  }
-
-  .conn-header > .field,
-  .conn-header > label,
-  .conn-header .envkey-combobox--narrow {
-    flex: 1 1 auto;
   }
 }

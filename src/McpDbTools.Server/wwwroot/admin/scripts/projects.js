@@ -152,49 +152,52 @@
                 请在修改连接字符串或执行写操作前，仔细核对目标环境与数据库。
               </div>
 
-              <!-- 连接配置头部：环境 key + 显示名 + 开关 横排（窄屏堆叠）。
-                   环境 key combobox 限宽，两个开关紧跟其后；显示名弹性填充中间。
-                   switch-group 用 grid +「选项」标题占位，与左右 field/label 的
-                   「span 标题 + 控件」两行结构对齐，使 checkbox 与 input 同一水平线。 -->
+              <!-- 连接配置头部：与下方 env-params 三列网格同列模板对齐。
+                   第 1 列 = conn-header-primary（环境 key combobox + 两个开关横排）；
+                   显示名 label 横跨第 2、3 列。switch-group 用 grid +「选项」标题占位，
+                   与左右 field/label 的「span 标题 + 控件」两行结构对齐，使 checkbox 与 input 同一水平线。 -->
               <div class="conn-header">
-                <!-- 环境 key：自定义 combobox（input + 下拉按钮 + 浮层）。
-                     原生 datalist 在 Chrome/Edge 单击不展开且 showPicker() 无效，故自实现。
-                     仅新建态可编辑时显示下拉；已保存环境 readonly 时只保留 input。
-                     外层不用 <label>，避免点击下拉项时 label 把 click 转发给 input 触发重开。 -->
-                <div class="field envkey-combobox envkey-combobox--narrow">
-                  <span>环境 key *</span>
-                  <div class="combobox-wrap">
-                    <input
-                      id="environmentName"
-                      type="text"
-                      required
-                      autocomplete="off"
-                      placeholder="Test / Prod / 自定义"
-                      aria-autocomplete="list"
-                      aria-expanded="false"
-                      aria-controls="environmentKeyList"
-                    />
-                    <button
-                      id="environmentKeyToggle"
-                      type="button"
-                      class="combobox-toggle"
-                      tabindex="-1"
-                      aria-label="展开环境 key 建议"
-                    >▾</button>
-                    <ul id="environmentKeyList" class="combobox-list hidden" role="listbox"></ul>
+                <!-- 第 1 列包裹层：combobox 弹性拉长，开关组按内容宽 -->
+                <div class="conn-header-primary">
+                  <!-- 环境 key：自定义 combobox（input + 下拉按钮 + 浮层）。
+                       原生 datalist 在 Chrome/Edge 单击不展开且 showPicker() 无效，故自实现。
+                       仅新建态可编辑时显示下拉；已保存环境 readonly 时只保留 input。
+                       外层不用 <label>，避免点击下拉项时 label 把 click 转发给 input 触发重开。 -->
+                  <div class="field envkey-combobox">
+                    <span>环境 key *</span>
+                    <div class="combobox-wrap">
+                      <input
+                        id="environmentName"
+                        type="text"
+                        required
+                        autocomplete="off"
+                        placeholder="Test / Prod / 自定义"
+                        aria-autocomplete="list"
+                        aria-expanded="false"
+                        aria-controls="environmentKeyList"
+                      />
+                      <button
+                        id="environmentKeyToggle"
+                        type="button"
+                        class="combobox-toggle"
+                        tabindex="-1"
+                        aria-label="展开环境 key 建议"
+                      >▾</button>
+                      <ul id="environmentKeyList" class="combobox-list hidden" role="listbox"></ul>
+                    </div>
                   </div>
-                </div>
-                <div class="switch-group">
-                  <span>选项</span>
-                  <div class="switch-inline">
-                    <label class="switch-row">
-                      <input id="isProduction" type="checkbox" />
-                      <span>生产环境</span>
-                    </label>
-                    <label class="switch-row">
-                      <input id="allowWrite" type="checkbox" />
-                      <span>支持 DB 写</span>
-                    </label>
+                  <div class="switch-group">
+                    <span>选项</span>
+                    <div class="switch-inline">
+                      <label class="switch-row">
+                        <input id="isProduction" type="checkbox" />
+                        <span>生产环境</span>
+                      </label>
+                      <label class="switch-row">
+                        <input id="allowWrite" type="checkbox" />
+                        <span>支持 DB 写</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
                 <label>
@@ -462,8 +465,11 @@
       : '创建后不可修改。';
 
     el.environmentDisplayName.value = env.displayName || '';
-    // 切换环境时重置跟随标记：显示名为空→跟随 key；已有值→视为用户已定，不跟随
-    el.environmentDisplayName.dataset.autoSynced = env.displayName ? '0' : '1';
+    // 切换环境时重置跟随标记：显示名为空→跟随 key；等于当前 key 的预设显示名
+    // （createEnvironment 数据层预填）→仍视为跟随中，可随预设切换联动；其余→用户已定，不跟随
+    const envPresetName = ENV_KEY_PRESETS[env.name]?.displayName;
+    el.environmentDisplayName.dataset.autoSynced =
+      !env.displayName || env.displayName === envPresetName ? '1' : '0';
     el.databaseType.value = env.type || 'sqlserver';
     el.isProduction.checked = Boolean(env.isProduction);
     el.allowWrite.checked = Boolean(env.allowWrite);
@@ -529,11 +535,15 @@
   }
 
   function createEnvironment(name) {
+    // key 命中预设（Test/Prod/Dev）时在数据层预填显示名与生产标识，等价于用户
+    // 手动选中该 key 时的联动；程序化设置输入框 value 不触发 input 事件，不能依赖
+    // setupEnvKeyPreset 自动生效。新建环境与新增项目的默认环境共用此逻辑。
+    const preset = ENV_KEY_PRESETS[name];
     return {
       name,
       originalName: null,
-      displayName: null,
-      isProduction: false,
+      displayName: preset?.displayName ?? null,
+      isProduction: preset?.isProduction ?? false,
       allowWrite: false,
       type: 'sqlserver',
       connectionString: '',
@@ -551,14 +561,8 @@
     syncFormToState();
     const project = activeProject();
     // 默认填 Test，即便当前项目已存在 Test 也允许临时重名，重复检测推迟到保存时由后端卡控。
+    // Test 预设（显示名+生产标识）由 createEnvironment 在数据层统一应用。
     const env = createEnvironment('Test');
-    // 直接在数据层应用 Test 预设（显示名+生产标识），等价于用户手动选中 Test 时的联动；
-    // 程序化设置输入框 value 不会触发 input 事件，所以不能依赖 setupEnvKeyPreset 自动生效。
-    const preset = ENV_KEY_PRESETS['Test'];
-    if (preset) {
-      env.displayName = preset.displayName;
-      env.isProduction = preset.isProduction;
-    }
     project.environments.push(env);
     state.selectedEnvironment = project.environments.length - 1;
     render();
