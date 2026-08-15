@@ -323,17 +323,16 @@ public class AdminConfigServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveConfig_ProjectKeyChange_Rejected()
+    public async Task SaveConfig_ProjectKeyRename_Succeeds()
     {
-        // 需求 1：项目 key 创建后不可修改。携带 originalName 但 name 与之不同应报错。
-        var (store, service, _) = Create("""
+        // 项目 key 改名：携带 originalName 且 name 不同 = 重命名；空连接串按旧身份回填
+        var (store, service, configPath) = Create("""
         {
-          "audit": { "enabled": false, "logPath": "logs/audit.log", "maxFileSizeMB": 10, "maxRetentionDays": 30 },
           "databases": {
             "erp": {
               "defaultEnvironment": "prod",
               "environments": {
-                "prod": { "type": "sqlserver", "connectionString": "Server=.;", "maxRows": 100, "commandTimeout": 30 }
+                "prod": { "type": "sqlserver", "connectionString": "Server=old;", "maxRows": 100, "commandTimeout": 30 }
               }
             }
           }
@@ -348,7 +347,69 @@ public class AdminConfigServiceTests : IDisposable
                 {
                     new()
                     {
-                        Name = "erp-renamed",
+                        Name = "erp2",
+                        OriginalName = "erp",
+                        DefaultEnvironment = "prod",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod",
+                                OriginalName = "prod",
+                                Type = "sqlserver",
+                                ConnectionString = null,
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success, string.Join("; ", result.Errors));
+        }
+
+        string saved = File.ReadAllText(configPath);
+        using JsonDocument doc = JsonDocument.Parse(saved);
+        JsonElement databases = doc.RootElement.GetProperty("databases");
+        Assert.False(databases.TryGetProperty("erp", out _));
+        Assert.Equal(
+            "Server=old;",
+            databases.GetProperty("erp2").GetProperty("environments").GetProperty("prod").GetProperty("connectionString").GetString());
+    }
+
+    [Fact]
+    public async Task SaveConfig_ProjectKeyRename_CollisionWithExisting_Rejected()
+    {
+        // erp 改名为 crm，同时 crm 原样保留 → 请求内两个 crm，被既有查重拒绝
+        var (store, service, _) = Create("""
+        {
+          "databases": {
+            "erp": {
+              "defaultEnvironment": "prod",
+              "environments": {
+                "prod": { "type": "sqlserver", "connectionString": "Server=.;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            },
+            "crm": {
+              "defaultEnvironment": "prod",
+              "environments": {
+                "prod": { "type": "sqlserver", "connectionString": "Server=c;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            }
+          }
+        }
+        """);
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "crm",
                         OriginalName = "erp",
                         DefaultEnvironment = "prod",
                         Environments = new List<AdminEnvironmentDto>
@@ -363,12 +424,30 @@ public class AdminConfigServiceTests : IDisposable
                                 CommandTimeout = 30
                             }
                         }
+                    },
+                    new()
+                    {
+                        Name = "crm",
+                        OriginalName = "crm",
+                        DefaultEnvironment = "prod",
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new()
+                            {
+                                Name = "prod",
+                                OriginalName = "prod",
+                                Type = "sqlserver",
+                                ConnectionString = "Server=c;",
+                                MaxRows = 100,
+                                CommandTimeout = 30
+                            }
+                        }
                     }
                 }
             }, CancellationToken.None);
 
             Assert.False(result.Success);
-            Assert.Contains(result.Errors, e => e.Contains("项目 key") && e.Contains("不可修改"));
+            Assert.Contains(result.Errors, e => e.Contains("项目 key 重复") && e.Contains("crm"));
         }
     }
 

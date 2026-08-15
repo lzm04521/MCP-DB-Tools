@@ -167,13 +167,8 @@ public sealed class AdminConfigService
                 continue;
             }
 
+            // originalName = 改名前旧身份定位器（FindCurrentProject 先按它查找，空连接串回填依赖）
             ProjectConfig? currentProject = FindCurrentProject(current, project);
-            // 项目 key 创建后不可修改：携带 originalName（表示已存在的项目）时，name 必须与之相同
-            string? originalProjectName = NullIfWhiteSpace(project.OriginalName);
-            if (originalProjectName is not null && !string.Equals(originalProjectName, projectName, StringComparison.Ordinal))
-            {
-                errors.Add($"项目 key 创建后不可修改：原 “{originalProjectName}” 不能改为 “{projectName}”。");
-            }
 
             var environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase);
             foreach (AdminEnvironmentDto env in project.Environments)
