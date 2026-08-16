@@ -45,7 +45,7 @@ static async Task RunAsync(string[] args, int adminPort)
     builder.Services.AddSingleton(new RunningState { Port = adminPort });
     // 运维清理后台服务：依赖 AdminConfigService（D2 决策：方案 a）
     builder.Services.AddHostedService<MaintenanceHostedService>();
-    // 应用更新自动检查后台服务：启动后 5 分钟检查一次，当天不再重复（UpdateChecker 持久化去重）
+    // 应用更新自动检查后台服务：启动 1 分钟首查，常规每小时检查，失败 15 分钟后重试（UpdateChecker 持久化 30 分钟节流）
     builder.Services.AddHostedService<UpdateCheckHostedService>();
     // host shutdown 时给 AuditLogger.DisposeAsync 排空审计队列留足时间（其内部上限 5s）
     builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(15));

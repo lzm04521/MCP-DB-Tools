@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using McpDbTools.Server.Configuration;
 using Velopack;
@@ -12,10 +13,10 @@ namespace McpDbTools.Server.Admin;
 /// 未配置时 <see cref="IsConfigured"/>=false，UI 显示"未配置更新源"，不绑死 GitHub。
 /// </para>
 /// <para>
-/// 自动检查策略：每天首次启动后由 <see cref="UpdateCheckHostedService"/> 在 5 分钟后触发一次
-/// <see cref="AutoCheckOnceAsync"/>；当天（自然日）一旦成功检查过，写入数据目录
-/// <c>update-check.state.json</c>，后续启动直接跳过。手动「检查更新」按钮走 <see cref="CheckAsync"/>，
-/// 不受当天去重限制。
+/// 自动检查策略：由 <see cref="UpdateCheckHostedService"/> 周期驱动（启动 1 分钟首查，常规每小时一次，
+/// 失败 15 分钟后重试）。自动检查带节流窗：距上次成功检查不足 <see cref="MinAutoInterval"/> 时跳过
+/// （防反复重启进程叠加请求），上次成功检查时间持久化到数据目录 <c>update-check.state.json</c>。
+/// 手动「检查更新」按钮走 <see cref="CheckAsync"/>，不受节流限制；手动检查成功同样刷新时间戳。
 /// </para>
 /// <para>
 /// 重要约束：<see cref="UpdateManager"/> 仅在"已安装"的应用（Velopack <c>Setup.exe</c> 安装）中工作；
@@ -29,8 +30,10 @@ public sealed class UpdateChecker
     private UpdateInfo? _lastInfo;
     // 进程内缓存的上次检查结果：供 GET /update/status 只读返回，避免每次进页面都打网络。
     private UpdateStatus? _lastStatus;
-    // 持久化「最近一次成功检查的自然日」文件名（位于 DataDirectoryResolver 解析的数据目录）。
+    // 持久化「最近一次成功检查时间（UTC）」文件名（位于 DataDirectoryResolver 解析的数据目录）。
     private const string StateFileName = "update-check.state.json";
+    // 自动检查节流窗：距上次成功检查不足该间隔时自动检查跳过（防反复重启进程叠加请求）
+    private static readonly TimeSpan MinAutoInterval = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
     public UpdateChecker(string? githubRepoUrl)
@@ -55,23 +58,27 @@ public sealed class UpdateChecker
     public UpdateStatus? GetCachedStatus() => _lastStatus;
 
     /// <summary>
-    /// 自动检查一次（后台服务调用）：今天已成功检查过则跳过（返回 null），否则发起网络检查。
-    /// 检查成功（无 Error）后写「今天」到持久化文件。
+    /// 自动检查一次（后台服务调用）：距上次成功检查不足节流窗（<see cref="MinAutoInterval"/>）则跳过
+    /// （返回 null），否则发起网络检查。检查成功（无 Error）后写当前 UTC 时间到持久化文件。
     /// </summary>
-    /// <returns>检查结果；当天已检查过则返回 null（表示本次跳过、未发请求）。</returns>
+    /// <returns>检查结果；节流跳过时返回 null（表示本次跳过、未发请求）。</returns>
     public async Task<UpdateStatus?> AutoCheckOnceAsync()
     {
-        if (TodayAlreadyChecked())
+        if (ShouldSkipAutoCheck(DateTime.UtcNow, GetLastCheckedAtUtc(), MinAutoInterval))
         {
             return null;
         }
         return await CheckAsync();
     }
 
+    /// <summary>节流判断：距上次成功检查不足 minInterval 时跳过（未查过不跳过；时钟回拨视为窗内跳过）。纯函数便于单测。</summary>
+    internal static bool ShouldSkipAutoCheck(DateTime utcNow, DateTime? lastCheckUtc, TimeSpan minInterval)
+        => lastCheckUtc is { } last && utcNow - last < minInterval;
+
     /// <summary>
     /// 检查更新（始终发起网络请求）。手动「检查更新」按钮与后台自动检查共用。
-    /// 成功（无 Error）后：更新进程内缓存 _lastStatus，并写「今天」到持久化文件；
-    /// 出错则只更新缓存（展示错误），不写持久化，下次启动/自动检查仍会重试。
+    /// 成功（无 Error）后：更新进程内缓存 _lastStatus，并写当前 UTC 时间到持久化文件；
+    /// 出错则只更新缓存（展示错误），不写持久化，下次自动检查仍会重试。
     /// </summary>
     public async Task<UpdateStatus> CheckAsync()
     {
@@ -97,7 +104,7 @@ public sealed class UpdateChecker
                 TargetVersion = _lastInfo?.TargetFullRelease?.Version?.ToString()
             };
             _lastStatus = status;
-            MarkTodayChecked();
+            MarkCheckedAtUtc();
             return status;
         }
         catch (Exception ex)
@@ -147,36 +154,40 @@ public sealed class UpdateChecker
         _mgr.ApplyUpdatesAndRestart(_lastInfo);
     }
 
-    // ============ 当天去重持久化 ============
+    // ============ 自动检查节流持久化 ============
 
-    /// <summary>读取持久化文件，判断今天是否已成功检查过。</summary>
-    private static bool TodayAlreadyChecked()
+    /// <summary>读取持久化的上次成功检查时间（UTC）。读取/解析失败返回 null（按"未检查"处理，宁可多查一次）。</summary>
+    private static DateTime? GetLastCheckedAtUtc()
     {
         try
         {
             string path = Path.Combine(DataDirectoryResolver.EnsureExists(), StateFileName);
             if (!File.Exists(path))
             {
-                return false;
+                return null;
             }
             using var fs = File.OpenRead(path);
             var state = JsonSerializer.Deserialize<UpdateCheckState>(fs);
-            return state?.LastCheckDate == DateTime.Today.ToString("yyyy-MM-dd");
+            // 仅接受带 Z 后缀（UTC）的 round-trip 格式，其余（含旧版 LastCheckDate 语义文件）按未检查处理
+            return DateTime.TryParse(state?.LastCheckUtc, CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind, out var utc) && utc.Kind == DateTimeKind.Utc
+                ? utc
+                : null;
         }
         catch
         {
             // 读取/解析失败按"未检查"处理，触发一次检查（保守：宁可多查一次）
-            return false;
+            return null;
         }
     }
 
-    /// <summary>写「今天」到持久化文件。失败仅吞掉（不影响检查本身，最坏下次重复检查）。</summary>
-    private static void MarkTodayChecked()
+    /// <summary>写当前 UTC 时间到持久化文件。失败仅吞掉（不影响检查本身，最坏下次重复检查）。</summary>
+    private static void MarkCheckedAtUtc()
     {
         try
         {
             string path = Path.Combine(DataDirectoryResolver.EnsureExists(), StateFileName);
-            var state = new UpdateCheckState { LastCheckDate = DateTime.Today.ToString("yyyy-MM-dd") };
+            var state = new UpdateCheckState { LastCheckUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture) };
             File.WriteAllText(path, JsonSerializer.Serialize(state, JsonOpts));
         }
         catch
@@ -185,10 +196,10 @@ public sealed class UpdateChecker
         }
     }
 
-    /// <summary>持久化状态（最近一次成功检查的自然日）。</summary>
+    /// <summary>持久化状态（最近一次成功检查的 UTC 时间）。旧版本的 LastCheckDate 字段读不到，按未检查处理。</summary>
     private sealed class UpdateCheckState
     {
-        public string? LastCheckDate { get; set; }
+        public string? LastCheckUtc { get; set; }
     }
 }
 

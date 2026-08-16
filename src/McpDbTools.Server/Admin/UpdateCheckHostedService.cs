@@ -5,15 +5,17 @@ using Timer = System.Threading.Timer;
 namespace McpDbTools.Server.Admin;
 
 /// <summary>
-/// 应用更新自动检查后台服务：启动后延迟 5 分钟触发一次 <see cref="UpdateChecker.AutoCheckOnceAsync"/>，
-/// 非周期。当天（自然日）是否已检查过由 <see cref="UpdateChecker"/> 持久化去重。
+/// 应用更新自动检查后台服务：启动后 1 分钟首查，此后按结果动态重排——
+/// 检查成功（含无更新）1 小时后再查，失败 15 分钟后重试，节流跳过
+/// （距上次成功检查不足 30 分钟）30 分钟后再试；跨重启节流由 <see cref="UpdateChecker"/> 持久化判断。
 /// <para>
 /// 设计要点：
 /// <list type="bullet">
-/// <item>延迟 5 分钟首跑，避免与启动初始化、网络就绪竞争。</item>
-/// <item>非周期（period=Infinite）：每天最多由"首次启动"触发一次，当天再次启动靠持久化记录跳过。</item>
+/// <item>单跳 + 重排模式（period=Infinite，tick 完成后按结果 Change 下一跳），天然无重叠回调。</item>
+/// <item>常驻进程持续检查：不再依赖"每次启动触发一次"（旧策略在长驻进程上启动后永不复查）。</item>
+/// <item>频率安全：GitHub 未认证限额 60 req/h，每次检查 1 次 API 请求，1 小时周期仅占 1/60。</item>
 /// <item>所有输出走 <see cref="ILogger"/>（→ 文件日志），禁止 Console.Write*。</item>
-/// <item>异常一律 catch：后台服务不能挂。</item>
+/// <item>异常一律 catch：后台服务不能挂；异常路径同样重排，避免调度终止。</item>
 /// </list>
 /// </para>
 /// </summary>
@@ -24,8 +26,14 @@ public sealed class UpdateCheckHostedService : IHostedService, IDisposable
     private Timer? _timer;
     private int _disposed;
 
-    // 启动后延迟 5 分钟触发一次，避免与启动初始化、网络就绪竞争
-    private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(5);
+    // 启动后延迟 1 分钟首查，避免与启动初始化、网络就绪竞争（失败有短间隔重试兜底）
+    private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(1);
+    // 常规周期：每小时检查一次
+    private static readonly TimeSpan RegularInterval = TimeSpan.FromHours(1);
+    // 检查失败后的重试间隔（网络抖动/GitHub 限流时快速恢复）
+    private static readonly TimeSpan FailureRetryInterval = TimeSpan.FromMinutes(15);
+    // 节流跳过后的下次尝试间隔（跨 UpdateChecker 的 30 分钟节流窗后恢复常规周期）
+    private static readonly TimeSpan ThrottleRetryInterval = TimeSpan.FromMinutes(30);
 
     public UpdateCheckHostedService(UpdateChecker updateChecker, ILogger<UpdateCheckHostedService> logger)
     {
@@ -35,9 +43,9 @@ public sealed class UpdateCheckHostedService : IHostedService, IDisposable
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        // 非周期：dueTime=5 分钟，period=Infinite（只触发一次）
+        // 单跳 + 重排：dueTime=首查延迟，period=Infinite，下一跳由 OnTick 按结果决定
         _timer = new Timer(OnTick, null, InitialDelay, Timeout.InfiniteTimeSpan);
-        _logger.LogInformation("应用更新自动检查服务已启动：启动后 {Delay} 检查一次", InitialDelay);
+        _logger.LogInformation("应用更新自动检查服务已启动：{Delay} 后首查，常规周期 {Interval}", InitialDelay, RegularInterval);
         return Task.CompletedTask;
     }
 
@@ -48,7 +56,7 @@ public sealed class UpdateCheckHostedService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>Timer 回调：执行一次自动检查。异常一律 catch，后台服务不能挂。</summary>
+    /// <summary>Timer 回调：执行一次自动检查并按结果安排下一跳。异常一律 catch，后台服务不能挂。</summary>
     private async void OnTick(object? state)
     {
         try
@@ -56,7 +64,7 @@ public sealed class UpdateCheckHostedService : IHostedService, IDisposable
             UpdateStatus? status = await _updateChecker.AutoCheckOnceAsync();
             if (status is null)
             {
-                _logger.LogInformation("自动检查更新：今天已检查过，本次启动跳过");
+                _logger.LogInformation("自动检查更新：距上次成功检查不足节流窗，本次跳过");
             }
             else if (status.Error is not null)
             {
@@ -70,10 +78,32 @@ public sealed class UpdateCheckHostedService : IHostedService, IDisposable
             {
                 _logger.LogInformation("自动检查更新：已是最新版本");
             }
+
+            Reschedule(NextDelay(status));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "自动检查更新执行异常");
+            // 异常路径同样重排（按失败间隔），否则调度终止
+            Reschedule(FailureRetryInterval);
+        }
+    }
+
+    /// <summary>按检查结果计算下一跳间隔：节流跳过→30 分钟；失败→15 分钟重试；其余（成功/未配置/未安装）→常规周期。纯函数便于单测。</summary>
+    internal static TimeSpan NextDelay(UpdateStatus? status)
+        => status is null ? ThrottleRetryInterval
+         : status.Error is not null ? FailureRetryInterval
+         : RegularInterval;
+
+    /// <summary>安排下一跳。与 StopAsync/Dispose 竞态时 timer 已释放，吞掉即可（服务正在停止）。</summary>
+    private void Reschedule(TimeSpan delay)
+    {
+        try
+        {
+            _timer?.Change(delay, Timeout.InfiniteTimeSpan);
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 
