@@ -77,6 +77,29 @@ public class AdminConfigServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveConfig_MissingProjects_Rejected_AndKeepsConfig()
+    {
+        // 回归：缺 projects 字段的请求曾被静默当成空项目列表保存，导致全部项目被清空。
+        // 现在缺失/显式 null 必须拒绝且不落盘（空数组仍合法 = 用户主动删除全部项目）。
+        var (store, service, configPath) = Create(
+            """
+            {"databases":{"erp":{"defaultEnvironment":"test","environments":{"test":{"type":"sqlserver","connectionString":"Server=.;","maxRows":100,"commandTimeout":30}}}}}
+            """);
+
+        using (store)
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest(), CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Contains(result.Errors, e => e.Contains("projects"));
+
+            // 内存与磁盘配置均未被改写：原项目仍在
+            Assert.Single(service.GetConfig().Projects);
+            Assert.Contains("erp", File.ReadAllText(configPath));
+        }
+    }
+
+    [Fact]
     public async Task MissingConfig_StartsEmptyAndSaveCreatesJsonFile()
     {
         var (store, service, configPath) = CreateMissing();

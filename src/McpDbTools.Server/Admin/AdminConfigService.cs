@@ -148,8 +148,14 @@ public sealed class AdminConfigService
 
     private static DatabasesConfig ToConfig(AdminConfigRequest request, DatabasesConfig current, List<string> errors)
     {
+        // projects 缺失/显式 null = 非法请求：拒绝保存，防止空 body 静默清空全部项目
+        // （空数组合法 = 用户主动删除全部项目）。errors 非空时 SaveConfigAsync 不落盘。
+        if (request.Projects is null)
+        {
+            errors.Add("请求缺少 projects 字段，已拒绝保存以防止误清空配置。");
+        }
         var projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase);
-        foreach (AdminProjectDto project in request.Projects)
+        foreach (AdminProjectDto project in request.Projects ?? Enumerable.Empty<AdminProjectDto>())
         {
             string projectName = project.Name.Trim();
             if (string.IsNullOrWhiteSpace(projectName))

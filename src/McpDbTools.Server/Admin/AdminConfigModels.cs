@@ -75,8 +75,12 @@ public sealed class AdminConfigRequest
     [JsonPropertyName("defaultConnectTimeoutSeconds")]
     public int? DefaultConnectTimeoutSeconds { get; init; }
 
+    /// <summary>
+    /// 项目列表。缺失/显式 null 视为非法请求（拒绝保存，防止误清空配置）；
+    /// 空列表 = 用户主动删除全部项目，合法。
+    /// </summary>
     [JsonPropertyName("projects")]
-    public List<AdminProjectDto> Projects { get; init; } = new();
+    public List<AdminProjectDto>? Projects { get; init; }
 }
 
 public sealed class AdminProjectDto
