@@ -338,7 +338,8 @@
   function formatKeyLabel(key, displayName, fallback = '未命名') {
     const safeKey = window.adminUi.escapeHtml(key || fallback);
     const name = displayName ? String(displayName).trim() : (findEnvPreset(key)?.displayName ?? '');
-    return name ? `${safeKey}(${window.adminUi.escapeHtml(name)})` : safeKey;
+    // 显示名与 key 相同（自定义 key 跟随预填，如 UAT）时只显示 key，不出现 UAT(UAT)
+    return name && name !== key ? `${safeKey}(${window.adminUi.escapeHtml(name)})` : safeKey;
   }
 
   function activeProject() {
@@ -473,11 +474,8 @@
     el.environmentNameHelp.textContent = '可改名：下拉选 Test/Prod 或自定义；修改后 MCP 调用 environment 需使用新值。';
 
     el.environmentDisplayName.value = env.displayName || '';
-    // 切换环境时重置跟随标记：显示名为空→跟随 key；等于当前 key 的预设显示名
-    // （createEnvironment 数据层预填）→仍视为跟随中，可随预设切换联动；其余→用户已定，不跟随
-    const envPresetName = findEnvPreset(env.name)?.displayName;
-    el.environmentDisplayName.dataset.autoSynced =
-      !env.displayName || env.displayName === envPresetName ? '1' : '0';
+    // 切换环境时按统一跟随判定重置标记：空/预设名/旧 key 预设名/裸 key 均视为跟随中（含脏数据自愈）
+    el.environmentDisplayName.dataset.autoSynced = isEnvDisplayNameFollowing(env) ? '1' : '0';
     el.databaseType.value = env.type || 'sqlserver';
     el.isProduction.checked = Boolean(env.isProduction);
     el.allowWrite.checked = Boolean(env.allowWrite);
@@ -702,11 +700,10 @@
       el.connectionString, el.disabledKeywords
     ].forEach(input => input.addEventListener('change', syncFormToState));
 
-    // key → 显示名 自动同步：显示名为空或处于「跟随中」时，输入 key 实时同步；
-    // 用户手动编辑显示名（与 key 不同）后停止跟随，尊重已填值。
+    // 项目 key → 显示名自动同步：显示名为空或「跟随中」时随 key 原文实时同步。
     setupNameSync(el.projectName, el.projectDisplayName);
-    setupNameSync(el.environmentName, el.environmentDisplayName);
-    // 环境 key 预设：选中 Test/Prod 时填默认显示名并（Prod）自动勾选生产环境。
+    // 环境 key→显示名不走 setupNameSync（原文复制曾与预设联动竞争，改名时显示名被写成裸 key），
+    // 统一走 setupEnvKeyPreset 的跟随模型（跟随中→预设名/清空；用户手填→不动）。
     setupEnvKeyPreset();
 
     // 生产环境 ↔ DB 写 软互斥：勾选一方时取消另一方勾选（不置灰，两框始终可编辑）。
@@ -822,25 +819,44 @@
   }
 
   /**
-   * 环境 key 选择 Test/Prod 时联动 displayName 与 isProduction。
-   * - 仅在 displayName 处于「跟随中」（data-auto-synced='1'）时才覆盖显示名，
-   *   避免覆盖用户手动填写的值。
-   * - isProduction 仅在用户尚未手动改过该字段（data-touched != '1'）时联动，
-   *   用户一旦自己点过复选框即尊重其选择。
-   * - 仅新建态生效（已保存环境 key 只读，不会触发 input 事件）。
+   * 环境显示名「跟随 key」统一判定（bindEnvironment 初始化与显示名手动编辑共用）。
+   * 满足任一即跟随中：
+   * - 显示名为空；
+   * - 等于当前 key（name）或旧 key（originalName）的预设中文显示名（程序预填形态）；
+   * - 等于当前/旧 key 本身（旧版原文同步留下的裸 key 脏数据，借此自愈）。
+   * 其余视为用户已定，改 key 不覆盖。
+   */
+  function isEnvDisplayNameFollowing(env) {
+    const displayName = env?.displayName?.trim();
+    if (!displayName) {
+      return true;
+    }
+    return [env?.name, env?.originalName]
+      .filter(Boolean)
+      .some(key => displayName === key || displayName === findEnvPreset(key)?.displayName);
+  }
+
+  /**
+   * 环境 key 联动 displayName 与 isProduction（统一跟随模型，新建与改名同一路径）。
+   * - displayName：跟随中（autoSynced='1'）→ key 命中预设填预设中文显示名、
+   *   自定义 key（UAT 等）填 key 原文；用户手填过（autoSynced='0'）→ 完全不动。
+   * - 显示名手动编辑时按 isEnvDisplayNameFollowing 重新判定跟随（清空即恢复跟随）。
+   * - isProduction：仅新建环境且用户未手动操作过时联动；已保存环境改 key 是重命名，
+   *   不自动翻转生产开关（安全语义）。
    */
   function setupEnvKeyPreset() {
     el.environmentName.addEventListener('input', () => {
-      // 预设联动仅对新建环境生效：已保存环境改 key 是重命名，不自动翻转 isProduction/覆盖 displayName
-      if (activeEnvironment()?.originalName) {
-        return;
-      }
       const preset = findEnvPreset(el.environmentName.value);
+      if (el.environmentDisplayName.dataset.autoSynced === '1') {
+        // 跟随中：命中预设填中文显示名；自定义 key（UAT 等）填 key 原文
+        el.environmentDisplayName.value = preset?.displayName ?? el.environmentName.value;
+      }
       if (!preset) {
         return;
       }
-      if (el.environmentDisplayName.dataset.autoSynced === '1') {
-        el.environmentDisplayName.value = preset.displayName;
+      // 生产开关联动仅新建环境：已保存环境改 key 不自动翻转（originalName gate）
+      if (activeEnvironment()?.originalName) {
+        return;
       }
       if (el.isProduction.dataset.touched !== '1') {
         el.isProduction.checked = preset.isProduction;
@@ -851,6 +867,15 @@
         // 由 applyMutexState 统一处理 productionWarning 显隐
         applyMutexState();
       }
+    });
+    el.environmentDisplayName.addEventListener('input', () => {
+      // 手动编辑显示名：值仍属跟随形态（空/预设名/等于 key）→ 继续跟随，否则视为用户已定
+      const env = activeEnvironment();
+      el.environmentDisplayName.dataset.autoSynced = isEnvDisplayNameFollowing({
+        ...env,
+        name: el.environmentName.value.trim() || env?.name,
+        displayName: el.environmentDisplayName.value
+      }) ? '1' : '0';
     });
     // isProduction 的 change 监听（dataset.touched + applyMutexState）已整合到 bindEvents，
     // 不再在此重复注册，避免 productionWarning 被切换两次（toggle 幂等抵消 bug）。
