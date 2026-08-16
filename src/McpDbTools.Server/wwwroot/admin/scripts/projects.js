@@ -331,12 +331,13 @@
   /**
    * 统一的「Key(显示名)」展示文本。
    * - 有 displayName：返回 `Key(DisplayName)`，二者均转义。
-   * - 无 displayName：只返回 Key，不加空括号。
+   * - 无 displayName 且 key 命中环境预设（Test/Prod/Dev）：回退预设显示名，
+   *   如 prod → prod(生产环境)；UAT 及自定义 key 维持裸 key。
    * 用于左侧项目列表、环境 tabs、默认环境下拉，保证三处一致。
    */
   function formatKeyLabel(key, displayName, fallback = '未命名') {
     const safeKey = window.adminUi.escapeHtml(key || fallback);
-    const name = displayName ? String(displayName).trim() : '';
+    const name = displayName ? String(displayName).trim() : (findEnvPreset(key)?.displayName ?? '');
     return name ? `${safeKey}(${window.adminUi.escapeHtml(name)})` : safeKey;
   }
 
@@ -416,9 +417,8 @@
     project.environments.forEach(env => {
       const option = document.createElement('option');
       option.value = env.name;
-      // 显示「Key(显示名)」，与左侧/环境 tabs 保持一致
-      const name = env.displayName ? String(env.displayName).trim() : '';
-      option.textContent = name ? `${env.name}(${name})` : env.name;
+      // 显示「Key(显示名)」，与左侧/环境 tabs 保持一致（formatKeyLabel 含无显示名时的预设回退）
+      option.textContent = formatKeyLabel(env.name, env.displayName, '未命名环境');
       el.defaultEnvironment.appendChild(option);
     });
     // 环境 key 改名后 state 里的 defaultEnvironment 仍指旧名（改名输入不触发 render）。
@@ -475,7 +475,7 @@
     el.environmentDisplayName.value = env.displayName || '';
     // 切换环境时重置跟随标记：显示名为空→跟随 key；等于当前 key 的预设显示名
     // （createEnvironment 数据层预填）→仍视为跟随中，可随预设切换联动；其余→用户已定，不跟随
-    const envPresetName = ENV_KEY_PRESETS[env.name]?.displayName;
+    const envPresetName = findEnvPreset(env.name)?.displayName;
     el.environmentDisplayName.dataset.autoSynced =
       !env.displayName || env.displayName === envPresetName ? '1' : '0';
     el.databaseType.value = env.type || 'sqlserver';
@@ -571,7 +571,7 @@
     // key 命中预设（Test/Prod/Dev）时在数据层预填显示名与生产标识，等价于用户
     // 手动选中该 key 时的联动；程序化设置输入框 value 不触发 input 事件，不能依赖
     // setupEnvKeyPreset 自动生效。新建环境与新增项目的默认环境共用此逻辑。
-    const preset = ENV_KEY_PRESETS[name];
+    const preset = findEnvPreset(name);
     return {
       name,
       originalName: null,
@@ -810,6 +810,18 @@
   };
 
   /**
+   * 按环境 key 查预设（大小写不敏感）：prod/Prod/PROD 均命中 Prod 预设。
+   * 预设联动、新建预填、展示回退共用；UAT 及自定义 key 返回 undefined。
+   */
+  const ENV_PRESETS_BY_LOWER_KEY = new Map(
+    Object.entries(ENV_KEY_PRESETS).map(([presetKey, preset]) => [presetKey.toLowerCase(), preset])
+  );
+
+  function findEnvPreset(name) {
+    return name ? ENV_PRESETS_BY_LOWER_KEY.get(String(name).toLowerCase()) : undefined;
+  }
+
+  /**
    * 环境 key 选择 Test/Prod 时联动 displayName 与 isProduction。
    * - 仅在 displayName 处于「跟随中」（data-auto-synced='1'）时才覆盖显示名，
    *   避免覆盖用户手动填写的值。
@@ -823,7 +835,7 @@
       if (activeEnvironment()?.originalName) {
         return;
       }
-      const preset = ENV_KEY_PRESETS[el.environmentName.value];
+      const preset = findEnvPreset(el.environmentName.value);
       if (!preset) {
         return;
       }
@@ -880,7 +892,7 @@
         li.dataset.value = value;
         li.tabIndex = -1;
         // 联动信息提示，帮助用户预判
-        const preset = ENV_KEY_PRESETS[value];
+        const preset = findEnvPreset(value);
         const hint = preset ? `（${preset.displayName}${preset.isProduction ? ' · 生产' : ''}）` : '';
         li.textContent = `${value}${hint}`;
         li.addEventListener('mousedown', event => {
