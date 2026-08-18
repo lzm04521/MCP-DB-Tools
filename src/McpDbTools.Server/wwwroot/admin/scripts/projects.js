@@ -390,7 +390,18 @@
 
   function renderProjectList() {
     el.projectList.innerHTML = '';
-    state.config.projects.forEach((project, index) => {
+    // 左侧列表按 key（name）正序显示，大小写不敏感；仅排序显示顺序，
+    // selectedProject 仍用原数组索引，保存后的 config.json 项目顺序不变。
+    const orderedIndexes = state.config.projects
+      .map((_, index) => index)
+      .sort((a, b) => {
+        const keyA = state.config.projects[a].name || '';
+        const keyB = state.config.projects[b].name || '';
+        const result = keyA.localeCompare(keyB, undefined, { sensitivity: 'base' });
+        return result !== 0 ? result : a - b;
+      });
+    orderedIndexes.forEach(index => {
+      const project = state.config.projects[index];
       const button = document.createElement('button');
       button.type = 'button';
       button.className = `project-item${index === state.selectedProject ? ' active' : ''}`;
