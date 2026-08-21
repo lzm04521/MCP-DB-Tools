@@ -34,24 +34,31 @@ public sealed class DbQueryTool
     /// project 为项目名（对应 config.json 中 databases 配置）；
     /// environment 为环境名（如 dev/test/prod/xiqing-prod，可选；未传时使用项目 defaultEnvironment）；
     /// sql 为查询语句，只读环境仅允许只读操作；写环境（allowWrite=true，非生产）支持 DML/DDL 写操作，返回受影响行数（affectedRows）；
-    /// limit 为可选的最大返回行数（仅对读语句生效）。
-    /// 返回包含 project、environment、columns 和 rows(二维数组) 的 JSON；写操作返回 affectedRows。
+    /// limit 为可选的最大返回行数（仅对读语句生效）；
+    /// format 为可选行编码（"json" 回退 rows 二维数组；缺省 TSV rowset，NULL 编码为 \N）。
+    /// 读返回 rowCount/truncated/columns + rowset(或 rows)；写返回 affectedRows；失败返回 error/errorCode/executionTimeMs。
     /// 可用 db_list 工具列出所有项目及其环境。
     /// </summary>
     [McpServerTool(Name = "db_query")]
-    [Description("在指定项目的指定环境上执行 SQL。project 为项目名(对应 config.json 中 databases 配置)，environment 为环境名(如 dev/test/prod，可选；未传时使用项目的 defaultEnvironment)，sql 为 SQL 语句，limit 为可选的最大返回行数(仅读语句生效)。只读环境仅允许 SELECT 等只读操作；写环境(allowWrite=true，非生产)支持 INSERT/UPDATE/DELETE/CREATE 等 DML/DDL 写操作，返回受影响行数(affectedRows)。返回包含 project、environment、columns 和 rows(二维数组) 的 JSON。可先用 db_list() 获取项目列表，再 db_list(project=...) 获取环境详情。")]
+    [Description("在项目的指定环境执行 SQL。project=项目名(必填)；environment 可选(dev/test/prod 等，缺省用项目 defaultEnvironment)；sql 必填；limit 可选(读语句行数上限)；format 可选，传 \"json\" 回退 rows 二维数组，缺省 TSV。只读环境仅允许只读语句；写环境(allowWrite=true，非生产)支持 DML/DDL，返回 affectedRows。读结果含 columns 列名数组 + rowset TSV 文本(制表符分列、\\n 分行、\\N 表示 NULL)与 truncated 截断标记。先用 db_list() 查项目、db_list(project=...) 查环境。")]
     public async Task<string> ExecuteQuery(
         string project,
         string sql,
         string? environment = null,
         int? limit = null,
+        string? format = null,
         CancellationToken cancellationToken = default)
     {
+        // 0. 行编码格式：宽容解析，仅 "json"（Trim+忽略大小写）回退二维数组，其他值一律 TSV
+        RowFormat rowFormat = format?.Trim().Equals("json", StringComparison.OrdinalIgnoreCase) == true
+            ? RowFormat.Json
+            : RowFormat.Tsv;
+
         // 1. 解析项目配置（实时读取，支持热重载）
         ResolvedConfig config = _configStore.GetResolved();
         if (!config.Projects.TryGetValue(project, out ResolvedProject? proj))
         {
-            return QueryResult.Fail(project, "Unknown", $"项目不存在: {project}", "PROJECT_NOT_FOUND", environment: environment).ToJson();
+            return QueryResult.Fail(project, "Unknown", $"项目不存在: {project}", "PROJECT_NOT_FOUND", environment: environment).ToJson(rowFormat);
         }
 
         // 2. 解析环境：未指定则回退到项目 defaultEnvironment
@@ -59,12 +66,12 @@ public sealed class DbQueryTool
         if (string.IsNullOrWhiteSpace(env))
         {
             string available = string.Join(", ", proj.Environments.Keys);
-            return QueryResult.Fail(project, "Unknown", $"未指定环境，且项目 {project} 未配置 defaultEnvironment。可用环境: {available}", "ENVIRONMENT_REQUIRED", environment: environment).ToJson();
+            return QueryResult.Fail(project, "Unknown", $"未指定环境，且项目 {project} 未配置 defaultEnvironment。可用环境: {available}", "ENVIRONMENT_REQUIRED", environment: environment).ToJson(rowFormat);
         }
         if (!proj.Environments.TryGetValue(env, out ResolvedDatabase? db))
         {
             string available = string.Join(", ", proj.Environments.Keys);
-            return QueryResult.Fail(project, "Unknown", $"环境不存在: {env}。项目 {project} 可用环境: {available}", "ENVIRONMENT_NOT_FOUND", environment: env).ToJson();
+            return QueryResult.Fail(project, "Unknown", $"环境不存在: {env}。项目 {project} 可用环境: {available}", "ENVIRONMENT_NOT_FOUND", environment: env).ToJson(rowFormat);
         }
 
         // 3. limit 覆盖 maxRows：取配置与入参的较小值（入参为空则用配置值）
@@ -75,7 +82,7 @@ public sealed class DbQueryTool
         if (!guardResult.Allowed)
         {
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, guardResult.Reason));
-            return QueryResult.Fail(project, db.Type.ToString(), guardResult.Reason, guardResult.ErrorCode, environment: env).ToJson();
+            return QueryResult.Fail(project, db.Type.ToString(), guardResult.Reason, guardResult.ErrorCode, environment: env).ToJson(rowFormat);
         }
 
         // 5. 执行（读走 Reader，写走 NonQuery；带每环境并发限流）
@@ -94,21 +101,21 @@ public sealed class DbQueryTool
         catch (QueryRateLimitedException ex)
         {
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, ex.Message));
-            return QueryResult.Fail(project, db.Type.ToString(), ex.Message, "RATE_LIMITED", environment: env).ToJson();
+            return QueryResult.Fail(project, db.Type.ToString(), ex.Message, "RATE_LIMITED", environment: env).ToJson(rowFormat);
         }
         catch (OperationCanceledException)
         {
             // 客户端取消/超时（provider 对外部 ct 取消会重新抛出 OperationCanceledException）：
             // 记审计后返回失败，避免逃逸异常不记审计（阶段 3，诊断 20260722）
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, "查询被取消（客户端超时或中断）"));
-            return QueryResult.Fail(project, db.Type.ToString(), "查询被取消", "QUERY_CANCELED", environment: env).ToJson();
+            return QueryResult.Fail(project, db.Type.ToString(), "查询被取消", "QUERY_CANCELED", environment: env).ToJson(rowFormat);
         }
         catch (Exception ex)
         {
             // 非 DbException 逃逸异常（provider 仅 catch DbException/TimeoutException）：
             // 记审计后返回失败，防止单查询异常逃逸不记审计或崩溃进程（阶段 3）
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, $"未处理异常: {ex.GetType().Name}: {ex.Message}"));
-            return QueryResult.Fail(project, db.Type.ToString(), $"未处理异常: {ex.Message}", "QUERY_UNHANDLED", environment: env).ToJson();
+            return QueryResult.Fail(project, db.Type.ToString(), $"未处理异常: {ex.Message}", "QUERY_UNHANDLED", environment: env).ToJson(rowFormat);
         }
 
         // 6. 审计（开关开启且成功时，记录查询结果到子表）
@@ -118,7 +125,7 @@ public sealed class DbQueryTool
             : null;
         _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, result.RowCount, result.ExecutionTimeMs, result.Success, result.Error, resultJson));
 
-        return result.ToJson();
+        return result.ToJson(rowFormat);
     }
 
     private static AuditEntry MakeEntry(string project, string environment, string dbType, string sql, int rowCount, long elapsedMs, bool success, string? error, string? resultJson = null) => new()

@@ -74,23 +74,20 @@ public class DbListToolTests : IDisposable
         JsonElement envs = erp.GetProperty("environments");
         Assert.Equal(2, envs.GetArrayLength());
 
-        // test 环境：自定义覆盖值透传
+        // test 环境：保留字段透传；运行参数不再暴露（Agent 决策无用，见 spec §5）
         JsonElement testEnv = envs.EnumerateArray().First(e => e.GetProperty("name").GetString() == "test");
         Assert.Equal("mysql", testEnv.GetProperty("type").GetString());
         Assert.False(testEnv.GetProperty("isProduction").GetBoolean());
         Assert.Equal(500, testEnv.GetProperty("maxRows").GetInt32());
-        Assert.Equal(4, testEnv.GetProperty("maxConcurrency").GetInt32());
-        Assert.Equal(50, testEnv.GetProperty("maxPoolSize").GetInt32());
-        Assert.Equal(10, testEnv.GetProperty("connectTimeoutSeconds").GetInt32());
-        Assert.Equal(20, testEnv.GetProperty("commandTimeout").GetInt32());
+        Assert.False(testEnv.TryGetProperty("maxConcurrency", out _));
+        Assert.False(testEnv.TryGetProperty("maxPoolSize", out _));
+        Assert.False(testEnv.TryGetProperty("connectTimeoutSeconds", out _));
+        Assert.False(testEnv.TryGetProperty("commandTimeout", out _));
 
-        // prod 环境：默认值回退（maxConcurrency/maxPoolSize/connectTimeoutSeconds 未配置 → 全局内置默认 10/100/60）
+        // prod 环境：生产标识与类型
         JsonElement prodEnv = envs.EnumerateArray().First(e => e.GetProperty("name").GetString() == "prod");
         Assert.Equal("sqlserver", prodEnv.GetProperty("type").GetString());
         Assert.True(prodEnv.GetProperty("isProduction").GetBoolean());
-        Assert.Equal(10, prodEnv.GetProperty("maxConcurrency").GetInt32());
-        Assert.Equal(100, prodEnv.GetProperty("maxPoolSize").GetInt32());
-        Assert.Equal(60, prodEnv.GetProperty("connectTimeoutSeconds").GetInt32());
     }
 
     // ───────── 行为 3：传 project + environment（均存在）→ 单环境详情 ─────────

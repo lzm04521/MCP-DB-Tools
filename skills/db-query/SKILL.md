@@ -20,7 +20,7 @@ description: >
 
 - `mcp__db-tools__db_list()`：列出所有 project。
 - `mcp__db-tools__db_list(project=...)`：列出该 project 下的 environment 与 DBMS type。
-- `mcp__db-tools__db_query(project, sql, environment?, limit?)`：执行只读 SQL。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值。
+- `mcp__db-tools__db_query(project, sql, environment?, limit?, format?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 传 `"json"` 回退 rows 二维数组，缺省 TSV。
 
 层级为 project → environment 两级，无扁平环境名，且环境常增删变化。
 
@@ -70,6 +70,12 @@ description: >
 | postgresql | `\|\|`（与 MySQL 相反） |
 
 PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊匹配用 `ILIKE`，不是 `LIKE`。
+
+## 返回格式（db_query）
+
+- 默认（TSV）：`columns` 列名数组 + `rowset` TSV 文本——制表符分列、`\n` 分行、`\N` 表示 NULL、空字段为空字符串；值内的 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`。
+- `format="json"`：回退 `rows` 二维数组（需要精确结构时用）。
+- 读结果带 `rowCount`/`truncated`；写结果带 `affectedRows`；失败带 `error`/`errorCode`/`executionTimeMs`。
 
 ## 截断与误判陷阱
 

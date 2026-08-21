@@ -66,7 +66,7 @@ public static class ProjectListBuilder
     /// <summary>
     /// 环境详情兜底列表：指定项目的全部环境详情对象数组。
     /// 用于 db_list 的 ENVIRONMENT_NOT_FOUND 错误响应（environments 字段）。
-    /// 故意返回详情而非纯名字：Agent 调用 db_query 前需要数据库类型、生产标识、连接/超时等运行参数。
+    /// 故意返回详情而非纯名字：Agent 调用 db_query 前需要数据库类型、生产/可写标识、行数上限。
     /// </summary>
     public static List<object> BuildEnvironmentDetails(ResolvedProject proj) =>
         proj.Environments.Select(BuildEnvironment).ToList();
@@ -74,8 +74,9 @@ public static class ProjectListBuilder
     // ───────── 环境详情（所有响应共用） ─────────
 
     /// <summary>
-    /// 单个环境的运行参数。包含 Agent 调用前关心的全部信息：
-    /// 数据库类型、生产标识、行数上限、并发/连接池/超时配置。
+    /// 单个环境的 MCP 返回详情。只含 Agent 调用决策所需字段；
+    /// maxConcurrency/maxPoolSize/connectTimeoutSeconds/commandTimeout 是服务端运行参数，
+    /// Agent 无法修改也不据此决策，不再暴露（spec §5，省 token）。
     /// </summary>
     public static object BuildEnvironment(KeyValuePair<string, ResolvedDatabase> e) => new
     {
@@ -85,11 +86,7 @@ public static class ProjectListBuilder
         isProduction = e.Value.IsProduction,
         // T7：暴露 allowWrite，供 Agent 在调用前识别可写环境（生产兜底已强制 false）
         allowWrite = e.Value.AllowWrite,
-        maxRows = e.Value.MaxRows,
-        maxConcurrency = e.Value.MaxConcurrency,
-        maxPoolSize = e.Value.MaxPoolSize,
-        connectTimeoutSeconds = e.Value.ConnectTimeoutSeconds,
-        commandTimeout = e.Value.CommandTimeout
+        maxRows = e.Value.MaxRows
     };
 
     // ───────── 序列化 ─────────

@@ -34,7 +34,7 @@ public sealed class DbListTool
     /// 返回 JSON 含 success 字段。
     /// </summary>
     [McpServerTool(Name = "db_list")]
-    [Description("列出数据库项目与环境，按需加载避免返回过多数据。project 可选：不传则返回所有项目名索引(轻量，不含环境)；传项目名则返回该项目全部环境详情；同时传 environment 则返回单环境详情。environment 可选：配合 project 使用，单独传(不传 project)无意义。空白字符串等同未传。项目不存在时返回 PROJECT_NOT_FOUND 并附带 availableProjects(项目名数组)；环境不存在时返回 ENVIRONMENT_NOT_FOUND 并附带该项目 environments(环境详情数组)。返回 JSON 含 success 字段。")]
+    [Description("列出数据库项目与环境(按需加载)。不传参数→项目名索引(轻量，不含环境)；传 project→该项目全部环境详情；再传 environment→单环境详情。project 不存在→PROJECT_NOT_FOUND+availableProjects；environment 不存在→ENVIRONMENT_NOT_FOUND+该项目环境详情。空白字符串等同未传。环境详情含 name/type/databaseName/isProduction/allowWrite/maxRows。")]
     public Task<string> ListProjects(
         string? project = null,
         string? environment = null,

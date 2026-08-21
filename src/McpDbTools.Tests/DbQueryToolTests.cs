@@ -357,6 +357,66 @@ public class DbQueryToolTests : IDisposable
         Assert.False(spy.ExecuteNonQueryCalled);
     }
 
+    // ───────── format 参数：缺省 tsv / json 回退 / 宽容解析 ─────────
+
+    [Fact]
+    public async Task Format_Default_IsTsv()
+    {
+        var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
+        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("tsv", doc.RootElement.GetProperty("format").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("rowset", out _));
+        Assert.False(doc.RootElement.TryGetProperty("rows", out _));
+    }
+
+    [Fact]
+    public async Task Format_Json_ReturnsRowsArray()
+    {
+        var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
+        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: "json");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("json", doc.RootElement.GetProperty("format").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("rows", out _));
+        Assert.False(doc.RootElement.TryGetProperty("rowset", out _));
+    }
+
+    [Theory]
+    [InlineData("JSON")]
+    [InlineData(" json ")]
+    public async Task Format_Json_TrimAndCaseInsensitive(string fmt)
+    {
+        var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
+        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: fmt);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("json", doc.RootElement.GetProperty("format").GetString());
+    }
+
+    [Fact]
+    public async Task Format_UnknownValue_FallsBackToTsv()
+    {
+        var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
+        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: "xml");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("tsv", doc.RootElement.GetProperty("format").GetString());
+    }
+
+    [Fact]
+    public async Task Format_AppliesToFailurePath()
+    {
+        // 失败路径（PROJECT_NOT_FOUND）也带 format 回显
+        var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
+        string json = await tool.ExecuteQuery("nope", "SELECT 1", format: "json");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("PROJECT_NOT_FOUND", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.Equal("json", doc.RootElement.GetProperty("format").GetString());
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }
