@@ -1,15 +1,20 @@
 ---
 name: db-query
 description: >
-  使用 db-tools MCP（mcp__db-tools__db_list / mcp__db-tools__db_query）查询多项目多环境数据库时的参考 skill。
-  覆盖：项目/环境两级层级与实时核验；SQL Server/MySQL/Oracle/PostgreSQL 四 DBMS 的 schema（列）查询、
-  索引查询、分页语法、字符串拼接差异；maxRows 静默截断与索引逐环境核验；写业务 SQL 前的 schema 验证；
+  使用 db-tools MCP（mcp__db-tools__db_list / mcp__db-tools__db_query / mcp__db-tools__db_schema /
+  mcp__db-tools__db_explain）查询多项目多环境数据库时的参考 skill。
+  覆盖：项目/环境两级层级与实时核验；db_schema 元数据探索（表清单/列/索引/外键，替代手写四方言
+  information_schema 系 SQL）；db_query 的 offset 分页与 dryRun 写影响预估；db_explain 执行计划
+  （慢查询分析）；SQL Server/MySQL/Oracle/PostgreSQL 四 DBMS 的 schema（列）查询、索引查询、
+  分页语法、字符串拼接差异；maxRows 静默截断与索引逐环境核验；写业务 SQL 前的 schema 验证；
   可写库谨慎；性能计数器列名特例；审批人/单据快照类 SQL 的范围确认。
-  触发词：查数据库、连库、查表结构、查列、查索引、查 schema、写 SQL、拼 SQL、分页、SQL Server、
-  MySQL、Oracle、PostgreSQL、性能计数器、审批人快照、单据快照、db_list、db_query、db-tools；
+  触发词：查数据库、连库、查表结构、查列、查索引、查 schema、写 SQL、拼 SQL、分页、执行计划、
+  慢查询、SQL 很慢、explain、影响行数、预估、dryRun、采样、表清单、元数据、加索引、SQL Server、
+  MySQL、Oracle、PostgreSQL、性能计数器、审批人快照、单据快照、db_list、db_query、db_schema、
+  db_explain、db-tools；
   以及"用 DB Prod/Test/UAT/Dev 环境验证"、"DB Prod 环境"、"Prod 环境"、"去数据库验证/确认"、
   "查生产数据/生产库"、"验证一下数据"、"确认数据"等带环境名或"验证/确认"措辞的查库请求。
-  只要调用 mcp__db-tools__db_list 或 mcp__db-tools__db_query 就应加载本 skill。
+  只要调用 db-tools 任一工具（db_list / db_query / db_schema / db_explain）就应加载本 skill。
 ---
 
 # db-tools 数据库查询参考
@@ -30,7 +35,8 @@ description: >
 
 - **实时核验**：每次查询前先 `db_list` 列项目、`db_list(project=...)` 列环境与 DBMS type。不缓存、不假设、不写死环境名。
 - **可写库谨慎**：环境返回标识区分可写/只读；可写库谨慎操作。
-- **写前验 schema**：写业务 SQL 前强制 schema 验证（先查列名），避免列名错误。
+- **写前验 schema**：写业务 SQL 前强制 schema 验证——优先 `db_schema(project, table=...)` 查列（方言无关），避免列名错误。
+- **写前预估影响**：写环境执行 UPDATE/DELETE 前先 `db_query(..., dryRun=true)` 预估影响行数，超过预期先缩小 WHERE 范围。
 - **写前定范围**：写审批人/单据快照类 SQL 前，先确认范围是"仅更新已有单据快照"还是"含设置表"，避免越界改设置表。
 
 ## 四 DBMS 语法速查
@@ -47,6 +53,8 @@ description: >
 | postgresql | `information_schema.columns` |
 
 ### 索引
+
+优先用 `db_schema(project, table=...)` 的 `indexes` 段（方言无关）。手写方言查询仅作 fallback 参考：
 
 | DBMS | 查索引 |
 |---|---|
@@ -88,9 +96,13 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 
 写环境执行 `UPDATE`/`DELETE` 前，先 `dryRun=true` 预估影响行数（工具变换为 `COUNT` 只读查询，不执行写），返回 `estimated: true` + 估算行数；超过预期就缩小 WHERE 范围。限制：仅标准形态（无别名/单表/SET 无子查询）；INSERT/DDL/复杂形态返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用。估算不含触发器影响，审计记 `[dryRun]` 前缀。
 
+## 执行计划（db_explain，慢查询分析）
+
+慢 SQL 分析工作流：`db_explain(project, sql)` 看计划（仅只读语句）→ 关注全表扫描/大行数估算节点 → 疑缺索引时用 `db_schema(project, table=...)` 的 `indexes` 段核对现状（注意索引逐环境差异）→ 需要加索引时给出 DDL 建议由人确认执行。SQL Server 返回 SHOWPLAN 计划列（不实际执行）；Oracle 经 DBMS_XPLAN 输出；不支持 EXPLAIN ANALYZE。
+
 ## 截断与误判陷阱
 
-- `maxRows` 默认 1000（以环境返回为准）。大结果必须限行或分页，否则被静默截断导致误判。
+- `maxRows` 默认 1000（以环境返回为准）。大结果必须限行或分页，否则被静默截断导致误判；被截断（`truncated=true`）时用 `offset` 参数（或返回的 `nextOffset`）续翻。
 - 索引部署因环境而异——索引存在性、使用情况要逐环境核验，不能拿一个环境的结果推广到全部。
 
 ## 特殊 case
