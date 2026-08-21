@@ -396,6 +396,7 @@ static void ConfigureBusinessServices(IServiceCollection services, IConfiguratio
     services.AddSingleton<DbQueryTool>();
     services.AddSingleton<DbListTool>();
     services.AddSingleton<DbSchemaTool>();
+    services.AddSingleton<DbExplainTool>();
 }
 
 static void ConfigureLogging(ILoggingBuilder logging)
