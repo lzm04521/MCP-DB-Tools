@@ -192,8 +192,11 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | `sql`         | string | 是   | SQL 语句；只读环境仅允许只读操作，写环境另支持 DML/DDL 写操作                  |
 | `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment`                                  |
 | `limit`       | int    | 否   | 临时限制返回行数，必须为正整数；最终取 `min(limit, maxRows)`，不能突破配置上限 |
+| `format`      | string | 否   | 行编码：传 `"json"` 回退 `rows` 二维数组；缺省 TSV `rowset`（制表符分列、`\n` 分行、`\N` 表示 NULL） |
+| `offset`      | int    | 否   | 跳过前 N 行再返回（仅读语句）；方言拼接由工具完成。SQL Server/Oracle 要求 SQL 带 `ORDER BY`；SQL 自带 `LIMIT`/`OFFSET`/`FOR UPDATE` 或多语句时不可用；`truncated=true` 时返回 `nextOffset` 供续翻 |
+| `dryRun`      | bool   | 否   | 写影响行数预估：标准形态 `UPDATE`/`DELETE` 变换为 `COUNT` 只读查询返回估算行数（`estimated: true`），不执行写；INSERT/DDL/别名/多表/TOP/CTE 等返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用 |
 
-返回 JSON 示例：
+返回 JSON 示例（缺省 TSV 编码）：
 
 ```json
 {
@@ -201,17 +204,15 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
   "project": "my-project",
   "environment": "test",
   "databaseType": "SqlServer",
-  "rowCount": 42,
-  "maxRows": 1000,
+  "format": "tsv",
+  "rowCount": 2,
   "truncated": false,
-  "executionTimeMs": 125,
   "columns": ["Id", "Name", "CreatedAt"],
-  "rows": [
-    [1, "张三", "2024-01-15"],
-    [2, "李四", "2024-03-22"]
-  ]
+  "rowset": "1\t张三\t2024-01-15\n2\t李四\t2024-03-22"
 }
 ```
+
+`format="json"` 时 `rowset` 替换为 `rows` 二维数组。offset 分页时附 `"offset": N`，`truncated=true` 时附 `"nextOffset"`；dryRun 返回附 `"estimated": true` 与估算说明（不含触发器影响）。读成功不再输出 `maxRows`/`executionTimeMs`（省 token）；写成功输出 `affectedRows`；失败输出 `error`/`errorCode`/`executionTimeMs`。
 
 错误以结构化 JSON 返回，不抛到协议层。常见错误码：
 
@@ -226,6 +227,9 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | `QUERY_CONNECT_TIMEOUT` | 建立连接超时（连接池耗尽或网络不可达）|
 | `QUERY_TIMEOUT`         | 查询执行超时（超过 `commandTimeout`）|
 | `QUERY_ERROR`           | 数据库执行错误                       |
+| `PARAMETER_ERROR`       | 参数冲突：offset 用于写语句、dryRun 用于读语句、dryRun 组合 limit/offset、多语句或自带分页/锁子句等 |
+| `OFFSET_REQUIRES_ORDER_BY` | SQL Server/Oracle 分页且 SQL 无 ORDER BY |
+| `DRYRUN_UNSUPPORTED`    | INSERT/DDL/表别名/SET 含子查询/多表/TOP/CTE 等形态不支持影响行数预估 |
 
 ## 配置文件详解
 

@@ -20,7 +20,7 @@ description: >
 
 - `mcp__db-tools__db_list()`：列出所有 project。
 - `mcp__db-tools__db_list(project=...)`：列出该 project 下的 environment 与 DBMS type。
-- `mcp__db-tools__db_query(project, sql, environment?, limit?, format?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 传 `"json"` 回退 rows 二维数组，缺省 TSV。
+- `mcp__db-tools__db_query(project, sql, environment?, limit?, format?, offset?, dryRun?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 传 `"json"` 回退 rows 二维数组，缺省 TSV；`offset` 分页跳行（见下文）；`dryRun` 写影响预估（见下文）。
 
 层级为 project → environment 两级，无扁平环境名，且环境常增删变化。
 
@@ -53,6 +53,8 @@ description: >
 
 ### 分页
 
+**优先用 db_query 的 `offset` 参数**，工具按方言自动拼接，无需手写分页子句；`truncated=true` 时返回值带 `nextOffset` 直接续翻。约束：仅读语句；SQL Server/Oracle 的 SQL 必须带 `ORDER BY`；SQL 已自带 `LIMIT`/`OFFSET`/`FOR UPDATE` 或多语句时先去掉再传 offset。手写方言分页仅作参考：
+
 | DBMS | 分页 |
 |---|---|
 | sqlserver | `OFFSET ... FETCH NEXT` 或 `TOP n` |
@@ -76,6 +78,11 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 - 默认（TSV）：`columns` 列名数组 + `rowset` TSV 文本——制表符分列、`\n` 分行、`\N` 表示 NULL、空字段为空字符串；值内的 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`。
 - `format="json"`：回退 `rows` 二维数组（需要精确结构时用）。
 - 读结果带 `rowCount`/`truncated`；写结果带 `affectedRows`；失败带 `error`/`errorCode`/`executionTimeMs`。
+- `offset` 分页请求附 `offset` 回显；`truncated=true` 时附 `nextOffset` 续翻。
+
+## 写影响预估（dryRun）
+
+写环境执行 `UPDATE`/`DELETE` 前，先 `dryRun=true` 预估影响行数（工具变换为 `COUNT` 只读查询，不执行写），返回 `estimated: true` + 估算行数；超过预期就缩小 WHERE 范围。限制：仅标准形态（无别名/单表/SET 无子查询）；INSERT/DDL/复杂形态返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用。估算不含触发器影响，审计记 `[dryRun]` 前缀。
 
 ## 截断与误判陷阱
 
