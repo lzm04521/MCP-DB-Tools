@@ -38,11 +38,13 @@ public sealed class DbQueryTool
     /// format 为可选行编码（"json" 回退 rows 二维数组；缺省 TSV rowset，NULL 编码为 \N）。
     /// offset 为可选跳过行数（仅读语句生效；SQL Server/Oracle 要求 SQL 带 ORDER BY；
     /// SQL 已带 LIMIT/OFFSET/FOR UPDATE 时不可用；truncated=true 时返回 nextOffset 供续翻）。
+    /// dryRun 为可选写影响预估（标准形态 UPDATE/DELETE 变换为 COUNT 只读查询返回估算行数，
+    /// 不执行写操作；INSERT/DDL/复杂形态返回 DRYRUN_UNSUPPORTED；不可与 limit/offset 同用）。
     /// 读返回 rowCount/truncated/columns + rowset(或 rows)；写返回 affectedRows；失败返回 error/errorCode/executionTimeMs。
     /// 可用 db_list 工具列出所有项目及其环境。
     /// </summary>
     [McpServerTool(Name = "db_query")]
-    [Description("在项目的指定环境执行 SQL。project=项目名(必填)；environment 可选(dev/test/prod 等，缺省用项目 defaultEnvironment)；sql 必填；limit 可选(读语句行数上限)；offset 可选(跳过行数,仅读语句;SQL Server/Oracle 需 SQL 带 ORDER BY;SQL 已带 LIMIT/OFFSET/FOR UPDATE 时不可用;truncated=true 时返回 nextOffset 续翻)；format 可选，传 \"json\" 回退 rows 二维数组，缺省 TSV。只读环境仅允许只读语句；写环境(allowWrite=true，非生产)支持 DML/DDL，返回 affectedRows。读结果含 columns 列名数组 + rowset TSV 文本(制表符分列、\\n 分行、\\N 表示 NULL)与 truncated 截断标记。先用 db_list() 查项目、db_list(project=...) 查环境。")]
+    [Description("在项目的指定环境执行 SQL。project=项目名(必填)；environment 可选(dev/test/prod 等，缺省用项目 defaultEnvironment)；sql 必填；limit 可选(读语句行数上限)；offset 可选(跳过行数,仅读语句;SQL Server/Oracle 需 SQL 带 ORDER BY;SQL 已带 LIMIT/OFFSET/FOR UPDATE 时不可用;truncated=true 时返回 nextOffset 续翻)；dryRun 可选(true 时对标准形态 UPDATE/DELETE 返回估算影响行数而不执行写,估算不含触发器影响;INSERT/DDL/复杂形态返回 DRYRUN_UNSUPPORTED;不可与 limit/offset 同用)；format 可选，传 \"json\" 回退 rows 二维数组，缺省 TSV。只读环境仅允许只读语句；写环境(allowWrite=true，非生产)支持 DML/DDL，返回 affectedRows。读结果含 columns 列名数组 + rowset TSV 文本(制表符分列、\\n 分行、\\N 表示 NULL)与 truncated 截断标记。先用 db_list() 查项目、db_list(project=...) 查环境。")]
     public async Task<string> ExecuteQuery(
         string project,
         string sql,
@@ -50,6 +52,7 @@ public sealed class DbQueryTool
         int? limit = null,
         string? format = null,
         int? offset = null,
+        bool dryRun = false,
         CancellationToken cancellationToken = default)
     {
         // 0. 行编码格式：宽容解析，仅 "json"（Trim+忽略大小写）回退二维数组，其他值一律 TSV
@@ -86,12 +89,53 @@ public sealed class DbQueryTool
             return QueryResult.Fail(project, db.Type.ToString(), "offset 不能为负数。", "PARAMETER_ERROR", environment: env).ToJson(rowFormat);
         }
 
+        // 3.6 dryRun 参数互斥：预估恒为 COUNT 单行，limit/offset 无意义，显式拒绝优于静默忽略
+        if (dryRun && (limit.HasValue || offset.HasValue))
+        {
+            return QueryResult.Fail(project, db.Type.ToString(), "dryRun=true 时不可同时指定 limit/offset。", "PARAMETER_ERROR", environment: env).ToJson(rowFormat);
+        }
+
         // 4. SQL 安全校验
         var guardResult = _sqlGuard.Validate(sql, db);
         if (!guardResult.Allowed)
         {
             _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, guardResult.Reason));
             return QueryResult.Fail(project, db.Type.ToString(), guardResult.Reason, guardResult.ErrorCode, environment: env).ToJson(rowFormat);
+        }
+
+        // 4.4 dryRun：写语句影响行数预估——不执行写，变换为 COUNT 只读查询。
+        //     provider 获取上移至此（dryRun 与正常执行路径均需要）。
+        IDatabaseProvider provider = _providerFactory.Get(db.Type);
+        if (dryRun)
+        {
+            if (guardResult.Kind != StatementKind.Write)
+            {
+                return QueryResult.Fail(project, db.Type.ToString(), "dryRun 仅对写语句生效，读语句无需预估。", "PARAMETER_ERROR", environment: env).ToJson(rowFormat);
+            }
+            if (!WriteImpactEstimator.TryBuildCountSql(sql, out string countSql, out string estReason))
+            {
+                _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, 0, 0, false, $"[dryRun不支持] {estReason}"));
+                return QueryResult.Fail(project, db.Type.ToString(), estReason, "DRYRUN_UNSUPPORTED", environment: env).ToJson(rowFormat);
+            }
+            // 走只读执行路径（内部生成的 COUNT 语句不进 SqlGuard 校验路径，入参原 SQL 已过守卫）
+            QueryResult estResult;
+            try
+            {
+                await using IAsyncDisposable slot = await _limiter.AcquireAsync(project, env, db, cancellationToken);
+                estResult = await provider.ExecuteQueryAsync(project, db, countSql, 1, cancellationToken);
+            }
+            catch (QueryRateLimitedException ex)
+            {
+                _audit.Log(MakeEntry(project, env, db.Type.ToString(), $"[dryRun] {sql}", 0, 0, false, ex.Message));
+                return QueryResult.Fail(project, db.Type.ToString(), ex.Message, "RATE_LIMITED", environment: env).ToJson(rowFormat);
+            }
+            _audit.Log(MakeEntry(project, env, db.Type.ToString(), $"[dryRun] {sql}", estResult.RowCount, estResult.ExecutionTimeMs, estResult.Success, estResult.Error));
+            if (!estResult.Success)
+            {
+                return estResult.ToJson(rowFormat);
+            }
+            return QueryResult.Ok(estResult.Project, estResult.DatabaseType, estResult.Columns, estResult.Rows,
+                estResult.MaxRows, estResult.Truncated, estResult.ExecutionTimeMs, estResult.Environment, estimated: true).ToJson(rowFormat);
         }
 
         // 4.5 offset 分页：仅对读语句生效，按方言改写 SQL（fetch = maxRows）
@@ -118,7 +162,6 @@ public sealed class DbQueryTool
         }
 
         // 5. 执行（读走 Reader，写走 NonQuery；带每环境并发限流）
-        IDatabaseProvider provider = _providerFactory.Get(db.Type);
         QueryResult result;
         try
         {

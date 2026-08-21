@@ -548,6 +548,84 @@ public class DbQueryToolTests : IDisposable
         Assert.Equal("SELECT * FROM t ORDER BY id", stub.LastSql); // SQL 未被改写
     }
 
+    // ───────── dryRun 写影响预估（P1）：COUNT 变换/错配/互斥/缺省零行为变化 ─────────
+
+    [Fact]
+    public async Task DryRun_Update_TransformsToCount_AndMarksEstimated()
+    {
+        var stubResult = QueryResult.Ok("erp", "MySql", new List<string> { "COUNT(*)" },
+            new List<object?[]> { new object?[] { 42 } }, 1, false, 5, "dev");
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(stubResult, DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.GetProperty("estimated").GetBoolean());
+        Assert.Equal("42", doc.RootElement.GetProperty("rowset").GetString()); // TSV 单行单列
+        // provider 收到的是 COUNT 只读查询（走 ExecuteQueryAsync 而非 NonQuery）
+        Assert.StartsWith("SELECT COUNT(*) FROM t WHERE id<10", stub.LastSql);
+        Assert.True(stub.ExecuteQueryCalled);
+        Assert.False(stub.ExecuteNonQueryCalled);
+    }
+
+    [Fact]
+    public async Task DryRun_OnReadOnlyStatement_ReturnsParameterError()
+    {
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t", dryRun: true);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.False(stub.ExecuteQueryCalled);
+    }
+
+    [Fact]
+    public async Task DryRun_WithLimitOrOffset_ReturnsParameterError()
+    {
+        var (tool, _) = CreateToolWithStub(
+            new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true, limit: 5);
+        Assert.Equal("PARAMETER_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+
+        json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true, offset: 5);
+        Assert.Equal("PARAMETER_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+    }
+
+    [Fact]
+    public async Task DryRun_Insert_ReturnsDryRunUnsupported()
+    {
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "INSERT INTO t (a) VALUES (1)", dryRun: true);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("DRYRUN_UNSUPPORTED", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.False(stub.ExecuteNonQueryCalled);
+    }
+
+    [Fact]
+    public async Task DryRun_Omitted_BehaviorUnchanged_NoEstimatedField()
+    {
+        var (tool, _) = CreateToolWithStub(
+            new StubProvider(QueryResult.OkWrite("erp", "MySql", 3, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.TryGetProperty("estimated", out _));
+        Assert.Equal(3, doc.RootElement.GetProperty("affectedRows").GetInt32());
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }

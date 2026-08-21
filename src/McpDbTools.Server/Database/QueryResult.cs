@@ -42,6 +42,8 @@ public sealed class QueryResult
     public int? Offset { get; init; }
     /// <summary>续翻提示：offset + rowCount，仅 offset 分页且 truncated=true 时输出。</summary>
     public int? NextOffset { get; init; }
+    /// <summary>dryRun 预估结果标志：rows 为估算影响行数（COUNT），非实际执行结果。</summary>
+    public bool Estimated { get; init; }
 
     // json 回退分支序列化 Rows 用；中文不转义（与旧实现一致）
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -87,6 +89,11 @@ public sealed class QueryResult
                 // offset 分页请求：回显 offset；truncated 时附 nextOffset 供 Agent 续翻
                 if (Offset is int off) writer.WriteNumber("offset", off);
                 if (NextOffset is int next) writer.WriteNumber("nextOffset", next);
+                if (Estimated)
+                {
+                    writer.WriteBoolean("estimated", true);
+                    writer.WriteString("note", "估算影响行数（不含触发器影响，忽略唯一约束冲突；实际执行可能不同）");
+                }
                 writer.WriteStartArray("columns");
                 foreach (string col in Columns) writer.WriteStringValue(col);
                 writer.WriteEndArray();
@@ -161,7 +168,7 @@ public sealed class QueryResult
         }
     }
 
-    public static QueryResult Ok(string project, string dbType, List<string> columns, List<object?[]> rows, int maxRows, bool truncated, long elapsedMs, string? environment = null, int? offset = null, int? nextOffset = null) => new()
+    public static QueryResult Ok(string project, string dbType, List<string> columns, List<object?[]> rows, int maxRows, bool truncated, long elapsedMs, string? environment = null, int? offset = null, int? nextOffset = null, bool estimated = false) => new()
     {
         Success = true,
         Project = project,
@@ -174,7 +181,8 @@ public sealed class QueryResult
         Truncated = truncated,
         ExecutionTimeMs = elapsedMs,
         Offset = offset,
-        NextOffset = nextOffset
+        NextOffset = nextOffset,
+        Estimated = estimated
     };
 
     public static QueryResult Fail(string project, string dbType, string error, string errorCode, long elapsedMs = 0, string? environment = null) => new()
