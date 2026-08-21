@@ -127,6 +127,8 @@ public class DbQueryToolTests : IDisposable
             => Task.FromResult<(bool, long, string?)>((true, 0, null));
         public Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<SchemaSection>>(new List<SchemaSection>());
+        public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+            => Task.FromResult(_result);
     }
 
     /// <summary>构造带开关控制 + stub provider 的工具：switchOn 控制 AuditRecordResults。</summary>
@@ -326,6 +328,8 @@ public class DbQueryToolTests : IDisposable
             => Task.FromResult<(bool, long, string?)>((false, 0, _ex.Message));
         public Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
             => Task.FromException<IReadOnlyList<SchemaSection>>(_ex);
+        public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+            => Task.FromException<QueryResult>(_ex);
     }
 
     /// <summary>

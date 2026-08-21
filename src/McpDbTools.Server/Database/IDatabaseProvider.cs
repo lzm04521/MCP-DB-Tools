@@ -30,6 +30,26 @@ public interface IDatabaseProvider
     /// 任一查询失败即返回含失败 QueryResult 的单段列表（调用方直接透传错误）。
     /// </summary>
     Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct);
+
+    /// <summary>
+    /// 执行计划查询。sql 为已通过只读校验的单条语句；基类默认 EXPLAIN 前缀拼接（MySQL/PG），
+    /// SqlServer/Oracle 的会话式实现由子类 override。
+    /// </summary>
+    Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct);
+}
+
+/// <summary>
+/// EXPLAIN 前缀构造（纯函数）。仅 MySQL/PG；SqlServer/Oracle 走 provider override，误入即抛错暴露。
+/// </summary>
+internal static class ExplainSqlBuilder
+{
+    public static string Build(DatabaseType type, string sql)
+        => type switch
+        {
+            DatabaseType.MySql or DatabaseType.PostgreSql
+                => $"EXPLAIN {sql.Trim().TrimEnd(';')}",
+            _ => throw new NotSupportedException($"{type} 的执行计划由 provider override 提供，不应走前缀拼接"),
+        };
 }
 
 /// <summary>元数据查询段结果：Name 分段标识 + 单段查询结果。</summary>
@@ -182,6 +202,16 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
         {
             return QueryResult.Fail(project, DatabaseType.ToString(), $"写操作执行错误: {ex.Message}", "QUERY_ERROR", sw.ElapsedMilliseconds, db.Environment);
         }
+    }
+
+    /// <summary>
+    /// 执行计划基类默认实现：前缀方言（MySQL/PG）经 ExplainSqlBuilder 拼接后走只读执行骨架。
+    /// SqlServer/Oracle 的会话式实现由子类 override（见 SqlServerProvider/OracleProvider）。
+    /// </summary>
+    public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+    {
+        string explainSql = ExplainSqlBuilder.Build(DatabaseType, sql);
+        return ExecuteQueryAsync(project, db, explainSql, db.MaxRows, ct);
     }
 
     /// <summary>

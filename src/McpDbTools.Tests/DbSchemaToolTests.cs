@@ -164,6 +164,8 @@ public class DbSchemaToolTests : IDisposable
 
         public Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
             => throw new NotSupportedException("db_schema 不执行写操作");
+        public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+            => throw new NotSupportedException("db_schema 不执行 explain");
         public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string cs, int t, CancellationToken ct)
             => throw new NotSupportedException();
     }
