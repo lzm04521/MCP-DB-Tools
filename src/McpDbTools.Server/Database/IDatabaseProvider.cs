@@ -208,7 +208,7 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
     /// 执行计划基类默认实现：前缀方言（MySQL/PG）经 ExplainSqlBuilder 拼接后走只读执行骨架。
     /// SqlServer/Oracle 的会话式实现由子类 override（见 SqlServerProvider/OracleProvider）。
     /// </summary>
-    public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
+    public virtual Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
     {
         string explainSql = ExplainSqlBuilder.Build(DatabaseType, sql);
         return ExecuteQueryAsync(project, db, explainSql, db.MaxRows, ct);
