@@ -20,6 +20,7 @@ description: >
 
 - `mcp__db-tools__db_list()`：列出所有 project。
 - `mcp__db-tools__db_list(project=...)`：列出该 project 下的 environment 与 DBMS type。
+- `mcp__db-tools__db_schema(project, environment?, table?, sample?)`：元数据探索——不传 `table` 返回表清单；传 `table` 返回该表列/索引/外键三段（`sample>0` 附采样行）。**优先用它替代手写 information_schema/all_tab_columns 方言 SQL**。Oracle 对象名大写存储。
 - `mcp__db-tools__db_query(project, sql, environment?, limit?, format?, offset?, dryRun?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 传 `"json"` 回退 rows 二维数组，缺省 TSV；`offset` 分页跳行（见下文）；`dryRun` 写影响预估（见下文）。
 
 层级为 project → environment 两级，无扁平环境名，且环境常增删变化。
@@ -34,6 +35,8 @@ description: >
 ## 四 DBMS 语法速查
 
 ### schema（列）
+
+优先用 `db_schema(project, table=...)`（列/索引/外键一次返回，方言无关）。手写方言查询仅作 fallback 参考：
 
 | DBMS | 查列 |
 |---|---|

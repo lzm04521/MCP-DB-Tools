@@ -231,6 +231,19 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | `OFFSET_REQUIRES_ORDER_BY` | SQL Server/Oracle 分页且 SQL 无 ORDER BY |
 | `DRYRUN_UNSUPPORTED`    | INSERT/DDL/表别名/SET 含子查询/多表/TOP/CTE 等形态不支持影响行数预估 |
 
+### db_schema
+
+列出数据库元数据，两级按需加载（与 `db_list` 哲学一致）：不传 `table` 返回表清单（schema、表名、注释、估算行数）；传 `table` 返回该表列/索引/外键三段。替代手写四方言 `information_schema` / `sys.*` / `all_*` 元数据 SQL。
+
+| 参数          | 类型   | 必填 | 说明                                                       |
+| ------------- | ------ | ---- | ---------------------------------------------------------- |
+| `project`     | string | 是   | 项目名                                                     |
+| `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment`              |
+| `table`       | string | 否   | 表名（可带 `schema.table` 前缀）；仅允许常规标识符字符     |
+| `sample`      | int    | 否   | >0 时附 `SELECT *` 采样前 N 行（需配合 `table`，取 `min(sample, maxRows)`） |
+
+返回 `sections` 数组，每段与 `db_query` 读形状同构（`name` + `columns` + TSV `rowset` + `rowCount`/`truncated`）：表清单模式单段 `tables`；单表模式三段 `columns` / `indexes` / `foreignKeys`，sample 时追加 `sample` 段。说明：Oracle 对象名以大写存储（模板内部按 `UPPER` 匹配），且 `all_*` 视图仅返回当前用户有权限可见的对象；各库行数为统计信息估算值，非精确计数。
+
 ## 配置文件详解
 
 完整配置见 [src/McpDbTools.Server/config.json](src/McpDbTools.Server/config.json)。核心结构：
