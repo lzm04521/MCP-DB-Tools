@@ -118,8 +118,9 @@ public sealed class QueryResult
         if (value is null) writer.WriteNull(name); else writer.WriteString(name, value);
     }
 
-    /// <summary>TSV 编码：\t 分列、\n 行间分隔（末行无）；NULL→\N；值内 \ → \\、tab→\t、LF→\n、CR→\r。</summary>
-    private string BuildRowset()
+    /// <summary>TSV 编码：\t 分列、\n 行间分隔（末行无）；NULL→\N；值内 \ → \\、tab→\t、LF→\n、CR→\r。
+    /// internal 供工具层组装分段返回（db_schema 等）复用同一编码。</summary>
+    internal string BuildRowset()
     {
         if (Rows.Count == 0) return string.Empty;
         var sb = new StringBuilder();
