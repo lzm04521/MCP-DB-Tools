@@ -24,6 +24,27 @@ public interface IDatabaseProvider
     /// 返回 (success, elapsedMs, error)。
     /// </summary>
     Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct);
+
+    /// <summary>
+    /// 元数据查询。table=null（或空白）返回 [tables] 单段表清单；非空返回 [columns, indexes, foreignKeys] 三段。
+    /// 任一查询失败即返回含失败 QueryResult 的单段列表（调用方直接透传错误）。
+    /// </summary>
+    Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct);
+}
+
+/// <summary>元数据查询段结果：Name 分段标识 + 单段查询结果。</summary>
+public sealed record SchemaSection(string Name, QueryResult Result);
+
+/// <summary>
+/// 模板选择纯逻辑：table null/空白 → 表清单模板；非空 → 单表详情三段模板。
+/// 与基类执行逻辑分离，便于单测（基类实际执行依赖真实连接）。
+/// </summary>
+internal static class SchemaExecutor
+{
+    public static IReadOnlyList<SchemaSectionTemplate> BuildSections(DatabaseType type, string? table)
+        => string.IsNullOrWhiteSpace(table)
+            ? SchemaDialects.Tables(type)
+            : SchemaDialects.TableDetail(type);
 }
 
 /// <summary>
@@ -163,8 +184,56 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
         }
     }
 
+    /// <summary>
+    /// 元数据查询执行：按 SchemaExecutor 选模板，逐段执行（表名经 DbParameter 参数化），
+    /// 任一段失败即短路返回失败段。建连/超时骨架与 ExecuteQueryAsync 一致。
+    /// </summary>
+    public async Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
+    {
+        IReadOnlyList<SchemaSectionTemplate> sections = SchemaExecutor.BuildSections(db.Type, table);
+
+        await using DbConnection conn = CreateConnection(db.ConnectionString);
+        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectCts.CancelAfter(TimeSpan.FromSeconds(db.ConnectTimeoutSeconds));
+        try
+        {
+            await conn.OpenAsync(connectCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", 0, db.Environment)) };
+        }
+
+        var results = new List<SchemaSection>();
+        foreach (SchemaSectionTemplate section in sections)
+        {
+            try
+            {
+                await using DbCommand cmd = conn.CreateCommand();
+                cmd.CommandText = section.Sql;
+                cmd.CommandTimeout = db.CommandTimeout;
+                if (section.HasTableParam)
+                {
+                    DbParameter p = cmd.CreateParameter();
+                    p.ParameterName = SchemaDialects.TableParamName;
+                    p.Value = table;
+                    cmd.Parameters.Add(p);
+                }
+                await using DbDataReader reader = await cmd.ExecuteReaderAsync(ct);
+                var (columns, rows, truncated) = await ReadAsync(reader, db.MaxRows, ct);
+                results.Add(new SchemaSection(section.Name, QueryResult.Ok(project, DatabaseType.ToString(), columns, rows, db.MaxRows, truncated, 0, db.Environment)));
+            }
+            catch (DbException ex)
+            {
+                // 任一段失败（表不存在等）即短路返回，调用方透传错误
+                return new[] { new SchemaSection(section.Name, QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询错误: {ex.Message}", "QUERY_ERROR", 0, db.Environment)) };
+            }
+        }
+        return results;
+    }
+
     /// <summary>从 DataReader 读取数据为 columns + rows，按 maxRows 截断。</summary>
-    private static async Task<(List<string> columns, List<object?[]> rows, bool truncated)> ReadAsync(
+    internal static async Task<(List<string> columns, List<object?[]> rows, bool truncated)> ReadAsync(
         DbDataReader reader, int maxRows, CancellationToken ct)
     {
         var columns = new List<string>(reader.FieldCount);
