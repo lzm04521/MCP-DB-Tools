@@ -12,7 +12,10 @@
 - **配置热重载**：改 `config.json` 即时生效，无需重启
 - **并发与连接池可控**：每个 `(project, env)` 独立并发闸门，避免高并发打满连接池
 - **审计日志**：本地 SQLite 全局记录查询与阻止，支持自动/手动清理；可选记录查询结果（弹窗懒加载查看）
-- **AI 友好返回**：columns 与 rows 分离，rows 用二维数组压缩 token
+- **AI 友好返回**：columns 与 TSV rowset 分离（制表符分列、`\N`=NULL），`format="json"` 可回退二维数组；读/写/失败字段矩阵瘦身，省 token
+- **分页与写影响预估**：`db_query` 支持 `offset` 分页（方言自动拼接、`truncated=true` 时返回 `nextOffset` 续翻）与 `dryRun` 预估（UPDATE/DELETE 变换 COUNT 只读查询返回估算影响行数，不执行写）
+- **元数据探索**：`db_schema` 工具两级按需加载表清单/列/索引/外键（表名参数化过滤，`sample` 可采样），替代手写四方言 `information_schema` 系 SQL
+- **执行计划**：`db_explain` 工具对只读语句返回执行计划（MySQL/PG EXPLAIN、SQL Server SHOWPLAN 不实际执行、Oracle DBMS_XPLAN），慢查询分析用
 - **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、备份管理、审计查看、全局设置与系统设置（端口/开机自启/MCP 注册/应用更新）
 - **系统托盘应用**：WinExe 单 exe，双击运行常驻系统托盘（无控制台黑窗）；Velopack 打包，支持应用内在线更新
 
@@ -111,7 +114,8 @@ url = "http://127.0.0.1:61123/mcp"
 
 1. 先调用 `db_list`（不传参数）查看可用项目；
 2. 再用 `db_list(project="xxx")` 查看该项目环境；
-3. 最后调用 `db_query` 执行只读查询。
+3. 探索表结构用 `db_schema`（不传 table 得表清单，传 table 得列/索引/外键）；
+4. 最后调用 `db_query` 执行只读查询；慢查询分析用 `db_explain`。
 
 ## 运行模式
 
@@ -169,7 +173,7 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | 传（存在） | 传（不存在）| `{success:false, errorCode:"ENVIRONMENT_NOT_FOUND", environments:[该项目全环境]}` |
 | 传（不存在）| 任意        | `{success:false, errorCode:"PROJECT_NOT_FOUND", availableProjects:[项目名数组]}` |
 
-环境详情含 `name`、`type`、`isProduction`、`maxRows` 及并发/连接池/超时配置，便于 Agent 按库类型组织 SQL、在生产环境谨慎操作。传错时响应直接回显可用项目或环境列表，可据此重试。
+环境详情含 `name`、`type`、`databaseName`、`isProduction`、`allowWrite`、`maxRows` 六个决策字段，便于 Agent 按库类型组织 SQL、在生产环境谨慎操作。传错时响应直接回显可用项目或环境列表，可据此重试。
 
 不传 project（首次发现项目）：
 
