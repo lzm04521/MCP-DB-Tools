@@ -244,6 +244,18 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 
 返回 `sections` 数组，每段与 `db_query` 读形状同构（`name` + `columns` + TSV `rowset` + `rowCount`/`truncated`）：表清单模式单段 `tables`；单表模式三段 `columns` / `indexes` / `foreignKeys`，sample 时追加 `sample` 段。说明：Oracle 对象名以大写存储（模板内部按 `UPPER` 匹配），且 `all_*` 视图仅返回当前用户有权限可见的对象；各库行数为统计信息估算值，非精确计数。
 
+### db_explain
+
+返回 SQL 执行计划，慢查询分析用。仅分析**只读语句**——写语句即使在写环境（`allowWrite=true`）也返回 `SQL_BLOCKED`（写环境下 SqlGuard 会对写语句放行，工具显式按语句类型拒绝）。
+
+| 参数          | 类型   | 必填 | 说明                                          |
+| ------------- | ------ | ---- | --------------------------------------------- |
+| `project`     | string | 是   | 项目名                                        |
+| `sql`         | string | 是   | 只读 SQL 语句                                 |
+| `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment` |
+
+返回计划行集（`columns` + TSV `rowset`，与 `db_query` 读形状同构），按方言输出：MySQL 为传统 `EXPLAIN` 列（id/select_type/table/type/key/rows/Extra）；PostgreSQL 为默认文本格式计划；SQL Server 为 `SHOWPLAN_ALL` 计划列（StmtText/PhysicalOp/EstimateRows/TotalSubtreeCost 等，**不实际执行**）；Oracle 经 `DBMS_XPLAN` 输出（依赖 PLAN_TABLE，精简权限账号缺失时报 `QUERY_ERROR` 并提示）。不支持 `EXPLAIN ANALYZE`（会实际执行语句）。
+
 ## 配置文件详解
 
 完整配置见 [src/McpDbTools.Server/config.json](src/McpDbTools.Server/config.json)。核心结构：
