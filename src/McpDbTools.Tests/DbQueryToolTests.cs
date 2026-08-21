@@ -107,14 +107,20 @@ public class DbQueryToolTests : IDisposable
         // spy 标志：T6 路由测试断言"写语句→NonQuery、读语句→Query"用
         public bool ExecuteQueryCalled { get; private set; }
         public bool ExecuteNonQueryCalled { get; private set; }
+        // spy：记录 provider 实际收到的 SQL 与 maxRows（offset 拼接/dryRun 变换断言用）
+        public string? LastSql { get; private set; }
+        public int LastMaxRows { get; private set; }
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
         {
             ExecuteQueryCalled = true;
+            LastSql = sql;
+            LastMaxRows = maxRows;
             return Task.FromResult(_result);
         }
         public Task<QueryResult> ExecuteNonQueryAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
         {
             ExecuteNonQueryCalled = true;
+            LastSql = sql;
             return Task.FromResult(_result);
         }
         public Task<(bool Success, long ElapsedMs, string? Error)> TestConnectionAsync(string connectionString, int timeoutSeconds, CancellationToken ct)
@@ -142,6 +148,20 @@ public class DbQueryToolTests : IDisposable
                 [DatabaseType.SqlServer] = new StubProvider(stubResult, DatabaseType.SqlServer)
             });
         return (new DbQueryTool(store, new SqlGuard(), factory, audit, new QueryConcurrencyLimiter()), audit);
+    }
+
+    /// <summary>Stub 注入版 helper：databasesJson 参数化配置，stub 按其类型挂载；用于 offset/dryRun 断言 provider 收到的 SQL 与 maxRows。</summary>
+    private (DbQueryTool tool, StubProvider stub) CreateToolWithStub(StubProvider stub, string databasesJson)
+    {
+        string configPath = Path.Combine(_tempDir, "config.json");
+        File.WriteAllText(configPath, $$"""{"databases":{{databasesJson}}}""");
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>()));
+        var factory = new DatabaseProviderFactory(
+            new Dictionary<DatabaseType, IDatabaseProvider> { [stub.DatabaseType] = stub });
+        return (new DbQueryTool(store, new SqlGuard(), factory, audit, new QueryConcurrencyLimiter()), stub);
     }
 
     [Fact]
@@ -415,6 +435,117 @@ public class DbQueryToolTests : IDisposable
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("PROJECT_NOT_FOUND", doc.RootElement.GetProperty("errorCode").GetString());
         Assert.Equal("json", doc.RootElement.GetProperty("format").GetString());
+    }
+
+    // ───────── offset 分页（P1）：拼接/错配/冲突/缺省零行为变化 ─────────
+
+    [Fact]
+    public async Task Offset_ReadStatement_PaginatesSqlAndReturnsOffsetFields()
+    {
+        var stubResult = QueryResult.Ok("erp", "SqlServer", new List<string> { "c" },
+            new List<object?[]> { new object?[] { 1 } }, 50, truncated: true, elapsedMs: 5, "prod");
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(stubResult, DatabaseType.SqlServer),
+            """{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs","maxRows":50}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", offset: 100);
+
+        using var doc = JsonDocument.Parse(json);
+        // provider 收到的 SQL 已按方言拼接，fetch = min(未传 limit, maxRows=50)
+        Assert.EndsWith("OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY", stub.LastSql);
+        Assert.Equal(50, stub.LastMaxRows);
+        Assert.Equal(100, doc.RootElement.GetProperty("offset").GetInt32());
+        Assert.Equal(101, doc.RootElement.GetProperty("nextOffset").GetInt32()); // offset + rowCount(1)，truncated=true
+    }
+
+    [Fact]
+    public async Task Offset_WriteStatement_ReturnsParameterError()
+    {
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(QueryResult.OkWrite("erp", "MySql", 1, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id=1", offset: 10);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.False(stub.ExecuteNonQueryCalled); // 未触达 provider
+    }
+
+    [Fact]
+    public async Task Offset_WithoutOrderBy_OnSqlServer_ReturnsOffsetRequiresOrderBy()
+    {
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(QueryResult.Ok("erp", "SqlServer", new(), new(), 1000, false, 5, "prod"), DatabaseType.SqlServer),
+            """{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t", offset: 0);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("OFFSET_REQUIRES_ORDER_BY", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.False(stub.ExecuteQueryCalled);
+    }
+
+    [Fact]
+    public async Task Offset_TrailingLimit_ReturnsParameterError()
+    {
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id LIMIT 5", offset: 0);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+    }
+
+    [Fact]
+    public async Task Offset_Negative_ReturnsParameterError()
+    {
+        var (tool, _) = CreateToolWithStub(
+            new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", offset: -1);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+    }
+
+    [Fact]
+    public async Task Offset_WithJsonFormat_RowsArrayAndOffsetCoexist()
+    {
+        var stubResult = QueryResult.Ok("erp", "MySql", new List<string> { "c" },
+            new List<object?[]> { new object?[] { 1 } }, 50, truncated: true, elapsedMs: 5, "dev");
+        var (tool, _) = CreateToolWithStub(
+            new StubProvider(stubResult, DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","maxRows":50}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", format: "json", offset: 10);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("json", doc.RootElement.GetProperty("format").GetString());
+        Assert.Equal(10, doc.RootElement.GetProperty("offset").GetInt32());
+        Assert.Equal(11, doc.RootElement.GetProperty("nextOffset").GetInt32());
+        Assert.NotNull(doc.RootElement.GetProperty("rows")); // json 回退仍输出二维数组，与 offset 字段共存
+    }
+
+    [Fact]
+    public async Task Offset_Omitted_BehaviorUnchanged_NoOffsetField()
+    {
+        // 缺省不传：返回 JSON 不出现 offset/nextOffset 字段，SQL 未被改写（零行为变化验证）
+        var stubResult = QueryResult.Ok("erp", "MySql", new List<string> { "c" },
+            new List<object?[]> { new object?[] { 1 } }, 1000, false, 5, "dev");
+        var (tool, stub) = CreateToolWithStub(
+            new StubProvider(stubResult, DatabaseType.MySql),
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id");
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.TryGetProperty("offset", out _));
+        Assert.False(doc.RootElement.TryGetProperty("nextOffset", out _));
+        Assert.Equal("SELECT * FROM t ORDER BY id", stub.LastSql); // SQL 未被改写
     }
 
     public void Dispose()

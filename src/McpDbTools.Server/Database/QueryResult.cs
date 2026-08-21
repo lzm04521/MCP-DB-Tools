@@ -38,6 +38,11 @@ public sealed class QueryResult
     public string? Error { get; init; }
     public string? ErrorCode { get; init; }
 
+    /// <summary>分页请求的实际 offset（仅 offset 分页读请求输出；null=非分页请求，不序列化）。</summary>
+    public int? Offset { get; init; }
+    /// <summary>续翻提示：offset + rowCount，仅 offset 分页且 truncated=true 时输出。</summary>
+    public int? NextOffset { get; init; }
+
     // json 回退分支序列化 Rows 用；中文不转义（与旧实现一致）
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -79,6 +84,9 @@ public sealed class QueryResult
             {
                 writer.WriteNumber("rowCount", RowCount);
                 writer.WriteBoolean("truncated", Truncated);
+                // offset 分页请求：回显 offset；truncated 时附 nextOffset 供 Agent 续翻
+                if (Offset is int off) writer.WriteNumber("offset", off);
+                if (NextOffset is int next) writer.WriteNumber("nextOffset", next);
                 writer.WriteStartArray("columns");
                 foreach (string col in Columns) writer.WriteStringValue(col);
                 writer.WriteEndArray();
@@ -153,7 +161,7 @@ public sealed class QueryResult
         }
     }
 
-    public static QueryResult Ok(string project, string dbType, List<string> columns, List<object?[]> rows, int maxRows, bool truncated, long elapsedMs, string? environment = null) => new()
+    public static QueryResult Ok(string project, string dbType, List<string> columns, List<object?[]> rows, int maxRows, bool truncated, long elapsedMs, string? environment = null, int? offset = null, int? nextOffset = null) => new()
     {
         Success = true,
         Project = project,
@@ -164,7 +172,9 @@ public sealed class QueryResult
         RowCount = rows.Count,
         MaxRows = maxRows,
         Truncated = truncated,
-        ExecutionTimeMs = elapsedMs
+        ExecutionTimeMs = elapsedMs,
+        Offset = offset,
+        NextOffset = nextOffset
     };
 
     public static QueryResult Fail(string project, string dbType, string error, string errorCode, long elapsedMs = 0, string? environment = null) => new()
