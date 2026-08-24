@@ -1,11 +1,4 @@
 window.adminApi = (() => {
-  async function ensureSession() {
-    const response = await fetch('/admin/session', { credentials: 'same-origin' });
-    if (!response.ok) {
-      throw new Error('Admin 会话初始化失败，请刷新页面重试。');
-    }
-  }
-
   async function requestJson(path, options = {}) {
     const headers = new Headers(options.headers || {});
     if (options.body) {
@@ -24,30 +17,11 @@ window.adminApi = (() => {
   }
 
   async function loadConfig() {
-    await ensureSession();
-    try {
-      return await requestJson('/admin/api/config');
-    } catch (error) {
-      if (error.status !== 401) {
-        throw error;
-      }
-
-      await ensureSession();
-      return await requestJson('/admin/api/config');
-    }
+    return requestJson('/admin/api/config');
   }
 
   async function loadVersion() {
-    try {
-      return await requestJson('/admin/api/version');
-    } catch (error) {
-      if (error.status !== 401) {
-        throw error;
-      }
-
-      await ensureSession();
-      return await requestJson('/admin/api/version');
-    }
+    return requestJson('/admin/api/version');
   }
 
   return { loadConfig, loadVersion, requestJson };

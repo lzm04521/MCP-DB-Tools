@@ -1,6 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using McpDbTools.Server.Admin;
 using McpDbTools.Server.Audit;
@@ -63,16 +61,6 @@ static async Task RunAsync(string[] args, int adminPort)
         .WithToolsFromAssembly();
 
     var app = builder.Build();
-    string sessionSecret = GenerateAdminSessionSecret();
-
-    app.Use(async (context, next) =>
-    {
-        if (IsAdminPageRequest(context.Request))
-        {
-            SetAdminSessionCookie(context.Response, sessionSecret);
-        }
-        await next.Invoke();
-    });
 
     app.UseDefaultFiles();
     app.UseStaticFiles();
@@ -82,22 +70,8 @@ static async Task RunAsync(string[] args, int adminPort)
     app.MapGet("/admin", () => Results.Redirect("/admin/index.html"));
     app.MapGet("/admin/keywords", () => Results.Redirect("/admin/#/keywords", permanent: false));
     app.MapGet("/admin/keywords.html", () => Results.Redirect("/admin/#/keywords", permanent: false));
-    app.MapGet("/admin/session", (HttpResponse response) =>
-    {
-        SetAdminSessionCookie(response, sessionSecret);
-        return Results.NoContent();
-    });
 
     var api = app.MapGroup("/admin/api");
-    api.AddEndpointFilter(async (context, next) =>
-    {
-        var httpContext = context.HttpContext;
-        if (!IsAuthorized(httpContext.Request, sessionSecret))
-        {
-            return Results.Json(new { error = "ADMIN_SESSION_REQUIRED" }, statusCode: StatusCodes.Status401Unauthorized);
-        }
-        return await next(context);
-    });
 
     // 版本信息：从 AssemblyInformationalVersion（build 时 git tag 注入）读取，供 Admin UI 展示。
     api.MapGet("/version", () => Results.Ok(new { version = AppVersion.Current }));
@@ -110,7 +84,6 @@ static async Task RunAsync(string[] args, int adminPort)
     });
 
     // 全局设置（maintenance 节点）：独立读写，只改 maintenance，不触碰 projects/keywords。
-    // 复用 api 组的 session cookie 鉴权 filter（见上方 AddEndpointFilter）。
     api.MapGet("/maintenance", (AdminConfigService service) => Results.Ok(service.GetMaintenance()));
     api.MapPut("/maintenance", async (MaintenanceSettingsRequest request, AdminConfigService service, CancellationToken cancellationToken) =>
     {
@@ -337,7 +310,7 @@ static async Task RunAsync(string[] args, int adminPort)
     });
 
     // 项目配置导入：预览（dry-run，不落盘）与应用（原子落盘 + 自动备份）。
-    // 复用 api 组的 session cookie 鉴权 filter。导出由前端直接生成，无后端端点。
+    // 导出由前端直接生成，无后端端点。
     api.MapPost("/projects/import-preview", (ImportRequest request, AdminConfigService service) =>
         Results.Ok(service.GetImportPreview(request.Json ?? string.Empty)));
 
@@ -407,49 +380,6 @@ static void ConfigureLogging(ILoggingBuilder logging)
     // 写入数据目录 logs/app-yyyyMMdd.txt，UTF-8、按日滚动、启动清理 30 天前旧文件。
     string logDir = Path.Combine(DataDirectoryResolver.EnsureExists(), "logs");
     logging.AddDailyFile(logDir);
-}
-
-const string adminSessionCookieName = "McpDbTools.AdminSession";
-
-static string GenerateAdminSessionSecret()
-{
-    Span<byte> bytes = stackalloc byte[32];
-    RandomNumberGenerator.Fill(bytes);
-    return Convert.ToHexString(bytes).ToLowerInvariant();
-}
-
-static bool IsAdminPageRequest(HttpRequest request)
-{
-    string path = request.Path.Value ?? string.Empty;
-    return path.Equals("/admin", StringComparison.OrdinalIgnoreCase) ||
-           path.Equals("/admin/", StringComparison.OrdinalIgnoreCase) ||
-           path.Equals("/admin/index.html", StringComparison.OrdinalIgnoreCase) ||
-           path.Equals("/admin/keywords", StringComparison.OrdinalIgnoreCase) ||
-           path.Equals("/admin/keywords.html", StringComparison.OrdinalIgnoreCase);
-}
-
-static void SetAdminSessionCookie(HttpResponse response, string sessionSecret)
-{
-    response.Cookies.Append(adminSessionCookieName, sessionSecret, new CookieOptions
-    {
-        HttpOnly = true,
-        SameSite = SameSiteMode.Strict,
-        Secure = false,
-        Path = "/admin"
-    });
-}
-
-static bool IsAuthorized(HttpRequest request, string sessionSecret)
-{
-    return request.Cookies.TryGetValue(adminSessionCookieName, out string? session) &&
-           FixedTimeEquals(session, sessionSecret);
-}
-
-static bool FixedTimeEquals(string left, string right)
-{
-    byte[] leftBytes = Encoding.UTF8.GetBytes(left);
-    byte[] rightBytes = Encoding.UTF8.GetBytes(right);
-    return CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
 }
 
 internal sealed record AdminStartupOptions(int AdminPort)
