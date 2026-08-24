@@ -79,8 +79,16 @@ static async Task RunAsync(string[] args, int adminPort)
     api.MapGet("/config", (AdminConfigService service) => Results.Ok(service.GetConfig()));
     api.MapPut("/config", async (AdminConfigRequest request, AdminConfigService service, CancellationToken cancellationToken) =>
     {
-        AdminSaveResult result = await service.SaveConfigAsync(request, cancellationToken);
-        return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+        try
+        {
+            AdminSaveResult result = await service.SaveConfigAsync(request, cancellationToken);
+            return result.Success ? Results.Ok(result) : Results.BadRequest(result);
+        }
+        catch (Exception ex)
+        {
+            // 权限/IO 已在 SaveConfigAsync 内转为 Errors；此处兜底未预期异常，避免裸 500 让前端只看到 statusText
+            return MapUnexpectedSaveError(ex);
+        }
     });
 
     // 全局设置（maintenance 节点）：独立读写，只改 maintenance，不触碰 projects/keywords。
@@ -98,9 +106,13 @@ static async Task RunAsync(string[] args, int adminPort)
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
         {
-            // 配置落盘权限/IO 阻塞：明确中文提示，不静默 500
-            string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex);
+            // 配置落盘权限/IO 阻塞：明确中文提示（含配置文件路径），不静默 500
+            string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex, service.ConfigPath);
             return Results.Json(new { error = msg ?? ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (Exception ex)
+        {
+            return MapUnexpectedSaveError(ex);
         }
     });
 
@@ -127,9 +139,13 @@ static async Task RunAsync(string[] args, int adminPort)
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
         {
-            // 配置落盘权限/IO 阻塞：明确中文提示，不静默 500
-            string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex);
+            // 配置落盘权限/IO 阻塞：明确中文提示（含配置文件路径），不静默 500
+            string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex, svc.ConfigPath);
             return Results.Json(new { error = msg ?? ex.Message }, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (Exception ex)
+        {
+            return MapUnexpectedSaveError(ex);
         }
     });
 
@@ -381,6 +397,15 @@ static void ConfigureLogging(ILoggingBuilder logging)
     string logDir = Path.Combine(DataDirectoryResolver.EnsureExists(), "logs");
     logging.AddDailyFile(logDir);
 }
+
+/// <summary>
+/// 配置保存类端点（config / maintenance / port）的未预期异常兜底：
+/// 500 + 结构化中文提示（异常类型 + 指引看文件日志），避免裸 500 让前端只显示 statusText（"程序异常"无法定位）。
+/// </summary>
+static IResult MapUnexpectedSaveError(Exception ex) =>
+    Results.Json(
+        new { error = $"保存失败：发生未预期的错误（{ex.GetType().Name}: {ex.Message}）。详情请查看数据目录 logs/ 下当日日志。" },
+        statusCode: StatusCodes.Status500InternalServerError);
 
 internal sealed record AdminStartupOptions(int AdminPort)
 {

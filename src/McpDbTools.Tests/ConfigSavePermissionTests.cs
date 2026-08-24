@@ -39,6 +39,8 @@ public class ConfigSavePermissionTests : IDisposable
             Assert.False(result.Success);
             Assert.NotEmpty(result.Errors);
             Assert.StartsWith("保存失败", result.Errors[0]);
+            // 提示必须带上配置文件路径，帮助用户定位被占用/拒绝的文件
+            Assert.Contains(configPath, result.Errors[0]);
         }
         finally
         {
@@ -51,18 +53,21 @@ public class ConfigSavePermissionTests : IDisposable
     [InlineData(typeof(IOException), "I/O 错误")]
     public void TryConfigWriteErrorMessage_MapsKnownExceptions(Type exType, string expectedFragment)
     {
+        const string configPath = @"C:\data\McpDbTools\config.json";
         var ex = (Exception)Activator.CreateInstance(exType)!;
-        string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex);
+        string? msg = AdminConfigService.TryConfigWriteErrorMessage(ex, configPath);
 
         Assert.NotNull(msg);
         Assert.Contains(expectedFragment, msg);
+        // 两类提示都拼入配置文件路径，便于定位
+        Assert.Contains(configPath, msg);
     }
 
     [Fact]
     public void TryConfigWriteErrorMessage_UnmappedException_ReturnsNull()
     {
-        // 非权限/IO 异常不处理，继续上冒（由上层框架兜底）
-        Assert.Null(AdminConfigService.TryConfigWriteErrorMessage(new InvalidOperationException()));
+        // 非权限/IO 异常不处理，继续上冒（由上层 API 路由兜底为 500 + 结构化提示）
+        Assert.Null(AdminConfigService.TryConfigWriteErrorMessage(new InvalidOperationException(), "config.json"));
     }
 
     private static (ConfigStore store, AdminConfigService service) BuildService(string configPath)

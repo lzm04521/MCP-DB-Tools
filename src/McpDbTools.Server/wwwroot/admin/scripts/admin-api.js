@@ -8,7 +8,9 @@ window.adminApi = (() => {
     const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const message = Array.isArray(body.errors) ? body.errors.join('\n') : (body.error || response.statusText);
+      // 优先取后端结构化 errors/error；无 JSON body 时用带状态码的中文提示，不透出英文 statusText
+      const message = Array.isArray(body.errors) ? body.errors.join('\n')
+        : (body.error || `请求失败（HTTP ${response.status}）`);
       const error = new Error(message);
       error.status = response.status;
       throw error;

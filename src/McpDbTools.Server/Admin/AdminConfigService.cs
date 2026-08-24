@@ -40,6 +40,9 @@ public sealed class AdminConfigService
         };
     }
 
+    /// <summary>当前配置文件完整路径。供 API 路由层组装落盘异常提示。</summary>
+    public string ConfigPath => _configPath;
+
     public AdminConfigResponse GetConfig()
         => ToResponse(_configStore.Current);
 
@@ -87,7 +90,7 @@ public sealed class AdminConfigService
         catch (Exception ex) when (ex is UnauthorizedAccessException || ex is IOException)
         {
             // 权限/IO 阻塞：不假成功，返回明确中文提示（路由 BadRequest，前端展示 Errors）
-            return new AdminSaveResult { Success = false, Errors = new List<string> { TryConfigWriteErrorMessage(ex)! } };
+            return new AdminSaveResult { Success = false, Errors = new List<string> { TryConfigWriteErrorMessage(ex, _configPath)! } };
         }
     }
 
@@ -612,17 +615,18 @@ public sealed class AdminConfigService
     /// 把配置落盘环节的权限/IO 异常映射为面向用户的中文提示。
     /// 仅识别 UnauthorizedAccessException（权限阻塞）与 IOException（I/O 错误），其他异常返回 null（不处理，继续上冒）。
     /// 供 SaveConfigAsync 与 Admin API 路由（maintenance / port）复用。
+    /// <param name="configPath">当前配置文件路径，拼入提示帮助用户定位被占用/拒绝的文件。</param>
     /// </summary>
-    internal static string? TryConfigWriteErrorMessage(Exception ex)
+    internal static string? TryConfigWriteErrorMessage(Exception ex, string configPath)
     {
         if (ex is UnauthorizedAccessException)
         {
             return "保存失败：对配置文件或数据目录没有写权限。数据目录可能由其他用户创建，且共享写权限未就绪。"
-                + "请以该目录所有者或管理员身份启动一次本应用以完成共享授权，然后重试。";
+                + $"请以该目录所有者或管理员身份启动一次本应用以完成共享授权，然后重试。（配置文件：{configPath}）";
         }
         if (ex is IOException)
         {
-            return $"保存失败（文件 I/O 错误）：{ex.Message}";
+            return $"保存失败（文件 I/O 错误）：{ex.Message}（配置文件：{configPath}。若提示文件被占用，请检查是否有其他程序打开了 config.json 或备份文件。）";
         }
         return null;
     }
