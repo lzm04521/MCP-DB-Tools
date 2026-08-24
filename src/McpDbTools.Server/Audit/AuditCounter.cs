@@ -64,7 +64,8 @@ public sealed class AuditCounter
             // 零值兜底：total 为 0 时启动回填为 audit_log COUNT（老库升级 / counter 表新建但已有历史日志）。
             // 初始全新部署 audit_log 也空 → COUNT=0 → 保持 0，不写库，不盲目同步。
             // audit_log 表在 AuditLogger.EnsureInitialized 中先于此处建立；独立测试场景未建表时 catch 视同 COUNT=0。
-            // 并发安全：本块在 _persistLock 内，与 Increment 持久化段串行；内存 Exchange 与 Increment 的 Interlocked 竞态最差偏差 1，下次重启 Load 校正。
+            // 并发安全：本块在 _persistLock 内，且 Increment 的内存累加与持久化也全程持同一锁，
+            // SELECT 与 Exchange 之间不会有并发 Increment 推进持久化，Exchange 不会回退内存计数。
             if (Interlocked.Read(ref _total) == 0)
             {
                 long logCount = 0;
@@ -99,27 +100,29 @@ public sealed class AuditCounter
     }
 
     /// <summary>
-    /// 应写计数 +1：内存 Interlocked 累加 + 同步持久化 UPDATE。
+    /// 应写计数 +1：内存累加 + 同步持久化 UPDATE，两者在 <see cref="_persistLock"/> 内原子推进。
     /// <para>在 AuditLogger.Log() 入队前调用。崩溃在 Increment 后入队前 → 计数器有、库没有 → 对账发现丢。</para>
     /// <para>持久化失败：catch + 记 Error，内存仍累加（方案 i）。</para>
     /// </summary>
     public void Increment(string localDateKey)
     {
-        // 内存累加（无锁快路径）
-        Interlocked.Increment(ref _total);
-
-        // 跨日处理：先确保 today key 与今日计数对齐，再累加今日
-        string current = Volatile.Read(ref _todayDateKey);
-        if (localDateKey != current)
+        // 全程持锁：EnsureInitialized 可能由消费者线程在 Log 序列中途触发 Load（SELECT→Exchange），
+        // 若内存累加在锁外，Exchange 会用旧持久化值回退内存计数（测试 DeleteOlderThan_DecrementsCounter
+        // 曾稳定复现差 1）。Monitor 可重入，EnsureToday 内部再取同锁安全。
+        lock (_persistLock)
         {
-            EnsureToday(localDateKey);
-        }
-        Interlocked.Increment(ref _todayCount);
+            Interlocked.Increment(ref _total);
 
-        // 同步持久化（锁内串行，SQLite 单连接非线程安全）
-        try
-        {
-            lock (_persistLock)
+            // 跨日处理：先确保 today key 与今日计数对齐，再累加今日
+            string current = Volatile.Read(ref _todayDateKey);
+            if (localDateKey != current)
+            {
+                EnsureToday(localDateKey);
+            }
+            Interlocked.Increment(ref _todayCount);
+
+            // 同步持久化（锁内串行，SQLite 单连接非线程安全）
+            try
             {
                 using var connection = OpenConnection();
                 EnsureTables(connection);
@@ -140,11 +143,11 @@ public sealed class AuditCounter
                 }
                 tx.Commit();
             }
-        }
-        catch (Exception ex)
-        {
-            // 方案 i：内存已加、持久化未加；不影响审计主流程，但必须上报
-            _logger.LogError(ex, "审计计数器持久化失败（内存计数仍已累加）");
+            catch (Exception ex)
+            {
+                // 方案 i：内存已加、持久化未加；不影响审计主流程，但必须上报
+                _logger.LogError(ex, "审计计数器持久化失败（内存计数仍已累加）");
+            }
         }
     }
 
