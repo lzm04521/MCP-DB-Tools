@@ -36,6 +36,11 @@ public sealed class UpdateChecker
     private static readonly TimeSpan MinAutoInterval = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
+    // 下载进度（供 GET /update/status 轮询）：回调在 Velopack 下载线程写入，
+    // int 写原子 + volatile 标志即可；读端仅做 UI 展示，允许微小竞态，不加锁。
+    private volatile bool _downloadInProgress;
+    private int _downloadPercent;
+
     public UpdateChecker(string? githubRepoUrl)
     {
         // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）
@@ -50,6 +55,12 @@ public sealed class UpdateChecker
 
     /// <summary>当前是否以"已安装"方式运行（Velopack 安装）。开发态为 false。</summary>
     public bool IsInstalled => _mgr?.IsInstalled ?? false;
+
+    /// <summary>是否正在下载更新（<see cref="DownloadAsync"/> 执行期间为 true）。</summary>
+    public bool IsDownloadInProgress => _downloadInProgress;
+
+    /// <summary>最近一次进度回调的下载百分比（0-100）。未开始下载时为 0。</summary>
+    public int DownloadPercent => _downloadPercent;
 
     /// <summary>
     /// 只读返回进程内缓存的上次检查结果。未检查过返回 null。
@@ -116,32 +127,48 @@ public sealed class UpdateChecker
         }
     }
 
-    /// <summary>下载上次检查到的更新（若无检查记录，先自动检查）。</summary>
+    /// <summary>下载上次检查到的更新（若无检查记录，先自动检查）。下载期间进度经 <see cref="DownloadPercent"/> 暴露，供 /update/status 轮询。</summary>
     public async Task<UpdateStatus> DownloadAsync()
     {
         if (_mgr is null || !_mgr.IsInstalled)
         {
             return await CheckAsync();
         }
-        _lastInfo ??= await _mgr.CheckForUpdatesAsync();
-        if (_lastInfo is null)
+        try
         {
-            var noUpdate = new UpdateStatus { Configured = true, Installed = true, Checked = true, HasUpdate = false };
-            _lastStatus = noUpdate;
-            return noUpdate;
+            _lastInfo ??= await _mgr.CheckForUpdatesAsync();
+            if (_lastInfo is null)
+            {
+                var noUpdate = new UpdateStatus { Configured = true, Installed = true, Checked = true, HasUpdate = false };
+                _lastStatus = noUpdate;
+                return noUpdate;
+            }
+            _downloadInProgress = true;
+            _downloadPercent = 0;
+            await _mgr.DownloadUpdatesAsync(_lastInfo, p => _downloadPercent = Math.Clamp(p, 0, 100));
+            var downloaded = new UpdateStatus
+            {
+                Configured = true,
+                Installed = true,
+                Checked = true,
+                HasUpdate = true,
+                TargetVersion = _lastInfo.TargetFullRelease?.Version?.ToString(),
+                Downloaded = true
+            };
+            _lastStatus = downloaded;
+            return downloaded;
         }
-        await _mgr.DownloadUpdatesAsync(_lastInfo);
-        var downloaded = new UpdateStatus
+        catch (Exception ex)
         {
-            Configured = true,
-            Installed = true,
-            Checked = true,
-            HasUpdate = true,
-            TargetVersion = _lastInfo.TargetFullRelease?.Version?.ToString(),
-            Downloaded = true
-        };
-        _lastStatus = downloaded;
-        return downloaded;
+            // 下载失败：返回错误态（与 CheckAsync 模式一致）而非抛出→500，UI 展示 error 并允许重试
+            var failed = new UpdateStatus { Configured = true, Installed = true, Checked = true, Error = ex.Message };
+            _lastStatus = failed;
+            return failed;
+        }
+        finally
+        {
+            _downloadInProgress = false;
+        }
     }
 
     /// <summary>应用已下载的更新并重启（Velopack 接管退出+替换+重启，本进程随即结束）。</summary>

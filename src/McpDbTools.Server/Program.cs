@@ -201,7 +201,10 @@ static async Task RunAsync(string[] args, int adminPort)
             s.HasUpdate,
             s.TargetVersion,
             s.Downloaded,
-            s.Error
+            s.Error,
+            // 下载进度（瞬态过程状态，不并入 UpdateStatus 检查结果模型）：下载期间前端轮询本端点刷新进度条
+            downloadInProgress = uc.IsDownloadInProgress,
+            downloadPercent = uc.DownloadPercent
         });
     });
 

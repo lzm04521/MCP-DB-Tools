@@ -817,6 +817,41 @@ input[readonly] {
   grid-template-columns: auto minmax(180px, 240px);
 }
 
+/* ============ 应用更新下载进度条（系统设置页） ============ */
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+
+.update-progress[hidden] {
+  display: none;
+}
+
+.update-progress-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-muted);
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--color-secondary);
+  transition: width 0.3s ease;
+}
+
+.update-progress-text {
+  min-width: 3.5em;
+  text-align: right;
+  font-size: 13px;
+  color: var(--color-subtle);
+}
+
 /* 手动清理行：标签 + 天数下拉 + 按钮 紧凑同行 */
 .manual-cleanup {
   display: flex;
