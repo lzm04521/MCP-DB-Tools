@@ -41,12 +41,26 @@ public sealed class UpdateChecker
     private volatile bool _downloadInProgress;
     private int _downloadPercent;
 
+    // "owner/repo" 相对路径（供拉取 GitHub release notes）；非 github.com URL 或未配置时为 null
+    private readonly string? _repoPath;
+
+    // 拉 release notes 专用 HttpClient：GitHub API 要求 User-Agent；15s 超时防悬挂拖慢检查
+    private static readonly HttpClient ReleaseHttp = CreateReleaseHttp();
+
+    private static HttpClient CreateReleaseHttp()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("McpDbTools-UpdateCheck");
+        return client;
+    }
+
     public UpdateChecker(string? githubRepoUrl)
     {
         // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）
         if (!string.IsNullOrWhiteSpace(githubRepoUrl))
         {
             _mgr = new UpdateManager(new GithubSource(githubRepoUrl, null, false));
+            _repoPath = ParseRepoPath(githubRepoUrl);
         }
     }
 
@@ -87,6 +101,34 @@ public sealed class UpdateChecker
         => lastCheckUtc is { } last && utcNow - last < minInterval;
 
     /// <summary>
+    /// 从 GitHub 仓库 URL 解析 <c>owner/repo</c> 相对路径（供拼接 releases API）。
+    /// 仅接受 github.com 绝对 URL；容忍尾斜杠、<c>.git</c> 后缀与多余路径段（如 <c>/tree/main</c>，取前两段）。
+    /// 其余情况（null/空/非绝对/非 github 域/不足两段）返回 null。纯函数便于单测。
+    /// </summary>
+    internal static string? ParseRepoPath(string? repoUrl)
+    {
+        if (string.IsNullOrWhiteSpace(repoUrl))
+        {
+            return null;
+        }
+        if (!Uri.TryCreate(repoUrl.Trim(), UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 2)
+        {
+            return null;
+        }
+        var owner = segments[0];
+        var repo = segments[1].EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+            ? segments[1][..^4]
+            : segments[1];
+        return owner.Length == 0 || repo.Length == 0 ? null : $"{owner}/{repo}";
+    }
+
+    /// <summary>
     /// 检查更新（始终发起网络请求）。手动「检查更新」按钮与后台自动检查共用。
     /// 成功（无 Error）后：更新进程内缓存 _lastStatus，并写当前 UTC 时间到持久化文件；
     /// 出错则只更新缓存（展示错误），不写持久化，下次自动检查仍会重试。
@@ -114,6 +156,11 @@ public sealed class UpdateChecker
                 HasUpdate = _lastInfo is not null,
                 TargetVersion = _lastInfo?.TargetFullRelease?.Version?.ToString()
             };
+            // best-effort 拉取 release notes / 发布页（已是最新也展示说明）：失败置 null，不阻塞检查
+            if (_repoPath is { } repo)
+            {
+                (status.Notes, status.ReleaseUrl) = await FetchReleaseMetaAsync(repo);
+            }
             _lastStatus = status;
             MarkCheckedAtUtc();
             return status;
@@ -153,7 +200,10 @@ public sealed class UpdateChecker
                 Checked = true,
                 HasUpdate = true,
                 TargetVersion = _lastInfo.TargetFullRelease?.Version?.ToString(),
-                Downloaded = true
+                Downloaded = true,
+                // 检查时拉取的更新说明/发布页随下载结果带上（前端 merge 亦会保留，后端兜底）
+                Notes = _lastStatus?.Notes,
+                ReleaseUrl = _lastStatus?.ReleaseUrl
             };
             _lastStatus = downloaded;
             return downloaded;
@@ -182,6 +232,34 @@ public sealed class UpdateChecker
     }
 
     // ============ 自动检查节流持久化 ============
+
+    /// <summary>
+    /// 拉取 GitHub <c>releases/latest</c> 的更新说明（body）与发布页地址（html_url）。
+    /// 任何失败（网络/非 2xx/解析）静默返回 (null, null)：notes 属展示增强，不阻塞检查、不改变异常语义。
+    /// </summary>
+    private static async Task<(string? Notes, string? ReleaseUrl)> FetchReleaseMetaAsync(string repoPath)
+    {
+        try
+        {
+            using var resp = await ReleaseHttp.GetAsync($"https://api.github.com/repos/{repoPath}/releases/latest");
+            resp.EnsureSuccessStatusCode();
+            await using var stream = await resp.Content.ReadAsStreamAsync();
+            using var doc = await JsonDocument.ParseAsync(stream);
+            var root = doc.RootElement;
+            var notes = root.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String
+                ? body.GetString()
+                : null;
+            var url = root.TryGetProperty("html_url", out var htmlUrl) && htmlUrl.ValueKind == JsonValueKind.String
+                ? htmlUrl.GetString()
+                : null;
+            return (notes, url);
+        }
+        catch
+        {
+            // notes 拉取失败不影响检查主流程
+            return (null, null);
+        }
+    }
 
     /// <summary>读取持久化的上次成功检查时间（UTC）。读取/解析失败返回 null（按"未检查"处理，宁可多查一次）。</summary>
     private static DateTime? GetLastCheckedAtUtc()
@@ -247,4 +325,8 @@ public sealed class UpdateStatus
     public bool Downloaded { get; set; }
     /// <summary>检查出错时的错误信息。</summary>
     public string? Error { get; set; }
+    /// <summary>最新版本的更新说明（GitHub Releases body 原文）。已是最新时为当前版本的说明。拉取失败为 null。</summary>
+    public string? Notes { get; set; }
+    /// <summary>最新版本发布页地址（GitHub Releases html_url）。拉取失败为 null；前端暂不展示（留存字段）。</summary>
+    public string? ReleaseUrl { get; set; }
 }
