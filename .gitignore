@@ -108,6 +108,7 @@ $RECYCLE.BIN/
 *.tar.gz
 *.7z
 
+AGENTS.md
 CLAUDE.md
 
 docs/*

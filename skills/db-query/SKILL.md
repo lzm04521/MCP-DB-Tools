@@ -7,9 +7,11 @@ description: >
   information_schema 系 SQL）；db_query 的 offset 分页与 dryRun 写影响预估；db_explain 执行计划
   （慢查询分析）；SQL Server/MySQL/Oracle/PostgreSQL 四 DBMS 的 schema（列）查询、索引查询、
   分页语法、字符串拼接差异；maxRows 静默截断与索引逐环境核验；写业务 SQL 前的 schema 验证；
-  可写库谨慎；性能计数器列名特例；审批人/单据快照类 SQL 的范围确认。
+  可写库谨慎；可写 Prod 环境生产变更（索引创建/清理、批量 UPDATE/DELETE）强制四件套（执行前预检查、
+  回滚备份、执行后数量对账、对账通过才可报完成）；性能计数器列名特例；审批人/单据快照类 SQL 的范围确认。
   触发词：查数据库、连库、查表结构、查列、查索引、查 schema、写 SQL、拼 SQL、分页、执行计划、
-  慢查询、SQL 很慢、explain、影响行数、预估、dryRun、采样、表清单、元数据、加索引、SQL Server、
+  慢查询、SQL 很慢、explain、影响行数、预估、dryRun、采样、表清单、元数据、加索引、生产库、
+  生产变更、批量 UPDATE、批量 DELETE、四件套、回滚备份、数量对账、BLHProd、SQL Server、
   MySQL、Oracle、PostgreSQL、性能计数器、审批人快照、单据快照、db_list、db_query、db_schema、
   db_explain、db-tools；
   以及"用 DB Prod/Test/UAT/Dev 环境验证"、"DB Prod 环境"、"Prod 环境"、"去数据库验证/确认"、
@@ -19,7 +21,7 @@ description: >
 
 # db-tools 数据库查询参考
 
-本 skill 配套 db-tools MCP，给出安全查询多项目多环境数据库的参考。核心强制约束同时在全局 `CLAUDE.md` 常驻（实时核验、schema 验证、范围确认），本 skill 负责详细语法速查与 case。
+本 skill 配套 db-tools MCP，给出安全查询多项目多环境数据库的参考。核心强制约束（实时核验、schema 验证、范围确认、生产四件套）以本 skill 为准；已执行 `/init-project` 的项目，同一套约束也写在其 `AGENTS.md` 的「数据库」章节，两处内容一致。
 
 ## 工具与层级
 
@@ -38,6 +40,7 @@ description: >
 - **写前验 schema**：写业务 SQL 前强制 schema 验证——优先 `db_schema(project, table=...)` 查列（方言无关），避免列名错误。
 - **写前预估影响**：写环境执行 UPDATE/DELETE 前先 `db_query(..., dryRun=true)` 预估影响行数，超过预期先缩小 WHERE 范围。
 - **写前定范围**：写审批人/单据快照类 SQL 前，先确认范围是"仅更新已有单据快照"还是"含设置表"，避免越界改设置表。
+- **生产变更四件套**：可写 Prod 环境（如 BLHProd）执行索引创建/清理、批量 UPDATE/DELETE 等变更时强制——① 执行前预检查：阻塞会话、后台作业依赖（如 HangFire）逐一排除；② 脚本必须附带回滚备份：被删索引保留完整定义；③ 执行后数量对账：created/dropped/affected 与计划完全一致，不一致立即报告并给出补救 SQL；④ 对账通过才可报完成。
 
 ## 四 DBMS 语法速查
 
