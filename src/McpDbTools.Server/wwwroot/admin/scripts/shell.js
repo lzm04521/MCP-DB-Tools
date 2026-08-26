@@ -45,7 +45,7 @@
     return DEFAULT_VIEW;
   }
 
-  /** 渲染顶栏：标题 / eyebrow / 保存按钮文案 / configPath 跟随当前视图。 */
+  /** 渲染页头与保存按钮：标题 / eyebrow / 保存按钮文案跟随当前视图。 */
   function applyHeader(view) {
     dom.eyebrow.textContent = view.eyebrow || '';
     dom.viewTitle.textContent = view.title || '';
