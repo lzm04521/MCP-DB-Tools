@@ -109,10 +109,25 @@
     return refs;
   }
 
+  /** 把 shell 内存中的配置路径回填到只读输入框（顶栏不再展示 configPath；未加载过则显示占位）。 */
+  function syncConfigPathInfo() {
+    const configPathInfo = document.getElementById('configPathInfo');
+    if (configPathInfo) {
+      configPathInfo.value =
+        (window.adminShell && typeof window.adminShell.getConfigPath === 'function'
+          && window.adminShell.getConfigPath()) || '尚未加载';
+    }
+  }
+
   async function loadSettings() {
     window.adminUi.setBusy(true);
     try {
-      await window.adminApi.loadConfig(); // 初始化本机会话 cookie
+      const config = await window.adminApi.loadConfig(); // 初始化本机会话 cookie
+      // 直接落在 #/settings 时 projects 等视图从未加载配置，这里接住响应补写 shell 内存值
+      if (config && config.configPath) {
+        window.adminShell.setConfigPath(`config: ${config.configPath}`);
+        syncConfigPathInfo();
+      }
       state.settings = await window.adminApi.requestJson('/admin/api/maintenance');
       bindSettings();
     } catch (error) {
@@ -240,13 +255,7 @@
         el.backupCleanupDays.value = String(state.backupCleanupDays);
       }
       bindEvents();
-      // 顶栏不再展示 configPath，设置页挂载时从 shell 读内存值回填
-      const configPathInfo = document.getElementById('configPathInfo');
-      if (configPathInfo) {
-        configPathInfo.value =
-          (window.adminShell && typeof window.adminShell.getConfigPath === 'function'
-            && window.adminShell.getConfigPath()) || '尚未加载';
-      }
+      syncConfigPathInfo();
     },
 
     onEnter() {
