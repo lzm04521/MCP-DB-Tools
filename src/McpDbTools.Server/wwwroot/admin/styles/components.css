@@ -1052,7 +1052,7 @@ input[readonly] {
 .envkey-combobox .combobox-list li:hover,
 .envkey-combobox .combobox-list li.highlighted {
   background: var(--color-accent-bg, #eef2ff);
-  color: var(--color-accent, var(--color-primary));
+  color: var(--color-primary);
 }
 
 /* ============ 审计计数器对账条 ============ */
