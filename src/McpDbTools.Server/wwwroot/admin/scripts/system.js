@@ -1,10 +1,10 @@
 /* 系统设置视图（SPA 视图模块）。
-   负责：服务端口配置（改后重启生效）、登录自启动开关、Claude Code MCP 注册、应用更新（Velopack）、应用重启。
+   负责：服务端口配置（改后重启生效）、登录自启动开关、Claude Code MCP 注册、应用重启。
+   应用更新已迁至「关于」页（scripts/about.js，一键更新流）。
    数据流：
      - 端口：GET /admin/api/port（runningPort + configPort）→ 输入框 → PUT /admin/api/port → toast 提示重启
      - 自启动：GET /admin/api/autostart → 开关 → PUT /admin/api/autostart
      - MCP 注册：POST /admin/api/register-mcp {scope}（用当前 runningPort）
-     - 更新：GET /admin/api/update/status → POST /check → POST /download（期间 500ms 轮询 /status 刷新进度条）→ POST /apply（Velopack 接管重启；轮询 /version 直到版本变化自动刷新页面）
      - 重启：POST /admin/api/restart（confirmAction 确认；旧实例退出，新实例起来）
    只读视图：各 section 独立按钮操作，不使用顶栏"保存配置"（saveLabel 为空，shell 自动隐藏保存按钮）。
    公共能力（toast/confirm/busy）来自 window.adminUi / window.adminApi。 */
@@ -12,12 +12,9 @@
   const state = {
     runningPort: null,
     configPort: null,
-    autostart: false,
-    downloading: false, // 本地下载中标志（POST /download 未返回期间，先于服务端 downloadInProgress 置位）
-    update: { currentVersion: null, configured: false, installed: false, hasUpdate: false, targetVersion: null, downloaded: false, error: null, downloadInProgress: false, downloadPercent: 0 }
+    autostart: false
   };
   let el = null; // mount 后填充
-  let progressTimer = null; // 下载进度轮询句柄
 
   function template() {
     return `
@@ -67,21 +64,6 @@
         </section>
 
         <section class="card settings-card">
-          <div class="card-title"><div><h2>应用更新<span class="eyebrow">Update</span></h2></div></div>
-          <p class="muted">当前版本 <code id="sysVersion">?</code>。通过 Velopack 检查并安装新版本。</p>
-          <div class="settings-row">
-            <button id="sysCheckUpdateBtn" type="button" class="button primary" disabled>检查更新</button>
-            <button id="sysDownloadUpdateBtn" type="button" class="button secondary" disabled>下载</button>
-            <button id="sysApplyUpdateBtn" type="button" class="button danger subtle" disabled>安装并重启</button>
-          </div>
-          <div id="sysUpdateProgress" class="update-progress" hidden>
-            <div class="update-progress-track"><div id="sysUpdateProgressFill" class="update-progress-fill"></div></div>
-            <span id="sysUpdateProgressText" class="update-progress-text">0%</span>
-          </div>
-          <p class="muted hint-inline" id="sysUpdateHint"></p>
-        </section>
-
-        <section class="card settings-card">
           <div class="card-title"><div><h2>应用控制<span class="eyebrow">Process</span></h2></div></div>
           <p class="muted">重启会先停止当前实例再启动新实例（读取最新端口）；退出请用托盘图标右键菜单。</p>
           <div class="settings-row">
@@ -97,8 +79,6 @@
       'sysRunningPort', 'sysPortInput', 'sysSavePortBtn',
       'sysAutostartToggle',
       'sysMcpScope', 'sysRegisterMcpBtn', 'sysMcpUrl',
-      'sysVersion', 'sysCheckUpdateBtn', 'sysDownloadUpdateBtn', 'sysApplyUpdateBtn', 'sysUpdateHint',
-      'sysUpdateProgress', 'sysUpdateProgressFill', 'sysUpdateProgressText',
       'sysRestartBtn'
     ];
     const refs = {};
@@ -125,7 +105,6 @@
       const auto = await window.adminApi.requestJson('/admin/api/autostart');
       state.autostart = Boolean(auto.enabled);
       bindValues();
-      await loadUpdate();
     } catch (error) {
       window.adminUi.showToast(error.message, true);
     } finally {
@@ -190,163 +169,7 @@
     }
   }
 
-  // ============ 应用更新（Velopack）============
-
-  async function loadUpdate() {
-    try {
-      const s = await window.adminApi.requestJson('/admin/api/update/status');
-      bindUpdate(s);
-    } catch (error) {
-      el.sysUpdateHint.textContent = `更新状态加载失败：${error.message}`;
-    }
-  }
-
-  function bindUpdate(s) {
-    // /update/check、/download 返回的字段不含 currentVersion/进度字段，合并保留
-    state.update = { ...state.update, ...s };
-    const u = state.update;
-    el.sysVersion.textContent = u.currentVersion || '?';
-
-    // 下载中 = 本地点击未返回 或 服务端轮询到 downloadInProgress
-    const downloading = state.downloading || Boolean(u.downloadInProgress);
-    let hint;
-    if (!u.configured) {
-      hint = '未配置更新源（UpdateSource）。需运维设置后才能检查更新。';
-    } else if (!u.installed) {
-      hint = '当前为开发模式运行（非 Velopack 安装包），无法检查更新。安装正式版后可用。';
-    } else if (!u.checked) {
-      hint = '尚未自动检查更新，点"检查更新"。';
-    } else if (u.error && !downloading) {
-      hint = `检查失败：${u.error}`;
-    } else if (downloading) {
-      hint = `正在下载新版本 ${u.targetVersion || ''}…`;
-    } else if (u.downloaded) {
-      hint = `已下载新版本 ${u.targetVersion}，点"安装并重启"应用。`;
-    } else if (u.hasUpdate) {
-      hint = `发现新版本 ${u.targetVersion}，点"下载"。`;
-    } else {
-      hint = '已是最新版本。';
-    }
-    el.sysUpdateHint.textContent = hint;
-
-    renderProgress(downloading, u.downloadPercent || 0);
-
-    // 下载中禁用全部更新按钮（setBusy 只禁顶栏按钮，覆盖不到本卡片）
-    const canCheck = u.configured && u.installed && !downloading;
-    el.sysCheckUpdateBtn.disabled = !canCheck;
-    el.sysDownloadUpdateBtn.disabled = !(canCheck && u.hasUpdate && !u.downloaded);
-    el.sysApplyUpdateBtn.disabled = !u.downloaded || downloading;
-  }
-
-  /** 渲染下载进度条：show=false 隐藏；percent 取 0-100。 */
-  function renderProgress(show, percent) {
-    el.sysUpdateProgress.hidden = !show;
-    if (!show) {
-      return;
-    }
-    const pct = Math.max(0, Math.min(100, Math.round(percent)));
-    el.sysUpdateProgressFill.style.width = `${pct}%`;
-    el.sysUpdateProgressText.textContent = `${pct}%`;
-  }
-
-  async function checkUpdate() {
-    window.adminUi.setBusy(true);
-    try {
-      const s = await window.adminApi.requestJson('/admin/api/update/check', { method: 'POST' });
-      bindUpdate(s);
-      window.adminUi.showToast(state.update.hasUpdate
-        ? `发现新版本 ${state.update.targetVersion}`
-        : '已是最新版本');
-    } catch (error) {
-      window.adminUi.showToast(error.message, true);
-    } finally {
-      window.adminUi.setBusy(false);
-    }
-  }
-
-  /** 启动下载进度轮询：500ms 拉 /update/status，读 downloadInProgress/downloadPercent 刷新进度条。 */
-  function startProgressPolling() {
-    stopProgressPolling();
-    progressTimer = setInterval(async () => {
-      try {
-        const s = await window.adminApi.requestJson('/admin/api/update/status');
-        bindUpdate(s);
-      } catch (error) {
-        // 单次轮询失败忽略（网络抖动），下一轮再试
-      }
-    }, 500);
-  }
-
-  function stopProgressPolling() {
-    if (progressTimer !== null) {
-      clearInterval(progressTimer);
-      progressTimer = null;
-    }
-  }
-
-  async function downloadUpdate() {
-    state.downloading = true;
-    bindUpdate(state.update); // 先渲染下载中态（0% 进度条 + 禁用按钮），进度轮询补真实百分比
-    startProgressPolling();
-    try {
-      const s = await window.adminApi.requestJson('/admin/api/update/download', { method: 'POST' });
-      bindUpdate(s);
-      window.adminUi.showToast(s.downloaded ? '下载完成，可安装。' : (s.error || '下载未完成'));
-    } catch (error) {
-      window.adminUi.showToast(error.message, true);
-    } finally {
-      state.downloading = false;
-      stopProgressPolling();
-      // POST /download 响应不含进度字段，state 里残留的是最后一次轮询的陈旧值
-      // （downloadInProgress=true），不清除会导致 UI 永久卡在"下载中"
-      // （进度条卡旧百分比、按钮全禁用，轮询已停再无刷新机制）。
-      state.update.downloadInProgress = false;
-      if (state.update.downloaded) {
-        state.update.downloadPercent = 100;
-      }
-      bindUpdate(state.update); // 恢复按钮态（失败可重试；成功则"安装并重启"可用）
-    }
-  }
-
-  async function applyUpdate() {
-    const ok = await window.adminUi.confirmAction('安装并重启', '将应用已下载的更新并重启应用。');
-    if (!ok) {
-      return;
-    }
-    const oldVersion = state.update.currentVersion || el.sysVersion.textContent || '';
-    window.adminUi.setBusy(true);
-    try {
-      await window.adminApi.requestJson('/admin/api/update/apply', { method: 'POST' });
-    } catch (error) {
-      // 应用重启过程连接断开属正常（Velopack 接管退出）
-    }
-    window.adminUi.setBusy(false);
-    el.sysUpdateHint.textContent = '正在应用更新并重启，完成后将自动刷新页面…';
-    waitForUpgrade(oldVersion, 0);
-  }
-
-  /** 轮询 /admin/api/version 直到版本号变化（旧进程退出、新版本起来）自动刷新页面。
-      以版本号变化而非"任意响应"判定完成：apply 响应返回后旧进程可能尚未退出。
-      5 分钟超时（安装包替换 + 重启偶发较慢），超时提示手动刷新。 */
-  function waitForUpgrade(oldVersion, elapsedMs) {
-    if (elapsedMs >= 300000) {
-      window.adminUi.showToast('等待服务恢复超时，请手动刷新页面查看状态。', true);
-      return;
-    }
-    setTimeout(async () => {
-      try {
-        const v = await window.adminApi.requestJson('/admin/api/version');
-        if (v.version && v.version !== oldVersion) {
-          window.location.reload(); // 升级完成，自动刷新加载新版本页面
-          return;
-        }
-        // 版本未变：旧进程尚未退出，或重启后仍是旧版本，继续等待
-      } catch (error) {
-        // 服务尚未恢复（连接拒绝/中断），继续等待
-      }
-      waitForUpgrade(oldVersion, elapsedMs + 2000);
-    }, 2000);
-  }
+  // ============ 应用更新（Velopack）：已迁至「关于」页（scripts/about.js） ============
 
   async function restart() {
     const portChanged = state.configPort && state.configPort !== state.runningPort;
@@ -376,9 +199,6 @@
     el.sysSavePortBtn.addEventListener('click', savePort);
     el.sysAutostartToggle.addEventListener('change', toggleAutostart);
     el.sysRegisterMcpBtn.addEventListener('click', registerMcp);
-    el.sysCheckUpdateBtn.addEventListener('click', checkUpdate);
-    el.sysDownloadUpdateBtn.addEventListener('click', downloadUpdate);
-    el.sysApplyUpdateBtn.addEventListener('click', applyUpdate);
     el.sysRestartBtn.addEventListener('click', restart);
   }
 
@@ -400,9 +220,7 @@
     },
 
     onLeave() {
-      // 停止下载进度轮询（视图卸载后进度条 DOM 已失效）；
-      // 升级等待轮询（waitForUpgrade）不清理——升级完成后刷新整页是全局期望行为
-      stopProgressPolling();
+      // 应用更新的进度轮询已随功能迁至「关于」页，本视图无后台任务需要清理
     }
   };
 })();

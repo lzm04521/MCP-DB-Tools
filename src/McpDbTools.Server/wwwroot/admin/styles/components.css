@@ -907,7 +907,7 @@ input[readonly] {
   grid-template-columns: auto minmax(180px, 240px);
 }
 
-/* ============ 应用更新下载进度条（系统设置页） ============ */
+/* ============ 应用更新下载进度条（关于页，一键更新流） ============ */
 .update-progress {
   display: flex;
   align-items: center;
@@ -940,6 +940,61 @@ input[readonly] {
   text-align: right;
   font-size: 13px;
   color: var(--color-subtle);
+}
+
+/* ============ 关于页（版本行 + 检查结果区） ============ */
+/* 版本行：标签 + 版本值 + 按钮（/徽章）横排 */
+.about-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.about-row__label {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--color-foreground);
+  min-width: 4.5em; /* "当前版本"/"最新版本" 等长对齐 */
+}
+
+.about-row__value {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-weight: 600;
+}
+
+/* 灰色徽章变体（"已是最新"）：基础 .pill 为蓝（"有新版本"直接复用） */
+.pill--muted {
+  background: var(--color-muted);
+  color: var(--color-subtle);
+}
+
+/* 检查结果区：与版本行之间加分隔线 */
+.about-result {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* 更新说明：release notes 原文（textContent 写入的 pre-wrap 纯文本） */
+.about-notes {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  background: var(--color-muted);
+  border-radius: var(--radius-md);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-subtle);
+  max-height: 360px;
+  overflow: auto;
+}
+
+/* 底部升级流程说明 */
+.about-flow {
+  margin: 14px 0 0;
 }
 
 /* 手动清理行：标签 + 天数下拉 + 按钮 紧凑同行 */
@@ -975,6 +1030,14 @@ input[readonly] {
     flex-direction: column;
     align-items: stretch;
     gap: 12px;
+  }
+  .about-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .about-row__label {
+    min-width: 0;
   }
   .manual-cleanup {
     flex-direction: column;
