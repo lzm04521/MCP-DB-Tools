@@ -1,45 +1,169 @@
 /* 组件层：按钮、卡片、表单、列表项、导航项、弹层等的外观。
    位置与尺寸由 layout.css 负责。 */
 
+/* ============ 应用骨架外观 ============ */
+
+/* 品牌顶栏：品牌蓝底白字 */
+.brandbar {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.brandbar__logo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.brandbar__logo svg {
+  width: 16px;
+  height: 16px;
+}
+
+.brandbar__name {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* 品牌栏内按钮：主=白底蓝字，次=半透明白 */
+.brandbar .button {
+  min-height: 30px;
+  padding: 5px 12px;
+  font-weight: 600;
+}
+
+.brandbar .button.primary {
+  color: var(--color-primary);
+  background: #fff;
+}
+
+.brandbar .button.primary:hover {
+  background: #eff4ff;
+}
+
+.brandbar .button.secondary {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.brandbar .button.secondary:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* 品牌栏内版本徽标：白字半透明胶囊 */
+.brandbar .app-version {
+  margin-left: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  white-space: nowrap;
+}
+
+/* 侧边导航容器：白底右边框 */
+.sidenav {
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+}
+
+/* 导航分组小标题 */
+.nav-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-subtle);
+  padding: 8px 10px 6px;
+  white-space: nowrap;
+}
+
+/* 侧边导航项（纵向菜单）：默认透明底，选中淡蓝底蓝字 */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: #374151;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.nav-item svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.nav-item:hover {
+  background: var(--color-muted);
+}
+
+.nav-item.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.nav-item.active svg {
+  opacity: 1;
+}
+
+.nav-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  color: var(--color-subtle);
+  border-style: dashed;
+}
+
 /* ============ 卡片容器（sidebar / card / empty-state 共享外观） ============ */
 .sidebar,
 .card,
 .empty-state {
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(216, 222, 232, 0.9);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(10px);
 }
 
 .sidebar {
-  padding: 18px;
+  padding: 14px;
 }
 
 .card,
 .empty-state {
-  padding: 22px;
+  padding: 16px 18px;
 }
 
 /* ============ 按钮 ============ */
 .button,
 a.button {
-  min-height: 44px;
+  min-height: 32px;
   border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 10px 18px;
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, opacity 160ms ease;
-}
-
-.button:hover,
-a.button:hover {
-  transform: translateY(-1px);
+  transition: background 160ms ease, border-color 160ms ease, opacity 160ms ease;
 }
 
 .button:focus-visible,
@@ -81,40 +205,6 @@ textarea:focus-visible {
   color: var(--color-danger);
   background: #fff5f5;
   border-color: #ffd4d4;
-}
-
-/* ============ 导航项 ============ */
-.nav-item {
-  min-height: 40px;
-  padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--color-muted);
-  color: var(--color-foreground);
-  font-weight: 700;
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  transition: background 160ms ease, border-color 160ms ease;
-}
-
-a.nav-item:hover {
-  background: #eff6ff;
-  border-color: var(--color-border);
-}
-
-.nav-item.active {
-  background: var(--color-primary);
-  color: white;
-}
-
-.nav-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-  background: transparent;
-  color: var(--color-subtle);
-  border-style: dashed;
 }
 
 /* ============ 项目 / 环境 列表项 ============ */
@@ -164,10 +254,10 @@ select,
 textarea {
   width: 100%;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: white;
   color: var(--color-foreground);
-  padding: 11px 12px;
+  padding: 7px 10px;
 }
 
 textarea {
@@ -186,9 +276,9 @@ textarea {
   border-radius: 999px;
   background: var(--color-primary-soft);
   color: var(--color-primary);
-  font-size: 13px;
-  font-weight: 700;
-  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
 }
 
 .keyword-notes {
@@ -237,7 +327,7 @@ textarea {
 .warning {
   margin-top: 16px;
   border: 1px solid #f4d58d;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: #fff8e6;
   color: var(--color-warning);
   padding: 12px 14px;
@@ -272,7 +362,7 @@ textarea {
   bottom: 24px;
   z-index: 20;
   max-width: min(420px, calc(100vw - 32px));
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--color-primary);
   color: white;
   box-shadow: var(--shadow-card);
@@ -298,7 +388,7 @@ textarea {
   border: 0;
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  padding: 24px;
+  padding: 20px;
 }
 
 .dialog::backdrop {
@@ -326,8 +416,8 @@ input[readonly] {
 }
 
 .card-title-actions .button {
-  min-height: 38px;
-  padding: 8px 16px;
+  min-height: 30px;
+  padding: 5px 12px;
 }
 
 /* ============ 测试连接结果提示条 ============ */
@@ -397,18 +487,18 @@ input[readonly] {
   color: var(--color-foreground);
   font-weight: 700;
   text-align: left;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .audit-table tbody td {
-  padding: 9px 12px;
-  border-bottom: 1px solid rgba(216, 222, 232, 0.6);
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-border);
   vertical-align: top;
 }
 
 .audit-table tbody tr:hover {
-  background: #f8fbff;
+  background: var(--color-muted);
 }
 
 .audit-table .cell-time {
@@ -516,8 +606,8 @@ input[readonly] {
 }
 
 .filter-actions .button {
-  min-height: 38px;
-  padding: 8px 16px;
+  min-height: 30px;
+  padding: 5px 12px;
 }
 
 /* ============ 分页 ============ */
@@ -530,8 +620,8 @@ input[readonly] {
 }
 
 .pager .button {
-  min-height: 38px;
-  padding: 8px 16px;
+  min-height: 30px;
+  padding: 5px 12px;
 }
 
 .pager-info {
@@ -750,7 +840,7 @@ input[readonly] {
 }
 
 .result-table tbody tr:hover {
-  background: #f8fafc;
+  background: var(--color-muted);
 }
 
 .result-table td.row-num {
@@ -860,7 +950,7 @@ input[readonly] {
   flex-wrap: wrap;
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid rgba(216, 222, 232, 0.7);
+  border-top: 1px solid var(--color-border);
 }
 
 .manual-cleanup__label {
@@ -876,8 +966,8 @@ input[readonly] {
 }
 
 .manual-cleanup .button {
-  min-height: 38px;
-  padding: 8px 16px;
+  min-height: 30px;
+  padding: 5px 12px;
 }
 
 @media (max-width: 600px) {
@@ -926,8 +1016,8 @@ input[readonly] {
   color: var(--color-muted, #6b7280);
   cursor: pointer;
   font-size: 14px;
-  border-top-right-radius: 12px;
-  border-bottom-right-radius: 12px;
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
 }
 
 .envkey-combobox .combobox-toggle:hover {
@@ -962,7 +1052,7 @@ input[readonly] {
 .envkey-combobox .combobox-list li:hover,
 .envkey-combobox .combobox-list li.highlighted {
   background: var(--color-accent-bg, #eef2ff);
-  color: var(--color-accent, #4338ca);
+  color: var(--color-accent, var(--color-primary));
 }
 
 /* ============ 审计计数器对账条 ============ */
@@ -1040,7 +1130,7 @@ input[readonly] {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border: 1px solid rgba(216, 222, 232, 0.9);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
 }
@@ -1105,10 +1195,10 @@ input[readonly] {
 
 /* 导入预览报告 */
 .transfer-report {
-  border: 1px solid rgba(216, 222, 232, 0.9);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 14px 16px;
-  background: rgba(248, 250, 252, 0.7);
+  background: var(--color-muted);
 }
 
 .transfer-report h3 {
