@@ -11,7 +11,6 @@
     eyebrow: document.getElementById('eyebrow'),
     appVersion: document.getElementById('appVersion'),
     viewTitle: document.getElementById('viewTitle'),
-    configPath: document.getElementById('configPath'),
     reloadBtn: document.getElementById('reloadBtn'),
     saveBtn: document.getElementById('saveBtn'),
     view: document.getElementById('view')
@@ -209,10 +208,19 @@
     }
   })();
 
+  let configPathText = '';
   window.adminShell = {
-    /** 供视图在 config 加载完成后回填顶栏 configPath。 */
+    /** 供视图在 config 加载完成后回填；顶栏不再展示，值存内存供设置页读取。 */
     setConfigPath(text) {
-      dom.configPath.textContent = text;
+      configPathText = text || '';
+      const el = document.getElementById('configPath');
+      if (el) {
+        el.textContent = configPathText;
+      }
+    },
+    /** 设置页挂载时读取当前配置路径；启动后尚未加载过则返回空串。 */
+    getConfigPath() {
+      return configPathText;
     }
   };
 })();

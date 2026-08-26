@@ -11,14 +11,18 @@
     <link rel="stylesheet" href="./styles/components.css" />
   </head>
   <body>
-    <!-- 顶栏：标题 + configPath + 全局操作，整个 SPA 生命周期常驻，不随视图切换刷新 -->
-    <header class="topbar">
-      <div class="topbar__head">
-        <div class="topbar__title">
-          <h1 id="viewTitle">项目管理</h1>
-          <span id="eyebrow" class="eyebrow">Local Admin</span>
+    <!-- 应用骨架：品牌顶栏 + 左侧导航 + 内容区（CSS grid，见 layout.css） -->
+    <div class="app">
+      <!-- 品牌顶栏：应用标识 + 全局操作，SPA 生命周期常驻；id 保留供 shell.js 引用 -->
+      <header class="brandbar">
+        <div class="brandbar__brand">
+          <span class="brandbar__logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
+            </svg>
+          </span>
+          <span class="brandbar__name">MCP DB Tools</span>
           <span id="appVersion" class="app-version" title="版本">v?</span>
-          <span id="configPath" class="config-path">正在加载配置路径...</span>
         </div>
         <div class="toolbar" aria-label="全局操作">
           <button id="reloadBtn" type="button" class="button secondary">
@@ -28,14 +32,25 @@
             保存配置
           </button>
         </div>
-      </div>
-      <nav id="nav" class="nav" aria-label="功能导航"></nav>
-    </header>
+      </header>
 
-    <!-- 视图容器：shell 根据当前路由注入/卸载各视图内容 -->
-    <main id="view" class="view-root"></main>
+      <!-- 侧边导航：nav.js 渲染纵向菜单项（图标 + 文字） -->
+      <aside class="sidenav">
+        <div class="nav-group-label">功能导航</div>
+        <nav id="nav" class="nav" aria-label="功能导航"></nav>
+      </aside>
 
-    <!-- 共享浮层：toast 与确认弹窗，由 shell 统一管理 -->
+      <!-- 内容区：页头（标题随视图切换）+ 视图容器（shell 注入各视图） -->
+      <main class="content">
+        <header class="page-head">
+          <h1 id="viewTitle">项目管理</h1>
+          <span id="eyebrow" class="eyebrow">Local Admin</span>
+        </header>
+        <div id="view" class="view-root"></div>
+      </main>
+    </div>
+
+    <!-- 共享浮层：toast 与确认弹窗，由 shell 统一管理（原样保留） -->
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <dialog id="confirmDialog" class="dialog">

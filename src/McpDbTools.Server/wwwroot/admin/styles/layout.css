@@ -1,31 +1,36 @@
 /* 布局层：页面骨架的位置与尺寸。
    只管“在哪里、多大”，外观（背景/边框/圆角/阴影）交给 components.css。 */
 
-/* 顶栏：左侧标题 + 右侧操作区，下方为导航条 */
-.topbar {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px clamp(16px, 4vw, 40px);
+/* ====== 应用骨架：品牌顶栏 + 侧边导航 + 内容区 ====== */
+.app {
+  display: grid;
+  grid-template:
+    "brand brand" 52px
+    "nav    main"  minmax(0, 1fr)
+    / 216px minmax(0, 1fr);
+  min-height: 100dvh;
 }
 
-.topbar__head {
+.brandbar {
+  grid-area: brand;
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  padding: 0 20px;
 }
 
-/* 标题区：h1 + eyebrow + configPath 同行横排，节省纵向空间 */
-.topbar__title {
+.brandbar__brand {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
-/* 通用“两端对齐的标题行”：toolbar / card-title / side-title / dialog-actions 复用 */
+/* 工具条（品牌栏右侧按钮组）；与 .dialog-actions/.card-title/.side-title 共享两端对齐 */
 .toolbar,
 .dialog-actions,
 .card-title,
@@ -36,80 +41,100 @@
   gap: 12px;
 }
 
-/* 导航条 */
-.nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+/* 侧边导航：全高，内容多时内部滚动 */
+.sidenav {
+  grid-area: nav;
+  position: sticky;
+  top: 52px;
+  height: calc(100dvh - 52px);
+  overflow-y: auto;
+  padding: 10px;
 }
 
-/* 视图容器：shell 注入各视图内容（含 .shell 网格）。
-   自身不设 padding（由内部 .shell 负责），确保视图切换时布局一致。 */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 内容区：自带留白，视图内部不再补外边距 */
+.content {
+  grid-area: main;
+  min-width: 0;
+  padding: 16px 20px 40px;
+}
+
+/* 页头：h1 + eyebrow 同行 */
+.page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
 .view-root {
   display: block;
 }
 
-/* 主区：左侧栏 + 右侧工作区 */
+/* ====== 以下为视图内部布局（沿用原结构，仅去外层留白） ====== */
+
+/* 主区：左侧栏 + 右侧工作区（项目配置页） */
 .shell {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
-  gap: 24px;
-  padding: 0 clamp(16px, 4vw, 40px) 40px;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 16px;
 }
 
 /* 单列布局（关键字页等全局配置页使用） */
 .shell.single {
   grid-template-columns: minmax(0, 1fr);
   max-width: 1600px;
-  margin: 0 auto;
 }
 
 .sidebar {
   align-self: start;
   position: sticky;
-  top: 18px;
+  top: 66px; /* 品牌栏 52px + 间距 */
 }
 
 .project-list {
   display: grid;
-  gap: 10px;
-  margin-top: 16px;
+  gap: 8px;
+  margin-top: 14px;
 }
 
-/* 环境列表：固定列宽（约等于左侧 project-item 宽度），auto-fill 按容器宽度排多列；
-   不用 1fr 弹性，保持每列宽度稳定 */
+/* 环境列表：固定列宽，auto-fill 按容器宽度排多列 */
 .env-tabs {
   display: grid;
   grid-template-columns: repeat(auto-fill, 280px);
-  gap: 10px;
-  margin-top: 16px;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .workspace,
 .editor {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 /* 表单网格 */
 .grid {
   display: grid;
-  gap: 16px;
-  margin-top: 18px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* 字段横排（项目配置卡片：项目 key + 显示名 + 默认环境）。
-   与连接配置 conn-header 一致的紧凑横排；窄屏自动堆叠。 */
+/* 字段横排（项目配置卡片） */
 .field-row {
   display: flex;
   flex-wrap: wrap;
   align-items: start;
-  gap: 16px;
-  margin-top: 18px;
+  gap: 14px;
+  margin-top: 14px;
 }
 .field-row > label,
 .field-row > .field {
@@ -122,30 +147,27 @@
 }
 
 .full {
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 /* 开关行：勾选框 + 文案横排 */
 .switch-row {
   align-content: center;
   grid-template-columns: auto 1fr;
-  min-height: 44px;
+  min-height: 36px;
 }
 
-/* 连接配置头部：与下方 env-params（.grid.three）同列模板/gap，列线对齐。
-   第 1 列 = conn-header-primary（环境 key combobox + 开关组横排），
-   显示名横跨第 2、3 列。替代原 .switch-pair 独立块——开关在环境 key 右侧同行。 */
+/* 连接配置头部：与 env-params 同列模板对齐 */
 .conn-header {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 18px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
-/* 第 1 列包裹层：环境 key combobox 弹性拉长，开关组按内容宽 */
 .conn-header-primary {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   align-items: start;
   min-width: 0;
 }
@@ -155,27 +177,22 @@
   min-width: 0;
 }
 
-/* 显示名横跨第 2、3 列，与下方 env-params 对应列对齐 */
 .conn-header > label {
   grid-column: 2 / -1;
   min-width: 0;
 }
 
-/* 开关组：用 grid + 标题占位对齐左右 field 的「span + 控件」两行结构，
-   使 checkbox 与 input 同一水平线 */
 .switch-group {
   display: grid;
   gap: 8px;
   flex: 0 0 auto;
 }
 
-/* 「选项」标题加粗，与左右 field 的 span 标题视觉一致 */
 .switch-group > span {
   font-weight: 700;
-  font-size: 14px;
+  font-size: 13px;
 }
 
-/* 两个开关纵向堆叠（生产环境 / 支持 DB 写 上下结构） */
 .switch-inline {
   display: flex;
   flex-direction: column;
@@ -186,22 +203,41 @@
 .switch-inline .switch-row {
   margin: 0;
   min-height: 0;
-  /* 复选框 + 文案横排，文案不占满剩余宽度 */
   grid-template-columns: auto auto;
 }
 
-/* 环境 key 帮助提示（从 combobox.field 内移出到 conn-header 之后独立成行） */
 .env-key-help {
   display: block;
   margin-top: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--color-subtle);
   font-weight: 400;
 }
 
-/* 响应式：窄屏改单列 */
+/* ====== 响应式 ====== */
+
+/* 窄屏：侧边栏收窄为图标条，表单栅格堆叠 */
 @media (max-width: 860px) {
-  .topbar__head,
+  .app {
+    grid-template:
+      "brand brand" 52px
+      "nav    main"  minmax(0, 1fr)
+      / 56px minmax(0, 1fr);
+  }
+
+  .sidenav {
+    padding: 8px 6px;
+  }
+
+  .nav-group-label,
+  .nav-item__label {
+    display: none;
+  }
+
+  .nav-item {
+    justify-content: center;
+  }
+
   .toolbar,
   .card-title,
   .side-title {
@@ -223,12 +259,10 @@
     grid-template-columns: 1fr;
   }
 
-  /* 单列下取消显示名跨列，避免显式列线落到隐式网格 */
   .conn-header > label {
     grid-column: auto;
   }
 
-  /* 审计筛选栏：窄屏下每个字段占满整行，避免挤压 */
   .audit-filter-bar .filter-field,
   .audit-filter-bar .filter-actions {
     flex: 1 1 100%;
@@ -238,7 +272,6 @@
   }
 }
 
-/* 连接配置头部：窄屏第 1 列内纵向堆叠（环境 key 与开关各占整行） */
 @media (max-width: 700px) {
   .conn-header-primary {
     flex-direction: column;
