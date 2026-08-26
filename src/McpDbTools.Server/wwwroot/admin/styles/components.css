@@ -180,6 +180,12 @@ textarea:focus-visible {
   transform: none;
 }
 
+/* 显式 display:inline-flex 会覆盖 [hidden] 的 UA 默认 display:none，导致 hidden 属性失效
+   （关于页一键更新按钮按状态显隐依赖此规则） */
+.button[hidden] {
+  display: none;
+}
+
 .primary {
   color: white;
   background: var(--color-primary);
