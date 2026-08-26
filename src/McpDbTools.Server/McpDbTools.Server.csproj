@@ -47,6 +47,9 @@
     <Content Include="wwwroot\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <!-- 单文件发布默认把内容文件归入 bundle：.ico 会被 GenerateBundle 嵌进 exe 并从磁盘输出移除
+           （favicon.ico 曾因此在发布包丢失），显式排除保证 wwwroot 全部文件外置落盘。 -->
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
     </Content>
   </ItemGroup>
 
@@ -62,6 +65,11 @@
   <!-- 测试项目访问 internal（DataDirectoryResolver.ApplyUsersModify / EnsureSharedWritable 等） -->
   <ItemGroup>
     <InternalsVisibleTo Include="McpDbTools.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Update="wwwroot\admin\favicon.ico">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

@@ -297,7 +297,13 @@
     } finally {
       state.downloading = false;
       stopProgressPolling();
-      renderProgress(false, 0);
+      // POST /download 响应不含进度字段，state 里残留的是最后一次轮询的陈旧值
+      // （downloadInProgress=true），不清除会导致 UI 永久卡在"下载中"
+      // （进度条卡旧百分比、按钮全禁用，轮询已停再无刷新机制）。
+      state.update.downloadInProgress = false;
+      if (state.update.downloaded) {
+        state.update.downloadPercent = 100;
+      }
       bindUpdate(state.update); // 恢复按钮态（失败可重试；成功则"安装并重启"可用）
     }
   }
