@@ -23,6 +23,16 @@
         <section class="card settings-card">
           <div class="card-title">
             <div>
+              <h2>配置文件<span class="eyebrow">Config</span></h2>
+            </div>
+          </div>
+          <p class="muted">当前生效的配置文件路径（只读；由服务启动时解析，改端口等需重启）。</p>
+          <input id="configPathInfo" readonly />
+        </section>
+
+        <section class="card settings-card">
+          <div class="card-title">
+            <div>
               <h2>审计日志<span class="eyebrow">Audit Log</span></h2>
             </div>
           </div>
@@ -230,6 +240,13 @@
         el.backupCleanupDays.value = String(state.backupCleanupDays);
       }
       bindEvents();
+      // 顶栏不再展示 configPath，设置页挂载时从 shell 读内存值回填
+      const configPathInfo = document.getElementById('configPathInfo');
+      if (configPathInfo) {
+        configPathInfo.value =
+          (window.adminShell && typeof window.adminShell.getConfigPath === 'function'
+            && window.adminShell.getConfigPath()) || '尚未加载';
+      }
     },
 
     onEnter() {
