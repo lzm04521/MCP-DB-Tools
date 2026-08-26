@@ -2,6 +2,13 @@
 
 为支持 MCP（Model Context Protocol）的 Agent（如 [Claude Code](https://docs.anthropic.com/claude-code)、[Codex](https://developers.openai.com/codex)）提供数据库只读访问能力的工具。基于 .NET 8 + 官方 `ModelContextProtocol` SDK，支持 SQL Server、MySQL、Oracle、PostgreSQL，内置 SQL 安全守卫、多环境配置、配置热重载、每环境并发限流、审计日志，以及本机 Admin UI 配置维护页面。
 
+## 最近更新
+
+- **v0.11.0**：Admin 管理页全新改版——品牌顶栏 + 左侧图标导航 + 紧凑视觉；新增「关于」页，应用更新迁入并重做为一键更新（下载 → 自动安装重启），检查更新时展示 GitHub Release 更新说明；全局设置页展示配置文件路径
+- **v0.10.8**：修复发布包 favicon 丢失、更新下载完成后进度条卡死
+
+完整变更见 [Releases](../../releases)。
+
 ## 功能特性
 
 - **四数据库支持**：SQL Server、MySQL、Oracle（兼容 11g R2+）、PostgreSQL
@@ -16,12 +23,12 @@
 - **分页与写影响预估**：`db_query` 支持 `offset` 分页（方言自动拼接、`truncated=true` 时返回 `nextOffset` 续翻）与 `dryRun` 预估（UPDATE/DELETE 变换 COUNT 只读查询返回估算影响行数，不执行写）
 - **元数据探索**：`db_schema` 工具两级按需加载表清单/列/索引/外键（表名参数化过滤，`sample` 可采样），替代手写四方言 `information_schema` 系 SQL
 - **执行计划**：`db_explain` 工具对只读语句返回执行计划（MySQL/PG EXPLAIN、SQL Server SHOWPLAN 不实际执行、Oracle DBMS_XPLAN），慢查询分析用
-- **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、备份管理、审计查看、全局设置与系统设置（端口/开机自启/MCP 注册/应用更新）
+- **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、配置迁移、备份管理、审计查看、全局设置、系统设置与关于页一键更新
 - **系统托盘应用**：WinExe 单 exe，双击运行常驻系统托盘（无控制台黑窗）；Velopack 打包，支持应用内在线更新
 
 ## 快速开始
 
-**Windows 用户**：从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup-<版本号>.exe` 双击安装（Velopack 安装包，无需 .NET SDK，自动建快捷方式，支持应用内在线更新，详见[发布版本安装](#发布版本安装推荐)）。
+**Windows 用户**：从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup-<版本号>.exe` 双击安装（Velopack 安装包，无需 .NET SDK，详见[发布版本安装](#发布版本安装推荐)）。
 
 **源码构建 / 非 Windows**：
 
@@ -78,7 +85,7 @@ dotnet build
 
 #### Claude Code
 
-Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 JSON 配置 `mcpServers`。HTTP 模式下只需指定 URL，服务须先单独启动（开发时 `dotnet run --project src/McpDbTools.Server`，可用 `ConfigStore__ConfigPath` 指向源码目录的 config.json；安装版用托盘应用，可在系统设置页开启开机自启）：
+Claude Code 在 `mcp.json`（项目级 `.mcp.json` 或用户级配置）中用 JSON 配置 `mcpServers`。HTTP 模式下只需指定 URL（服务启动方式见上文）：
 
 ```json
 {
@@ -141,14 +148,20 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 
 ## Admin UI
 
-浏览器打开启动日志中的地址（默认 `http://127.0.0.1:61123/admin`）即可维护配置。功能分六个页面：
+浏览器打开启动日志中的地址（默认 `http://127.0.0.1:61123/admin`）即可维护配置：
+
+![Admin UI](assets/admin-ui.png)
+
+功能分八个页面：
 
 - **项目配置**（`#/projects`）：增删项目和环境，**key 创建后不可修改**；维护连接字符串、数据库类型、`maxRows`、`commandTimeout`、环境级并发/连接池参数与阻止关键字；内置测试连接（不落盘）。
+- **配置迁移**（`#/transfer`）：勾选项目导出配置 JSON，粘贴导入并预览四类变更（新增/更新/删除/跳过）与校验问题。
 - **全局关键字**（`#/keywords`）：维护只读池 / 写池全局默认与按类型追加的阻止关键字；展示代码内置固定关键字（只读，无法在页面修改）。
 - **审计日志**（`#/audit-log`）：按项目/环境/类型/状态/时间/SQL 关键词筛选，分页查看，长文本点击弹窗复制。纯只读。
 - **备份管理**（`#/backups`）：列出、下载、恢复（恢复前自动快照可撤销）、删除配置备份。
-- **全局设置**（`#/settings`）：审计日志与备份文件的自动清理开关和保留天数；手动清理两者（按 10/20/30/50 天）。
-- **系统设置**（`#/system`）：查看/修改 Web 端口（改后自动重启生效）、开机自启开关（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，当前用户级，无需管理员）、一键注册 MCP 到 Claude Code、应用更新（检查/下载/安装 Velopack 增量更新）。
+- **全局设置**（`#/settings`）：展示配置文件路径；审计日志与备份文件的自动清理开关和保留天数；手动清理两者（按 10/20/30/50 天）。
+- **系统设置**（`#/system`）：查看/修改 Web 端口（改后自动重启生效）、开机自启开关、一键注册 MCP 到 Claude Code、重启服务。
+- **关于**（`#/about`）：当前版本、检查更新（展示最新版本与更新说明）、一键更新（下载 → 自动安装并重启，Velopack 增量更新）。
 
 写入安全：保存前自动备份当前 `config.json`，经临时文件校验后原子替换，避免 MCP 进程读到半写入文件。生产环境显示风险提示。保存会重写为标准 JSON，原注释与手工排版不保留。
 
@@ -392,9 +405,8 @@ Velopack 安装版：程序与用户数据物理分离，应用更新（增量 d
 从 [GitHub Release](../../releases) 下载 `McpDbTools-win-Setup-<版本号>.exe` 双击安装（Velopack 安装包，self-contained win-x64，免装 .NET 运行时）：
 
 - 安装后自动建开始菜单 / 桌面快捷方式，运行后常驻系统托盘
-- 在 Admin UI「系统设置」页开启**开机自启**（注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，当前用户级，无需管理员）
-- 在「系统设置」页**一键注册 MCP** 到 Claude Code
-- **应用更新**：「系统设置 → 应用更新」检查并安装新版本（Velopack 增量 delta，更新源默认 GitHub Releases）
+- 在 Admin UI「系统设置」页开启**开机自启**、**一键注册 MCP** 到 Claude Code
+- **应用更新**：在「关于」页检查更新并一键安装（Velopack 增量 delta，更新源默认 GitHub Releases，展示更新说明）
 
 便携使用可下载 `McpDbTools-win-Portable-<版本号>.zip`，解压后直接运行 `McpDbTools.Server.exe`。
 
@@ -475,7 +487,7 @@ src/McpDbTools.Server/
 ├── Hosting/           # TrayHost 托盘宿主、RunningState、RestartHelper（改端口延迟重启）
 ├── Logging/           # FileLoggerProvider（托盘无控制台时文件日志）
 ├── Security/          # SqlGuard SQL 安全守卫
-├── Tools/             # db_list / db_query MCP 工具
+├── Tools/             # db_list / db_query / db_schema / db_explain 四个 MCP 工具
 ├── wwwroot/admin/     # 静态 Admin UI（无 npm 构建链 SPA）
 └── Program.cs         # 运行模式入口
 ```
