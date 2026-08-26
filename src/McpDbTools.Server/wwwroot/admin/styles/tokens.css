@@ -1,27 +1,28 @@
 /* 设计令牌：颜色、圆角、阴影、字体等全局变量。
-   所有页面共享，调整主题只需改本文件。 */
+   所有页面共享，调整主题只需改本文件。
+   选型对齐经典管理后台（参考 61121）：品牌蓝 + 白卡 + 浅灰底 + 紧凑密度。 */
 
 :root {
   /* 语义色 */
-  --color-primary: #1e3a5f;
-  --color-primary-soft: rgba(30, 58, 95, 0.1);   /* primary 的浅底，供 .pill 等使用 */
-  --color-secondary: #2563eb;
+  --color-primary: #2563eb;
+  --color-primary-soft: #eef2ff;                  /* 选中态/浅底标签 */
+  --color-secondary: #3b82f6;                     /* hover 层次与链接强调 */
   --color-accent: #059669;
   --color-danger: #b42318;
   --color-warning: #9a6700;
 
   /* 中性色 */
-  --color-background: #f8fafc;
+  --color-background: #f5f7fa;
   --color-surface: #ffffff;
   --color-muted: #f1f5f9;
-  --color-border: #d8dee8;
-  --color-foreground: #0f172a;
-  --color-subtle: #64748b;
+  --color-border: #e5e7eb;
+  --color-foreground: #111827;
+  --color-subtle: #6b7280;
 
   /* 形状与阴影 */
-  --shadow-card: 0 16px 45px rgba(15, 23, 42, 0.08);
-  --radius-lg: 18px;
-  --radius-md: 12px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --radius-lg: 8px;
+  --radius-md: 6px;
 
   /* 字体 */
   font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
