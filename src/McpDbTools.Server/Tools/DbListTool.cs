@@ -29,18 +29,23 @@ public sealed class DbListTool
     /// project 可选：不传则返回所有项目名索引(轻量，不含环境)；传项目名则返回该项目全部环境详情；
     /// 同时传 environment 则返回单环境详情。
     /// environment 可选：配合 project 使用，单独传(不传 project)无意义。
-    /// 空白字符串等同未传。项目不存在时返回 PROJECT_NOT_FOUND 并附带 availableProjects(项目名数组)；
-    /// 环境不存在时返回 ENVIRONMENT_NOT_FOUND 并附带该项目 environments(环境详情数组)。
-    /// 返回 JSON 含 success 字段。
+    /// format 可选：text(缺省,纯文本)/json(JSON 结构)。空白字符串等同未传。
+    /// text 返回：项目索引每项目一行 "name (default env)"；环境详情每环境一行
+    /// "name	type	databaseName	prod=y|n	write=y|n	maxRows=N"（tab 分列）；错误为 "FAIL 错误码: 消息"单行。
+    /// json 返回：成功含 success/projects；PROJECT_NOT_FOUND 附 availableProjects，ENVIRONMENT_NOT_FOUND 附 environments。
     /// </summary>
     [McpServerTool(Name = "db_list")]
-    [Description("列出数据库项目与环境(按需加载)。不传参数→项目名索引(轻量，不含环境)；传 project→该项目全部环境详情；再传 environment→单环境详情。project 不存在→PROJECT_NOT_FOUND+availableProjects；environment 不存在→ENVIRONMENT_NOT_FOUND+该项目环境详情。空白字符串等同未传。环境详情含 name/type/databaseName/isProduction/allowWrite/maxRows。")]
+    [Description("列出数据库项目与环境(按需加载)。不传参数→项目名索引(轻量，不含环境)；传 project→该项目全部环境详情；再传 environment→单环境详情。project 不存在→PROJECT_NOT_FOUND+可用项目列表；environment 不存在→ENVIRONMENT_NOT_FOUND+可用环境列表。空白字符串等同未传。format 可选 text(缺省,纯文本)/json。text 每项目一行 name (default env)，环境行 name/type/databaseName/prod/write/maxRows tab 分列。")]
     public Task<string> ListProjects(
         string? project = null,
         string? environment = null,
+        string? format = null,
         CancellationToken cancellationToken = default)
     {
         ResolvedConfig config = _configStore.GetResolved();
+
+        // format 宽容解析：仅 "json"（Trim+忽略大小写）回退 JSON 结构，text 及其他值为缺省纯文本
+        bool asJson = format?.Trim().Equals("json", StringComparison.OrdinalIgnoreCase) == true;
 
         // 空白字符串等同未传（与 db_query 环境解析逻辑一致）
         bool hasProject = !string.IsNullOrWhiteSpace(project);
@@ -49,8 +54,9 @@ public sealed class DbListTool
         // 行为 1：不传 project → 项目索引（不带环境）
         if (!hasProject)
         {
-            List<object> index = ProjectListBuilder.BuildProjectIndex(config);
-            return Task.FromResult(ProjectListBuilder.SerializeSuccess(index));
+            return Task.FromResult(asJson
+                ? ProjectListBuilder.SerializeSuccess(ProjectListBuilder.BuildProjectIndex(config))
+                : ProjectListBuilder.BuildProjectIndexText(config));
         }
 
         // 判断顺序：先校验 project
@@ -59,11 +65,10 @@ public sealed class DbListTool
             // 行为 5：project 不存在 → PROJECT_NOT_FOUND + 项目名列表（无论 environment 传什么）
             List<string> names = ProjectListBuilder.BuildProjectNameList(config);
             string available = string.Join(", ", names);
-            string json = ProjectListBuilder.SerializeFail(
-                "PROJECT_NOT_FOUND",
-                $"项目不存在: {project}。可用项目: {available}",
-                new { availableProjects = names });
-            return Task.FromResult(json);
+            string error = $"项目不存在: {project}。可用项目: {available}";
+            return Task.FromResult(asJson
+                ? ProjectListBuilder.SerializeFail("PROJECT_NOT_FOUND", error, new { availableProjects = names })
+                : ProjectListBuilder.SerializeFailText("PROJECT_NOT_FOUND", error));
         }
 
         // project 存在：找到对应 KeyValuePair 供详情构造使用
@@ -72,25 +77,26 @@ public sealed class DbListTool
         // 行为 2/3：不传 environment → 该项目全环境详情
         if (!hasEnvironment)
         {
-            object full = ProjectListBuilder.BuildProjectWithEnvironments(projPair);
-            return Task.FromResult(ProjectListBuilder.SerializeSuccess(new List<object> { full }));
+            return Task.FromResult(asJson
+                ? ProjectListBuilder.SerializeSuccess(new List<object> { ProjectListBuilder.BuildProjectWithEnvironments(projPair) })
+                : ProjectListBuilder.BuildProjectEnvironmentsText(projPair));
         }
 
         // 传了 environment：校验是否存在
         if (!proj.Environments.TryGetValue(environment!, out ResolvedDatabase? _))
         {
             // 行为 4：environment 不存在 → ENVIRONMENT_NOT_FOUND + 该项目全环境详情
-            List<object> envDetails = ProjectListBuilder.BuildEnvironmentDetails(proj);
             string available = string.Join(", ", proj.Environments.Keys);
-            string json = ProjectListBuilder.SerializeFail(
-                "ENVIRONMENT_NOT_FOUND",
-                $"环境不存在: {environment}。项目 {project} 可用环境: {available}",
-                new { environments = envDetails });
-            return Task.FromResult(json);
+            string error = $"环境不存在: {environment}。项目 {project} 可用环境: {available}";
+            return Task.FromResult(asJson
+                ? ProjectListBuilder.SerializeFail("ENVIRONMENT_NOT_FOUND", error,
+                    new { environments = ProjectListBuilder.BuildEnvironmentDetails(proj) })
+                : ProjectListBuilder.SerializeFailText("ENVIRONMENT_NOT_FOUND", error));
         }
 
         // 行为 3：project + environment 均存在 → 单环境详情
-        object single = ProjectListBuilder.BuildSingleEnvironment(projPair, environment!);
-        return Task.FromResult(ProjectListBuilder.SerializeSuccess(new List<object> { single }));
+        return Task.FromResult(asJson
+            ? ProjectListBuilder.SerializeSuccess(new List<object> { ProjectListBuilder.BuildSingleEnvironment(projPair, environment!) })
+            : ProjectListBuilder.BuildProjectEnvironmentsText(projPair, environment!));
     }
 }

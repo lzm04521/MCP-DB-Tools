@@ -19,8 +19,8 @@
 - **配置热重载**：改 `config.json` 即时生效，无需重启
 - **并发与连接池可控**：每个 `(project, env)` 独立并发闸门，避免高并发打满连接池
 - **审计日志**：本地 SQLite 全局记录查询与阻止，支持自动/手动清理；可选记录查询结果（弹窗懒加载查看）
-- **AI 友好返回**：columns 与 TSV rowset 分离（制表符分列、`\N`=NULL），`format="json"` 可回退二维数组；读/写/失败字段矩阵瘦身，省 token
-- **分页与写影响预估**：`db_query` 支持 `offset` 分页（方言自动拼接、`truncated=true` 时返回 `nextOffset` 续翻）与 `dryRun` 预估（UPDATE/DELETE 变换 COUNT 只读查询返回估算影响行数，不执行写）
+- **AI 友好返回**：四工具缺省返回 text 纯文本（首行状态行 + 列名行 + TSV 数据，无 JSON 外壳与转义税，省 token）；`db_query` 可传 `format="tsv"/"json"`、`db_list` 可传 `format="json"` 回退结构化 JSON
+- **分页与写影响预估**：`db_query` 支持 `offset` 分页（方言自动拼接、截断时状态行标 `nextOffset` 续翻）与 `dryRun` 预估（UPDATE/DELETE 变换 COUNT 只读查询返回 `~N affected (estimated)`，不执行写）
 - **元数据探索**：`db_schema` 工具两级按需加载表清单/列/索引/外键（表名参数化过滤，`sample` 可采样），替代手写四方言 `information_schema` 系 SQL
 - **执行计划**：`db_explain` 工具对只读语句返回执行计划（MySQL/PG EXPLAIN、SQL Server SHOWPLAN 不实际执行、Oracle DBMS_XPLAN），慢查询分析用
 - **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、配置迁移、备份管理、审计查看、全局设置、系统设置与关于页一键更新
@@ -175,28 +175,25 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | ------------- | ------ | ---- | -------------------------------------------------------------------------- |
 | `project`     | string | 否   | 项目名。不传返回项目索引（轻量）；传则返回该项目环境详情                    |
 | `environment` | string | 否   | 环境名，配合 `project` 缩小到单环境。单独传无意义                          |
+| `format`      | string | 否   | 返回格式：缺省 `text` 纯文本；传 `"json"` 回退 JSON 结构（行为同下表矩阵） |
 
 空白字符串等同未传。行为矩阵：
 
 | project    | environment | 返回 |
 |------------|-------------|------|
-| 不传       | —           | `{success:true, projects:[{name, defaultEnvironment}]}`（项目索引，不含环境） |
+| 不传       | —           | 项目索引：每项目一行 `name (default env)`，不含环境 |
 | 传（存在） | 不传        | 该项目全环境详情 |
 | 传（存在） | 传（存在）  | 该单环境详情 |
-| 传（存在） | 传（不存在）| `{success:false, errorCode:"ENVIRONMENT_NOT_FOUND", environments:[该项目全环境]}` |
-| 传（不存在）| 任意        | `{success:false, errorCode:"PROJECT_NOT_FOUND", availableProjects:[项目名数组]}` |
+| 传（存在） | 传（不存在）| `FAIL ENVIRONMENT_NOT_FOUND` + 可用环境列表（json 档附该项目全环境 `environments`） |
+| 传（不存在）| 任意        | `FAIL PROJECT_NOT_FOUND` + 可用项目列表（json 档附 `availableProjects`） |
 
-环境详情含 `name`、`type`、`databaseName`、`isProduction`、`allowWrite`、`maxRows` 六个决策字段，便于 Agent 按库类型组织 SQL、在生产环境谨慎操作。传错时响应直接回显可用项目或环境列表，可据此重试。
+环境详情每环境一行（tab 分列）：`name  type  databaseName  prod=y|n  write=y|n  maxRows=N`，六个决策字段便于 Agent 按库类型组织 SQL、在生产环境谨慎操作。传错时错误文案直接附可用项目或环境列表，可据此重试。
 
-不传 project（首次发现项目）：
+不传 project（首次发现项目，缺省 text）：
 
-```json
-{
-  "success": true,
-  "projects": [
-    { "name": "my-project", "defaultEnvironment": "test" }
-  ]
-}
+```
+my-project (default test)
+crm (default prod)
 ```
 
 ### db_query
@@ -209,27 +206,22 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | `sql`         | string | 是   | SQL 语句；只读环境仅允许只读操作，写环境另支持 DML/DDL 写操作                  |
 | `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment`                                  |
 | `limit`       | int    | 否   | 临时限制返回行数，必须为正整数；最终取 `min(limit, maxRows)`，不能突破配置上限 |
-| `format`      | string | 否   | 行编码：传 `"json"` 回退 `rows` 二维数组；缺省 TSV `rowset`（制表符分列、`\n` 分行、`\N` 表示 NULL） |
-| `offset`      | int    | 否   | 跳过前 N 行再返回（仅读语句）；方言拼接由工具完成。SQL Server/Oracle 要求 SQL 带 `ORDER BY`；SQL 自带 `LIMIT`/`OFFSET`/`FOR UPDATE` 或多语句时不可用；`truncated=true` 时返回 `nextOffset` 供续翻 |
-| `dryRun`      | bool   | 否   | 写影响行数预估：标准形态 `UPDATE`/`DELETE` 变换为 `COUNT` 只读查询返回估算行数（`estimated: true`），不执行写；INSERT/DDL/别名/多表/TOP/CTE 等返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用 |
+| `format`      | string | 否   | 返回格式三档：缺省 `text` 纯文本（见下方示例）；`"tsv"` JSON 壳 + `rowset`；`"json"` JSON 壳 + `rows` 二维数组 |
+| `offset`      | int    | 否   | 跳过前 N 行再返回（仅读语句）；方言拼接由工具完成。SQL Server/Oracle 要求 SQL 带 `ORDER BY`；SQL 自带 `LIMIT`/`OFFSET`/`FOR UPDATE` 或多语句时不可用；截断时状态行标 `[truncated, nextOffset=N]` 供续翻 |
+| `dryRun`      | bool   | 否   | 写影响行数预估：标准形态 `UPDATE`/`DELETE` 变换为 `COUNT` 只读查询返回 `OK ~N affected (estimated)` 状态行，不执行写；INSERT/DDL/别名/多表/TOP/CTE 等返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用 |
 
-返回 JSON 示例（缺省 TSV 编码）：
+缺省返回 text 纯文本（首行状态行 + 列名行 + TSV 数据，制表符分列、换行分行、`\N` 表示 NULL、二进制列显示 `<binary NB>`）：
 
-```json
-{
-  "success": true,
-  "project": "my-project",
-  "environment": "test",
-  "databaseType": "SqlServer",
-  "format": "tsv",
-  "rowCount": 2,
-  "truncated": false,
-  "columns": ["Id", "Name", "CreatedAt"],
-  "rowset": "1\t张三\t2024-01-15\n2\t李四\t2024-03-22"
-}
+```
+OK 2 rows @my-project/test (sqlserver)
+Id	Name	CreatedAt
+1	张三	2024-01-15
+2	李四	2024-03-22
 ```
 
-`format="json"` 时 `rowset` 替换为 `rows` 二维数组。offset 分页时附 `"offset": N`，`truncated=true` 时附 `"nextOffset"`；dryRun 返回附 `"estimated": true` 与估算说明（不含触发器影响）。读成功不再输出 `maxRows`/`executionTimeMs`（省 token）；写成功输出 `affectedRows`；失败输出 `error`/`errorCode`/`executionTimeMs`。
+状态行标注规则：`offset` 分页时类型后附 `, offset=N`；截断时行尾附 `[truncated, nextOffset=M]`（未截断无标记）；dryRun 单行 `OK ~N affected (estimated) @...`；写成功单行 `OK N affected @...`；失败单行 `FAIL 错误码 @项目/环境: 错误消息`（不带执行耗时）。
+
+`format="tsv"` 返回 JSON 壳（`columns` + `rowset`，字段含 `rowCount`/`truncated`），`format="json"` 时 `rowset` 替换为 `rows` 二维数组——两档为结构化回退，适合程序化消费。
 
 错误以结构化 JSON 返回，不抛到协议层。常见错误码：
 
@@ -259,7 +251,7 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | `table`       | string | 否   | 表名（可带 `schema.table` 前缀）；仅允许常规标识符字符     |
 | `sample`      | int    | 否   | >0 时附 `SELECT *` 采样前 N 行（需配合 `table`，取 `min(sample, maxRows)`） |
 
-返回 `sections` 数组，每段与 `db_query` 读形状同构（`name` + `columns` + TSV `rowset` + `rowCount`/`truncated`）：表清单模式单段 `tables`；单表模式三段 `columns` / `indexes` / `foreignKeys`，sample 时追加 `sample` 段。说明：Oracle 对象名以大写存储（模板内部按 `UPPER` 匹配），且 `all_*` 视图仅返回当前用户有权限可见的对象；各库行数为统计信息估算值，非精确计数。
+返回 text 纯文本：首行状态行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据（段体与 `db_query` 同一编码）：表清单模式单段 `tables`；单表模式三段 `columns` / `indexes` / `foreignKeys`，sample 时追加 `sample` 段。说明：Oracle 对象名以大写存储（模板内部按 `UPPER` 匹配），且 `all_*` 视图仅返回当前用户有权限可见的对象；各库行数为统计信息估算值，非精确计数。
 
 ### db_explain
 
@@ -271,7 +263,7 @@ ConfigStore__ConfigPath=D:/GitHub/MCP-DB-Tools/src/McpDbTools.Server/config.json
 | `sql`         | string | 是   | 只读 SQL 语句                                 |
 | `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment` |
 
-返回计划行集（`columns` + TSV `rowset`，与 `db_query` 读形状同构），按方言输出：MySQL 为传统 `EXPLAIN` 列（id/select_type/table/type/key/rows/Extra）；PostgreSQL 为默认文本格式计划；SQL Server 为 `SHOWPLAN_ALL` 计划列（StmtText/PhysicalOp/EstimateRows/TotalSubtreeCost 等，**不实际执行**）；Oracle 经 `DBMS_XPLAN` 输出（依赖 PLAN_TABLE，精简权限账号缺失时报 `QUERY_ERROR` 并提示）。不支持 `EXPLAIN ANALYZE`（会实际执行语句）。
+返回计划行集（text 纯文本：状态行 + 列名行 + TSV，与 `db_query` 读形状同构），按方言输出：MySQL 为传统 `EXPLAIN` 列（id/select_type/table/type/key/rows/Extra）；PostgreSQL 为默认文本格式计划；SQL Server 为 `SHOWPLAN_ALL` 计划列（StmtText/PhysicalOp/EstimateRows/TotalSubtreeCost 等，**不实际执行**）；Oracle 经 `DBMS_XPLAN` 输出（依赖 PLAN_TABLE，精简权限账号缺失时报 `QUERY_ERROR` 并提示）。不支持 `EXPLAIN ANALYZE`（会实际执行语句）。
 
 ## 配置文件详解
 

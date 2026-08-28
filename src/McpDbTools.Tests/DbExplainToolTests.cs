@@ -39,9 +39,9 @@ public class DbExplainToolTests : IDisposable
         var tool = CreateTool(new ExplainStubProvider(DatabaseType.MySql),
             """{"erp":{"environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.Explain("nope", "SELECT 1");
+        string text = await tool.Explain("nope", "SELECT 1");
 
-        Assert.Equal("PROJECT_NOT_FOUND", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PROJECT_NOT_FOUND", text);
     }
 
     [Fact]
@@ -53,14 +53,14 @@ public class DbExplainToolTests : IDisposable
         var tool = CreateTool(stub,
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
 
-        string json = await tool.Explain("erp", "UPDATE t SET a=1 WHERE id=1");
+        string text = await tool.Explain("erp", "UPDATE t SET a=1 WHERE id=1");
 
-        Assert.Equal("SQL_BLOCKED", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL SQL_BLOCKED", text);
         Assert.False(stub.ExplainCalled);
     }
 
     [Fact]
-    public async Task ReadStatement_CallsProviderExplain_AndReturnsPlanJson()
+    public async Task ReadStatement_CallsProviderExplain_AndReturnsPlanText()
     {
         var stub = new ExplainStubProvider(DatabaseType.MySql)
         {
@@ -71,27 +71,43 @@ public class DbExplainToolTests : IDisposable
         var tool = CreateTool(stub,
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.Explain("erp", "SELECT * FROM t WHERE id=1");
+        string text = await tool.Explain("erp", "SELECT * FROM t WHERE id=1");
 
         Assert.True(stub.ExplainCalled);
-        using var doc = JsonDocument.Parse(json);
-        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
-        Assert.Equal(1, doc.RootElement.GetProperty("rowCount").GetInt32());
-        Assert.Contains("100", doc.RootElement.GetProperty("rowset").GetString()); // TSV 缺省
+        // text 缺省：状态行 + 表头 + TSV（与 db_query 读形状同构）
+        Assert.Equal(
+            "OK 1 rows @erp/dev (mysql)\n" +
+            "id\tselect_type\ttable\trows\n" +
+            "1\tSIMPLE\tt\t100",
+            text);
     }
 
-    /// <summary>db_explain 专用 stub：预设 ExplainAsync 结果 + spy。</summary>
+    [Fact]
+    public async Task UnhandledException_WrappedAsQueryUnhandled_NotEscaping()
+    {
+        // provider 抛非 DbException 逃逸异常：工具层兜底包装为 FAIL QUERY_UNHANDLED（doc/20260828 §9）
+        var stub = new ExplainStubProvider(DatabaseType.MySql) { ExplainThrows = new InvalidOperationException("boom") };
+        var tool = CreateTool(stub,
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string text = await tool.Explain("erp", "SELECT * FROM t");
+
+        Assert.StartsWith("FAIL QUERY_UNHANDLED @erp/dev: 未处理异常: boom", text);
+    }
+
+    /// <summary>db_explain 专用 stub：预设 ExplainAsync 结果 + spy；可注入逃逸异常验证工具层兜底。</summary>
     internal sealed class ExplainStubProvider : IDatabaseProvider
     {
         public DatabaseType DatabaseType { get; }
         public QueryResult ExplainResult { get; set; } = QueryResult.Ok("erp", "MySql", new List<string>(), new List<object?[]>(), 1000, false, 1, "dev");
         public bool ExplainCalled { get; private set; }
+        public Exception? ExplainThrows { get; set; }
         public ExplainStubProvider(DatabaseType type) => DatabaseType = type;
 
         public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
         {
             ExplainCalled = true;
-            return Task.FromResult(ExplainResult);
+            return ExplainThrows is not null ? Task.FromException<QueryResult>(ExplainThrows) : Task.FromResult(ExplainResult);
         }
 
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)

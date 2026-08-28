@@ -38,9 +38,9 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(new SchemaStubProvider(DatabaseType.MySql),
             """{"erp":{"environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.GetSchema("nope");
+        string text = await tool.GetSchema("nope");
 
-        Assert.Equal("PROJECT_NOT_FOUND", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PROJECT_NOT_FOUND", text);
     }
 
     [Fact]
@@ -49,15 +49,14 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(new SchemaStubProvider(DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.GetSchema("erp", environment: "staging");
+        string text = await tool.GetSchema("erp", environment: "staging");
 
-        var root = JsonDocument.Parse(json).RootElement;
-        Assert.Equal("ENVIRONMENT_NOT_FOUND", root.GetProperty("errorCode").GetString());
-        Assert.Contains("dev", root.GetProperty("error").GetString());
+        Assert.StartsWith("FAIL ENVIRONMENT_NOT_FOUND", text);
+        Assert.Contains("dev", text);
     }
 
     [Fact]
-    public async Task TableListMode_ReturnsSectionsJson()
+    public async Task TableListMode_ReturnsTextSections()
     {
         var stub = new SchemaStubProvider(DatabaseType.MySql);
         stub.Sections = new List<SchemaSection>
@@ -69,16 +68,41 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(stub,
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.GetSchema("erp");
+        string text = await tool.GetSchema("erp");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
-        Assert.Equal("dev", doc.RootElement.GetProperty("environment").GetString());
-        JsonElement section = doc.RootElement.GetProperty("sections")[0];
-        Assert.Equal("tables", section.GetProperty("name").GetString());
-        Assert.Equal(1, section.GetProperty("rowCount").GetInt32());
-        // rowset 为 TSV 文本（与 db_query 缺省编码同构）
-        Assert.Equal("\\N\torders", section.GetProperty("rowset").GetString());
+        // text：头部状态行 + "# 段名 (行数)" + 表头行 + TSV 数据（段体与 db_query 同一编码）
+        Assert.Equal(
+            "OK tables @erp/dev (mysql)\n" +
+            "# tables (1)\n" +
+            "schema_name\ttable_name\n" +
+            "\\N\torders",
+            text);
+    }
+
+    [Fact]
+    public async Task TableMode_ReturnsTextSections_WithSample()
+    {
+        var stub = new SchemaStubProvider(DatabaseType.MySql);
+        stub.Sections = new List<SchemaSection>
+        {
+            new("columns", QueryResult.Ok("erp", "MySql", new List<string> { "column_name" },
+                new List<object?[]> { new object?[] { "id" } }, 1000, false, 1, "dev")),
+        };
+        var tool = CreateTool(stub,
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string text = await tool.GetSchema("erp", table: "orders", sample: 5);
+
+        // 末段 sample：stub ExecuteQueryAsync 返回单列单行 c/1
+        Assert.Equal(
+            "OK table=orders @erp/dev (mysql)\n" +
+            "# columns (1)\n" +
+            "column_name\n" +
+            "id\n" +
+            "# sample (1)\n" +
+            "c\n" +
+            "1",
+            text);
     }
 
     [Fact]
@@ -92,9 +116,23 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(stub,
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.GetSchema("erp", table: "nope");
+        string text = await tool.GetSchema("erp", table: "nope");
 
-        Assert.Equal("QUERY_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL QUERY_ERROR", text);
+    }
+
+    [Fact]
+    public async Task UnhandledException_WrappedAsQueryUnhandled_NotEscaping()
+    {
+        // provider 抛非 DbException 逃逸异常：工具层兜底包装为 FAIL QUERY_UNHANDLED（与 db_query 阶段 3 同模式），
+        // 不让异常崩到 MCP SDK 层（doc/20260828 §9）
+        var stub = new SchemaStubProvider(DatabaseType.MySql) { GetSchemaThrows = new InvalidOperationException("boom") };
+        var tool = CreateTool(stub,
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string text = await tool.GetSchema("erp");
+
+        Assert.StartsWith("FAIL QUERY_UNHANDLED @erp/dev: 未处理异常: boom", text);
     }
 
     [Theory]
@@ -107,9 +145,9 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(new SchemaStubProvider(DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.GetSchema("erp", table: table);
+        string text = await tool.GetSchema("erp", table: table);
 
-        Assert.Equal("PARAMETER_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
     }
 
     [Fact]
@@ -118,9 +156,9 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(new SchemaStubProvider(DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.GetSchema("erp", sample: 5);
+        string text = await tool.GetSchema("erp", sample: 5);
 
-        Assert.Equal("PARAMETER_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
     }
 
     [Fact]
@@ -135,24 +173,26 @@ public class DbSchemaToolTests : IDisposable
         var tool = CreateTool(stub,
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","maxRows":20}}}}""");
 
-        string json = await tool.GetSchema("erp", table: "orders", sample: 5);
+        string text = await tool.GetSchema("erp", table: "orders", sample: 5);
 
         Assert.StartsWith("SELECT * FROM orders", stub.LastSampleSql);
         Assert.Equal(5, stub.LastSampleMaxRows); // sample < maxRows 取 sample
-        Assert.True(JsonDocument.Parse(json).RootElement.GetProperty("success").GetBoolean());
+        Assert.StartsWith("OK table=orders @erp/dev (mysql)", text);
     }
 
-    /// <summary>DbSchemaTool 专用 stub：预设 GetSchemaAsync 段 + 采样 spy。</summary>
+    /// <summary>DbSchemaTool 专用 stub：预设 GetSchemaAsync 段 + 采样 spy；可注入逃逸异常验证工具层兜底。</summary>
     internal sealed class SchemaStubProvider : IDatabaseProvider
     {
         public DatabaseType DatabaseType { get; }
         public List<SchemaSection> Sections { get; set; } = new();
         public string? LastSampleSql { get; private set; }
         public int LastSampleMaxRows { get; private set; }
+        public Exception? GetSchemaThrows { get; set; }
         public SchemaStubProvider(DatabaseType type) => DatabaseType = type;
 
         public Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<SchemaSection>>(Sections);
+            => GetSchemaThrows is not null ? Task.FromException<IReadOnlyList<SchemaSection>>(GetSchemaThrows)
+                : Task.FromResult<IReadOnlyList<SchemaSection>>(Sections);
 
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
         {

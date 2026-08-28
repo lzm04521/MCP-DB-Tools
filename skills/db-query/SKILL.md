@@ -28,8 +28,8 @@ description: >
 - `mcp__db-tools__db_list()`：列出所有 project。
 - `mcp__db-tools__db_list(project=...)`：列出该 project 下的 environment 与 DBMS type。
 - `mcp__db-tools__db_schema(project, environment?, table?, sample?)`：元数据探索——不传 `table` 返回表清单；传 `table` 返回该表列/索引/外键三段（`sample>0` 附采样行）。**优先用它替代手写 information_schema/all_tab_columns 方言 SQL**。Oracle 对象名大写存储。
-- `mcp__db-tools__db_explain(project, sql, environment?)`：执行计划（慢查询分析）——仅只读语句（写语句返回 SQL_BLOCKED）；返回计划行集（columns + rowset TSV）。
-- `mcp__db-tools__db_query(project, sql, environment?, limit?, format?, offset?, dryRun?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 传 `"json"` 回退 rows 二维数组，缺省 TSV；`offset` 分页跳行（见下文）；`dryRun` 写影响预估（见下文）。
+- `mcp__db-tools__db_explain(project, sql, environment?)`：执行计划（慢查询分析）——仅只读语句（写语句返回 SQL_BLOCKED）；返回计划行集（text：状态行 + 列名 + TSV，与 db_query 同构）。
+- `mcp__db-tools__db_query(project, sql, environment?, limit?, format?, offset?, dryRun?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 三档 text（缺省纯文本）/tsv/json（见「返回格式」）；`offset` 分页跳行（见下文）；`dryRun` 写影响预估（见下文）。
 
 层级为 project → environment 两级，无扁平环境名，且环境常增删变化。
 
@@ -68,7 +68,7 @@ description: >
 
 ### 分页
 
-**优先用 db_query 的 `offset` 参数**，工具按方言自动拼接，无需手写分页子句；`truncated=true` 时返回值带 `nextOffset` 直接续翻。约束：仅读语句；SQL Server/Oracle 的 SQL 必须带 `ORDER BY`；SQL 已自带 `LIMIT`/`OFFSET`/`FOR UPDATE` 或多语句时先去掉再传 offset。手写方言分页仅作参考：
+**优先用 db_query 的 `offset` 参数**，工具按方言自动拼接，无需手写分页子句；截断时状态行标 `[truncated, nextOffset=N]` 直接续翻。约束：仅读语句；SQL Server/Oracle 的 SQL 必须带 `ORDER BY`；SQL 已自带 `LIMIT`/`OFFSET`/`FOR UPDATE` 或多语句时先去掉再传 offset。手写方言分页仅作参考：
 
 | DBMS | 分页 |
 |---|---|
@@ -88,16 +88,22 @@ description: >
 
 PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊匹配用 `ILIKE`，不是 `LIKE`。
 
-## 返回格式（db_query）
+## 返回格式
 
-- 默认（TSV）：`columns` 列名数组 + `rowset` TSV 文本——制表符分列、`\n` 分行、`\N` 表示 NULL、空字段为空字符串；值内的 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`。
-- `format="json"`：回退 `rows` 二维数组（需要精确结构时用）。
-- 读结果带 `rowCount`/`truncated`；写结果带 `affectedRows`；失败带 `error`/`errorCode`/`executionTimeMs`。
-- `offset` 分页请求附 `offset` 回显；`truncated=true` 时附 `nextOffset` 续翻。
+四工具缺省返回 **text 纯文本**（省 token，无 JSON 外壳）：
+
+- **读成功（db_query / db_explain）**：首行状态行 `OK {行数} rows @项目/环境 (类型[, offset=N]) [truncated, nextOffset=M]`，第 2 行列名，其后数据行 TSV——制表符分列、换行分行、`\N` 表示 NULL、空字段为空字符串；值内 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`；二进制列显示 `<binary NB>`（json 档保留 base64）。
+- **写成功**：`OK {N} affected @项目/环境 (类型)` 单行。
+- **dryRun 预估**：`OK ~{N} affected (estimated) @项目/环境 (类型)` 单行。
+- **失败**：`FAIL {错误码} @项目/环境: {错误消息}`（消息可能多行跟随）。
+- **db_schema**：首行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据。
+- **db_list**：项目索引每项目一行 `name (default env)`；环境详情每环境一行（`name→type→databaseName→prod=y|n→write=y|n→maxRows=N`，tab 分列）。
+
+结构化回退：db_query 传 `format="tsv"`（JSON 壳 + rowset）或 `format="json"`（JSON 壳 + rows 二维数组，需精确结构时用）；db_list 传 `format="json"`。db_schema/db_explain 不开放 format 参数。
 
 ## 写影响预估（dryRun）
 
-写环境执行 `UPDATE`/`DELETE` 前，先 `dryRun=true` 预估影响行数（工具变换为 `COUNT` 只读查询，不执行写），返回 `estimated: true` + 估算行数；超过预期就缩小 WHERE 范围。限制：仅标准形态（无别名/单表/SET 无子查询）；INSERT/DDL/复杂形态返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用。估算不含触发器影响，审计记 `[dryRun]` 前缀。
+写环境执行 `UPDATE`/`DELETE` 前，先 `dryRun=true` 预估影响行数（工具变换为 `COUNT` 只读查询，不执行写），返回 `OK ~N affected (estimated)` 状态行；超过预期就缩小 WHERE 范围。限制：仅标准形态（无别名/单表/SET 无子查询）；INSERT/DDL/复杂形态返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用。估算不含触发器影响，审计记 `[dryRun]` 前缀。
 
 ## 执行计划（db_explain，慢查询分析）
 
@@ -105,7 +111,7 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 
 ## 截断与误判陷阱
 
-- `maxRows` 默认 1000（以环境返回为准）。大结果必须限行或分页，否则被静默截断导致误判；被截断（`truncated=true`）时用 `offset` 参数（或返回的 `nextOffset`）续翻。
+- `maxRows` 默认 1000（以环境返回为准）。大结果必须限行或分页，否则被静默截断导致误判；截断时状态行标 `[truncated, nextOffset=N]`，用 `offset` 参数（或该 nextOffset）续翻。
 - 索引部署因环境而异——索引存在性、使用情况要逐环境核验，不能拿一个环境的结果推广到全部。
 
 ## 特殊 case

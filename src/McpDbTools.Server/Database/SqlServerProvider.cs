@@ -33,13 +33,26 @@ public sealed class SqlServerProvider : DatabaseProviderBase
         {
             return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
         }
+        catch (DbException ex)
+        {
+            // 建连失败：与 ExecuteQueryAsync 骨架一致包装为 QUERY_ERROR，不逃逸
+            return QueryResult.Fail(project, DatabaseType.ToString(), $"执行计划查询错误: {ex.Message}", "QUERY_ERROR", sw.ElapsedMilliseconds, db.Environment);
+        }
 
         string[] seq = BuildShowPlanSequence(sql);
-        await using (DbCommand on = conn.CreateCommand())
+        try
         {
-            on.CommandText = seq[0];
-            on.CommandTimeout = db.CommandTimeout;
-            await on.ExecuteNonQueryAsync(ct);
+            await using (DbCommand on = conn.CreateCommand())
+            {
+                on.CommandText = seq[0];
+                on.CommandTimeout = db.CommandTimeout;
+                await on.ExecuteNonQueryAsync(ct);
+            }
+        }
+        catch (DbException ex)
+        {
+            // SET SHOWPLAN_ALL ON 失败（权限等）：包装为 QUERY_ERROR，不逃逸
+            return QueryResult.Fail(project, DatabaseType.ToString(), $"执行计划查询错误: {ex.Message}", "QUERY_ERROR", sw.ElapsedMilliseconds, db.Environment);
         }
 
         try

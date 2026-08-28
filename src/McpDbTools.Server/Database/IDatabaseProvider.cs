@@ -216,50 +216,67 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
 
     /// <summary>
     /// 元数据查询执行：按 SchemaExecutor 选模板，逐段执行（表名经 DbParameter 参数化），
-    /// 任一段失败即短路返回失败段。建连/超时骨架与 ExecuteQueryAsync 一致。
+    /// 任一段失败即短路返回失败段。建连/超时/异常矩阵与 ExecuteQueryAsync 一致：
+    /// 建连抛出的 DbException（如 ORA-12154）同样包装为失败段，不逃逸到 MCP SDK 层。
     /// </summary>
     public async Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
     {
         IReadOnlyList<SchemaSectionTemplate> sections = SchemaExecutor.BuildSections(db.Type, table);
 
-        await using DbConnection conn = CreateConnection(db.ConnectionString);
-        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        connectCts.CancelAfter(TimeSpan.FromSeconds(db.ConnectTimeoutSeconds));
         try
         {
-            await conn.OpenAsync(connectCts.Token);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", 0, db.Environment)) };
-        }
-
-        var results = new List<SchemaSection>();
-        foreach (SchemaSectionTemplate section in sections)
-        {
+            await using DbConnection conn = CreateConnection(db.ConnectionString);
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(db.ConnectTimeoutSeconds));
             try
             {
-                await using DbCommand cmd = conn.CreateCommand();
-                cmd.CommandText = section.Sql;
-                cmd.CommandTimeout = db.CommandTimeout;
-                if (section.HasTableParam)
-                {
-                    DbParameter p = cmd.CreateParameter();
-                    p.ParameterName = SchemaDialects.TableParamName;
-                    p.Value = table;
-                    cmd.Parameters.Add(p);
-                }
-                await using DbDataReader reader = await cmd.ExecuteReaderAsync(ct);
-                var (columns, rows, truncated) = await ReadAsync(reader, db.MaxRows, ct);
-                results.Add(new SchemaSection(section.Name, QueryResult.Ok(project, DatabaseType.ToString(), columns, rows, db.MaxRows, truncated, 0, db.Environment)));
+                await conn.OpenAsync(connectCts.Token);
             }
-            catch (DbException ex)
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                // 任一段失败（表不存在等）即短路返回，调用方透传错误
-                return new[] { new SchemaSection(section.Name, QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询错误: {ex.Message}", "QUERY_ERROR", 0, db.Environment)) };
+                return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", 0, db.Environment)) };
             }
+
+            var results = new List<SchemaSection>();
+            foreach (SchemaSectionTemplate section in sections)
+            {
+                try
+                {
+                    await using DbCommand cmd = conn.CreateCommand();
+                    cmd.CommandText = section.Sql;
+                    cmd.CommandTimeout = db.CommandTimeout;
+                    if (section.HasTableParam)
+                    {
+                        DbParameter p = cmd.CreateParameter();
+                        p.ParameterName = SchemaDialects.TableParamName;
+                        p.Value = table;
+                        cmd.Parameters.Add(p);
+                    }
+                    await using DbDataReader reader = await cmd.ExecuteReaderAsync(ct);
+                    var (columns, rows, truncated) = await ReadAsync(reader, db.MaxRows, ct);
+                    results.Add(new SchemaSection(section.Name, QueryResult.Ok(project, DatabaseType.ToString(), columns, rows, db.MaxRows, truncated, 0, db.Environment)));
+                }
+                catch (DbException ex)
+                {
+                    // 任一段失败（表不存在等）即短路返回，调用方透传错误
+                    return new[] { new SchemaSection(section.Name, QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询错误: {ex.Message}", "QUERY_ERROR", 0, db.Environment)) };
+                }
+                catch (TimeoutException ex)
+                {
+                    return new[] { new SchemaSection(section.Name, QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询超时: {ex.Message}", "QUERY_TIMEOUT", 0, db.Environment)) };
+                }
+            }
+            return results;
         }
-        return results;
+        catch (OperationCanceledException)
+        {
+            throw; // 取消向上传播，不包装
+        }
+        catch (DbException ex)
+        {
+            // 建连阶段失败（连接串不可达/TNS 解析失败等）与段循环未覆盖的驱动异常：包装为失败段，不逃逸
+            return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询错误: {ex.Message}", "QUERY_ERROR", 0, db.Environment)) };
+        }
     }
 
     /// <summary>从 DataReader 读取数据为 columns + rows，按 maxRows 截断。</summary>

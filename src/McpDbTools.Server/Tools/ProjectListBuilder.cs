@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using McpDbTools.Server.Configuration;
 
@@ -6,7 +7,8 @@ namespace McpDbTools.Server.Tools;
 /// <summary>
 /// 构造 db_list 返回的项目/环境结构（成功与错误响应共享）。
 /// 方法正交：按"项目索引 / 单项目全环境 / 单项目单环境 / 兜底列表"分别提供构造器，
-/// 由 DbListTool 按行为矩阵组合调用。环境详情对象结构在所有响应中保持一致。
+/// 由 DbListTool 按行为矩阵组合调用。环境详情结构在所有响应中保持一致；
+/// text 档（缺省）与 json 档各一套输出，构造源数据同源。
 /// </summary>
 public static class ProjectListBuilder
 {
@@ -90,6 +92,49 @@ public static class ProjectListBuilder
     };
 
     // ───────── 序列化 ─────────
+
+    // ───────── text 档（缺省）：纯文本，无 JSON 键名开销 ─────────
+
+    /// <summary>项目索引 text：每项目一行 "{name} (default {env})"，不带环境详情。</summary>
+    public static string BuildProjectIndexText(ResolvedConfig config)
+    {
+        var sb = new StringBuilder();
+        foreach (var p in config.Projects)
+        {
+            if (sb.Length > 0) sb.Append('\n');
+            sb.Append(p.Key);
+            if (!string.IsNullOrEmpty(p.Value.DefaultEnvironment)) sb.Append(" (default ").Append(p.Value.DefaultEnvironment).Append(')');
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 项目环境 text：项目头行（同索引行）+ 每环境一行，字段 tab 分列：
+    /// "name	type	databaseName	prod={y|n}	write={y|n}	maxRows={N}"。
+    /// onlyEnv 非空时仅输出该环境（单环境详情）。databaseName 为 null 输出 \N（与 rowset 编码一致）。
+    /// </summary>
+    public static string BuildProjectEnvironmentsText(KeyValuePair<string, ResolvedProject> p, string? onlyEnv = null)
+    {
+        var sb = new StringBuilder();
+        sb.Append(p.Key);
+        if (!string.IsNullOrEmpty(p.Value.DefaultEnvironment)) sb.Append(" (default ").Append(p.Value.DefaultEnvironment).Append(')');
+        foreach (var e in p.Value.Environments)
+        {
+            if (onlyEnv is not null && e.Key != onlyEnv) continue;
+            sb.Append('\n').Append(e.Key)
+                .Append('\t').Append(e.Value.Type.ToString().ToLowerInvariant())
+                .Append('\t').Append(e.Value.DatabaseName ?? "\\N")
+                .Append("\tprod=").Append(e.Value.IsProduction ? 'y' : 'n')
+                .Append("\twrite=").Append(e.Value.AllowWrite ? 'y' : 'n')
+                .Append("\tmaxRows=").Append(e.Value.MaxRows);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>错误 text：FAIL 单行（兜底项目/环境列表已并入 error 文案，无独立兜底字段）。</summary>
+    public static string SerializeFailText(string errorCode, string error) => $"FAIL {errorCode}: {error}";
+
+    // ───────── json 档（回退）：结构与 20260821 版保持一致 ─────────
 
     /// <summary>序列化成功响应：{ success:true, projects:[...] }。projects 数组由调用方传入。</summary>
     public static string SerializeSuccess(List<object> projects) =>

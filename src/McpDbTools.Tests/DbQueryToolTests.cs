@@ -42,10 +42,9 @@ public class DbQueryToolTests : IDisposable
     public async Task ProjectNotFound_ReturnsProjectNotFoundCode()
     {
         var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ExecuteQuery("nope", "SELECT 1");
+        string text = await tool.ExecuteQuery("nope", "SELECT 1");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("PROJECT_NOT_FOUND", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PROJECT_NOT_FOUND", text);
     }
 
     [Fact]
@@ -53,22 +52,20 @@ public class DbQueryToolTests : IDisposable
     {
         // 无 defaultEnvironment，且未指定 environment
         var tool = CreateTool("""{"erp":{"environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ExecuteQuery("erp", "SELECT 1");
+        string text = await tool.ExecuteQuery("erp", "SELECT 1");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("ENVIRONMENT_REQUIRED", doc.RootElement.GetProperty("errorCode").GetString());
-        Assert.Contains("prod", doc.RootElement.GetProperty("error").GetString()); // 提示可用环境
+        Assert.StartsWith("FAIL ENVIRONMENT_REQUIRED", text);
+        Assert.Contains("prod", text); // 提示可用环境
     }
 
     [Fact]
     public async Task EnvironmentNotFound_ReturnsCode_AndListsAvailable()
     {
         var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ExecuteQuery("erp", "SELECT 1", environment: "staging");
+        string text = await tool.ExecuteQuery("erp", "SELECT 1", environment: "staging");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("ENVIRONMENT_NOT_FOUND", doc.RootElement.GetProperty("errorCode").GetString());
-        Assert.Contains("prod", doc.RootElement.GetProperty("error").GetString());
+        Assert.StartsWith("FAIL ENVIRONMENT_NOT_FOUND", text);
+        Assert.Contains("prod", text);
     }
 
     [Fact]
@@ -76,11 +73,10 @@ public class DbQueryToolTests : IDisposable
     {
         // 不传 environment → 走 defaultEnvironment=prod → 解析成功后进入 SQL 校验，DROP 被拦截
         var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ExecuteQuery("erp", "DROP TABLE x");
+        string text = await tool.ExecuteQuery("erp", "DROP TABLE x");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("SQL_BLOCKED", doc.RootElement.GetProperty("errorCode").GetString());
-        Assert.Equal("prod", doc.RootElement.GetProperty("environment").GetString());
+        Assert.StartsWith("FAIL SQL_BLOCKED", text);
+        Assert.Contains("@erp/prod", text); // 失败行回显解析后的环境
     }
 
     [Fact]
@@ -88,10 +84,9 @@ public class DbQueryToolTests : IDisposable
     {
         // defaultEnvironment=test，但显式传 prod → 用 prod
         var tool = CreateTool("""{"erp":{"defaultEnvironment":"test","environments":{"test":{"type":"sqlserver","connectionString":"cs"},"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ExecuteQuery("erp", "DROP TABLE x", environment: "prod");
+        string text = await tool.ExecuteQuery("erp", "DROP TABLE x", environment: "prod");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("prod", doc.RootElement.GetProperty("environment").GetString());
+        Assert.Contains("@erp/prod", text);
     }
 
     /// <summary>Stub provider：返回预设的 QueryResult，用于验证审计是否记录结果（绕过真实数据库）。</summary>
@@ -248,9 +243,8 @@ public class DbQueryToolTests : IDisposable
     {
         // SQL 校验失败：DbQueryTool 调 SqlGuard 拦截 DROP，返回 SQL_BLOCKED
         var tool = CreateTool("""{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ExecuteQuery("erp", "DROP TABLE x");
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("SQL_BLOCKED", doc.RootElement.GetProperty("errorCode").GetString());
+        string text = await tool.ExecuteQuery("erp", "DROP TABLE x");
+        Assert.StartsWith("FAIL SQL_BLOCKED", text);
     }
 
     /// <summary>构造带抛异常 stub provider 的工具：验证逃逸异常路径也记审计（阶段 3）。</summary>
@@ -284,8 +278,7 @@ public class DbQueryToolTests : IDisposable
             AuditEntry entry = Assert.Single(page.Items);
             Assert.False(entry.Success);
             Assert.Contains("boom", entry.Error);
-            using var doc = JsonDocument.Parse(json);
-            Assert.Equal("QUERY_UNHANDLED", doc.RootElement.GetProperty("errorCode").GetString());
+            Assert.StartsWith("FAIL QUERY_UNHANDLED", json);
         }
     }
 
@@ -300,8 +293,7 @@ public class DbQueryToolTests : IDisposable
             audit.Flush(); // 测试同步排空
             var page = audit.Query(new AuditLogQuery());
             Assert.Single(page.Items);
-            using var doc = JsonDocument.Parse(json);
-            Assert.Equal("QUERY_CANCELED", doc.RootElement.GetProperty("errorCode").GetString());
+            Assert.StartsWith("FAIL QUERY_CANCELED", json);
         }
     }
 
@@ -352,6 +344,10 @@ public class DbQueryToolTests : IDisposable
         var stub = new QueryResult
         {
             Success = true,
+            // 定位三件套与真实 provider 一致（text 状态行 @项目/环境 (类型) 依赖）
+            Project = "erp",
+            Environment = "dev",
+            DatabaseType = "SqlServer",
             Columns = new List<string> { "id" },
             Rows = new List<object?[]> { new object?[] { 1 } },
             RowCount = 1
@@ -385,13 +381,23 @@ public class DbQueryToolTests : IDisposable
         Assert.False(spy.ExecuteNonQueryCalled);
     }
 
-    // ───────── format 参数：缺省 tsv / json 回退 / 宽容解析 ─────────
+    // ───────── format 参数：缺省 text / tsv、json 结构化回退 / 宽容解析 ─────────
 
     [Fact]
-    public async Task Format_Default_IsTsv()
+    public async Task Format_Default_IsText()
     {
         var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
-        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev");
+        string text = await tool.ExecuteQuery("erp", "SELECT 1", "dev");
+
+        // 缺省 text：状态行 + 表头 + TSV（stub 返回单列单行 id/1）
+        Assert.Equal("OK 1 rows @erp/dev (sqlserver)\nid\n1", text);
+    }
+
+    [Fact]
+    public async Task Format_TsvExplicit_ReturnsJsonWithRowset()
+    {
+        var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
+        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: "tsv");
 
         using var doc = JsonDocument.Parse(json);
         Assert.Equal("tsv", doc.RootElement.GetProperty("format").GetString());
@@ -412,6 +418,19 @@ public class DbQueryToolTests : IDisposable
     }
 
     [Theory]
+    [InlineData("tsv")]
+    [InlineData("TSV")]
+    [InlineData(" tsv ")]
+    public async Task Format_Tsv_TrimAndCaseInsensitive(string fmt)
+    {
+        var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
+        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: fmt);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("tsv", doc.RootElement.GetProperty("format").GetString());
+    }
+
+    [Theory]
     [InlineData("JSON")]
     [InlineData(" json ")]
     public async Task Format_Json_TrimAndCaseInsensitive(string fmt)
@@ -424,13 +443,12 @@ public class DbQueryToolTests : IDisposable
     }
 
     [Fact]
-    public async Task Format_UnknownValue_FallsBackToTsv()
+    public async Task Format_UnknownValue_FallsBackToText()
     {
         var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
-        string json = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: "xml");
+        string text = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: "xml");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("tsv", doc.RootElement.GetProperty("format").GetString());
+        Assert.Equal("OK 1 rows @erp/dev (sqlserver)\nid\n1", text);
     }
 
     [Fact]
@@ -456,14 +474,13 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(stubResult, DatabaseType.SqlServer),
             """{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs","maxRows":50}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", offset: 100);
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", offset: 100);
 
-        using var doc = JsonDocument.Parse(json);
         // provider 收到的 SQL 已按方言拼接，fetch = min(未传 limit, maxRows=50)
         Assert.EndsWith("OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY", stub.LastSql);
         Assert.Equal(50, stub.LastMaxRows);
-        Assert.Equal(100, doc.RootElement.GetProperty("offset").GetInt32());
-        Assert.Equal(101, doc.RootElement.GetProperty("nextOffset").GetInt32()); // offset + rowCount(1)，truncated=true
+        Assert.Contains("(sqlserver, offset=100)", text);
+        Assert.Contains("[truncated, nextOffset=101]", text); // offset + rowCount(1)，truncated=true
     }
 
     [Fact]
@@ -473,10 +490,9 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.OkWrite("erp", "MySql", 1, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id=1", offset: 10);
+        string text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id=1", offset: 10);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
         Assert.False(stub.ExecuteNonQueryCalled); // 未触达 provider
     }
 
@@ -487,10 +503,9 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.Ok("erp", "SqlServer", new(), new(), 1000, false, 5, "prod"), DatabaseType.SqlServer),
             """{"erp":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t", offset: 0);
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM t", offset: 0);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("OFFSET_REQUIRES_ORDER_BY", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL OFFSET_REQUIRES_ORDER_BY", text);
         Assert.False(stub.ExecuteQueryCalled);
     }
 
@@ -501,10 +516,9 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id LIMIT 5", offset: 0);
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id LIMIT 5", offset: 0);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
     }
 
     [Fact]
@@ -514,10 +528,9 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", offset: -1);
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id", offset: -1);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
     }
 
     [Fact]
@@ -539,20 +552,18 @@ public class DbQueryToolTests : IDisposable
     }
 
     [Fact]
-    public async Task Offset_Omitted_BehaviorUnchanged_NoOffsetField()
+    public async Task Offset_Omitted_BehaviorUnchanged_NoOffsetMarks()
     {
-        // 缺省不传：返回 JSON 不出现 offset/nextOffset 字段，SQL 未被改写（零行为变化验证）
+        // 缺省不传：text 状态行无 offset/截断标记，SQL 未被改写（零行为变化验证）
         var stubResult = QueryResult.Ok("erp", "MySql", new List<string> { "c" },
             new List<object?[]> { new object?[] { 1 } }, 1000, false, 5, "dev");
         var (tool, stub) = CreateToolWithStub(
             new StubProvider(stubResult, DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id");
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.False(doc.RootElement.TryGetProperty("offset", out _));
-        Assert.False(doc.RootElement.TryGetProperty("nextOffset", out _));
+        Assert.Equal("OK 1 rows @erp/dev (mysql)\nc\n1", text);
         Assert.Equal("SELECT * FROM t ORDER BY id", stub.LastSql); // SQL 未被改写
     }
 
@@ -567,11 +578,10 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(stubResult, DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true);
+        string text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.True(doc.RootElement.GetProperty("estimated").GetBoolean());
-        Assert.Equal("42", doc.RootElement.GetProperty("rowset").GetString()); // TSV 单行单列
+        // dryRun：COUNT 单行折叠为状态行 ~N affected (estimated)，无表体
+        Assert.Equal("OK ~42 affected (estimated) @erp/dev (mysql)", text);
         // provider 收到的是 COUNT 只读查询（走 ExecuteQueryAsync 而非 NonQuery）
         Assert.StartsWith("SELECT COUNT(*) FROM t WHERE id<10", stub.LastSql);
         Assert.True(stub.ExecuteQueryCalled);
@@ -585,10 +595,9 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "SELECT * FROM t", dryRun: true);
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM t", dryRun: true);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("PARAMETER_ERROR", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
         Assert.False(stub.ExecuteQueryCalled);
     }
 
@@ -599,11 +608,11 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true, limit: 5);
-        Assert.Equal("PARAMETER_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        string text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true, limit: 5);
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
 
-        json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true, offset: 5);
-        Assert.Equal("PARAMETER_ERROR", JsonDocument.Parse(json).RootElement.GetProperty("errorCode").GetString());
+        text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true, offset: 5);
+        Assert.StartsWith("FAIL PARAMETER_ERROR", text);
     }
 
     [Fact]
@@ -613,25 +622,23 @@ public class DbQueryToolTests : IDisposable
             new StubProvider(QueryResult.Ok("erp", "MySql", new(), new(), 1000, false, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "INSERT INTO t (a) VALUES (1)", dryRun: true);
+        string text = await tool.ExecuteQuery("erp", "INSERT INTO t (a) VALUES (1)", dryRun: true);
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.Equal("DRYRUN_UNSUPPORTED", doc.RootElement.GetProperty("errorCode").GetString());
+        Assert.StartsWith("FAIL DRYRUN_UNSUPPORTED", text);
         Assert.False(stub.ExecuteNonQueryCalled);
     }
 
     [Fact]
-    public async Task DryRun_Omitted_BehaviorUnchanged_NoEstimatedField()
+    public async Task DryRun_Omitted_BehaviorUnchanged_NoEstimatedMark()
     {
         var (tool, _) = CreateToolWithStub(
             new StubProvider(QueryResult.OkWrite("erp", "MySql", 3, 5, "dev"), DatabaseType.MySql),
             """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs","allowWrite":true}}}}""");
 
-        string json = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10");
+        string text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10");
 
-        using var doc = JsonDocument.Parse(json);
-        Assert.False(doc.RootElement.TryGetProperty("estimated", out _));
-        Assert.Equal(3, doc.RootElement.GetProperty("affectedRows").GetInt32());
+        // 正常执行：无 estimated 标记，写形状状态行
+        Assert.Equal("OK 3 affected @erp/dev (mysql)", text);
     }
 
     public void Dispose()

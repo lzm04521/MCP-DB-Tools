@@ -40,7 +40,7 @@ public class DbListToolTests : IDisposable
     public async Task NoProject_ReturnsLightweightIndex_WithoutEnvironments()
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}},"crm-mysql":{"defaultEnvironment":"prod","environments":{"prod":{"type":"mysql","connectionString":"cs"}}}}""");
-        string json = await tool.ListProjects();
+        string json = await tool.ListProjects(format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
@@ -60,7 +60,7 @@ public class DbListToolTests : IDisposable
     public async Task ProjectOnly_ReturnsAllEnvironmentsWithDetails()
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"test":{"type":"mysql","connectionString":"cs","maxRows":500,"maxConcurrency":4,"maxPoolSize":50,"connectTimeoutSeconds":10,"commandTimeout":20},"prod":{"type":"sqlserver","isProduction":true,"connectionString":"cs"}}}}""");
-        string json = await tool.ListProjects(project: "erp-system");
+        string json = await tool.ListProjects(project: "erp-system", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
@@ -96,7 +96,7 @@ public class DbListToolTests : IDisposable
     public async Task ProjectAndEnvironment_ReturnsSingleEnvironment()
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"test":{"type":"mysql","connectionString":"cs"},"prod":{"type":"sqlserver","isProduction":true,"connectionString":"cs"}}}}""");
-        string json = await tool.ListProjects(project: "erp-system", environment: "prod");
+        string json = await tool.ListProjects(project: "erp-system", environment: "prod", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
@@ -113,7 +113,7 @@ public class DbListToolTests : IDisposable
     public async Task EnvironmentNotFound_ReturnsAllEnvironmentDetails()
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"test":{"type":"mysql","connectionString":"cs"},"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ListProjects(project: "erp-system", environment: "staging");
+        string json = await tool.ListProjects(project: "erp-system", environment: "staging", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.GetProperty("success").GetBoolean());
@@ -135,7 +135,7 @@ public class DbListToolTests : IDisposable
     public async Task ProjectNotFound_ReturnsProjectNameArray()
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}},"crm-mysql":{"defaultEnvironment":"prod","environments":{"prod":{"type":"mysql","connectionString":"cs"}}}}""");
-        string json = await tool.ListProjects(project: "nope");
+        string json = await tool.ListProjects(project: "nope", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.GetProperty("success").GetBoolean());
@@ -158,7 +158,7 @@ public class DbListToolTests : IDisposable
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
         // project 不存在 + environment 也传了 → 应只返回 PROJECT_NOT_FOUND（判断顺序：先 project）
-        string json = await tool.ListProjects(project: "nope", environment: "whatever");
+        string json = await tool.ListProjects(project: "nope", environment: "whatever", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.GetProperty("success").GetBoolean());
@@ -176,7 +176,7 @@ public class DbListToolTests : IDisposable
     public async Task BlankProject_TreatedAsNotProvided(string? blankProject)
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
-        string json = await tool.ListProjects(project: blankProject);
+        string json = await tool.ListProjects(project: blankProject, format: "json");
 
         using var doc = JsonDocument.Parse(json);
         // 空白 project 等同未传 → 返回项目索引（success）
@@ -190,7 +190,7 @@ public class DbListToolTests : IDisposable
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"},"test":{"type":"mysql","connectionString":"cs"}}}}""");
         // project 传了，environment 为空白 → 等同只传 project → 返回该项目全环境
-        string json = await tool.ListProjects(project: "erp-system", environment: "  ");
+        string json = await tool.ListProjects(project: "erp-system", environment: "  ", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
@@ -205,7 +205,7 @@ public class DbListToolTests : IDisposable
     {
         // environments 为空字典（理论合法边界）
         var tool = CreateTool("""{"empty-proj":{"defaultEnvironment":null,"environments":{}}}""");
-        string json = await tool.ListProjects(project: "empty-proj");
+        string json = await tool.ListProjects(project: "empty-proj", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
@@ -219,7 +219,7 @@ public class DbListToolTests : IDisposable
     public async Task EnvironmentDetails_IncludesDatabaseName_FromConnectionString()
     {
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"Server=.;Initial Catalog=OrderDb;User Id=sa;Password=p;"}}}}""");
-        string json = await tool.ListProjects(project: "erp-system", environment: "prod");
+        string json = await tool.ListProjects(project: "erp-system", environment: "prod", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         JsonElement env = doc.RootElement.GetProperty("projects")[0].GetProperty("environments")[0];
@@ -233,11 +233,59 @@ public class DbListToolTests : IDisposable
     {
         // dev 环境显式配置 allowWrite=true（非生产），应透传到 db_list 输出
         var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"dev","environments":{"dev":{"type":"sqlserver","connectionString":"cs","allowWrite":true}}}}""");
-        string json = await tool.ListProjects(project: "erp-system", environment: "dev");
+        string json = await tool.ListProjects(project: "erp-system", environment: "dev", format: "json");
 
         using var doc = JsonDocument.Parse(json);
         JsonElement env = doc.RootElement.GetProperty("projects")[0].GetProperty("environments")[0];
         Assert.True(env.GetProperty("allowWrite").GetBoolean());
+    }
+
+    // ───────── text 档（缺省）：纯文本形状（行为矩阵结构断言走上方 json 档） ─────────
+
+    [Fact]
+    public async Task TextDefault_Index_EachProjectOneLine()
+    {
+        var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}},"crm-mysql":{"defaultEnvironment":"test","environments":{"test":{"type":"mysql","connectionString":"cs"}}}}""");
+        string text = await tool.ListProjects();
+
+        Assert.Equal("erp-system (default prod)\ncrm-mysql (default test)", text);
+    }
+
+    [Fact]
+    public async Task TextDefault_Environments_HeaderAndAlignedRows()
+    {
+        var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"test":{"type":"mysql","connectionString":"Database=testdb;","maxRows":500},"prod":{"type":"sqlserver","isProduction":true,"connectionString":"Server=.;Initial Catalog=OrderDb;"}}}}""");
+        string text = await tool.ListProjects(project: "erp-system");
+
+        // 项目头行 + 每环境一行（tab 分列）：name type databaseName prod write maxRows；
+        // databaseName 从连接串解析（test 无 Database= 前缀差异，mysql 取 testdb），prod 未配 maxRows 用默认 1000
+        Assert.Equal(
+            "erp-system (default prod)\n" +
+            "test\tmysql\ttestdb\tprod=n\twrite=n\tmaxRows=500\n" +
+            "prod\tsqlserver\tOrderDb\tprod=y\twrite=n\tmaxRows=1000",
+            text);
+    }
+
+    [Fact]
+    public async Task TextDefault_SingleEnvironment_OnlyRequestedRow()
+    {
+        var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"test":{"type":"mysql","connectionString":"cs"},"prod":{"type":"sqlserver","isProduction":true,"connectionString":"cs"}}}}""");
+        string text = await tool.ListProjects(project: "erp-system", environment: "prod");
+
+        string[] lines = text.Split('\n');
+        Assert.Equal(2, lines.Length); // 头行 + 单环境行
+        Assert.StartsWith("prod\tsqlserver", lines[1]);
+        Assert.DoesNotContain("\ntest\t", text);
+    }
+
+    [Fact]
+    public async Task TextDefault_Error_FailLineWithFallbackInMessage()
+    {
+        var tool = CreateTool("""{"erp-system":{"defaultEnvironment":"prod","environments":{"prod":{"type":"sqlserver","connectionString":"cs"}}}}""");
+        string text = await tool.ListProjects(project: "nope");
+
+        // 兜底项目列表并入 error 文案（可用项目已含在消息中）
+        Assert.StartsWith("FAIL PROJECT_NOT_FOUND: 项目不存在: nope。可用项目: erp-system", text);
     }
 
     public void Dispose()

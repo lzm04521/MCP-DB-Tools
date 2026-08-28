@@ -5,18 +5,20 @@ using System.Text.Json;
 
 namespace McpDbTools.Server.Database;
 
-/// <summary>行编码格式：Tsv 为默认（省 token），Json 为回退（结构精确场景）。</summary>
+/// <summary>行编码格式：Text 为默认（纯文本最省 token），Tsv/Json 为结构化回退（JSON 壳）。</summary>
 public enum RowFormat
 {
+    Text,
     Tsv,
     Json
 }
 
 /// <summary>
 /// 查询执行结果。对象层属性供审计/UI 消费（一个不删）；
-/// 序列化投影按字段矩阵条件输出（见 doc/20260821-MCP返回省token优化.md §3.1）：
-/// 读成功输出 rowCount/truncated/columns + rowset(TSV) 或 rows(JSON)；
-/// 写成功输出 affectedRows；失败输出 error/errorCode/executionTimeMs。
+/// 序列化投影（字段矩阵见 doc/20260821-MCP返回省token优化.md §3.1，text 档见 doc/20260828-MCP返回text纯文本格式.md）：
+/// Text 档（默认）纯文本——首行状态行 + 表头行 + TSV 数据（分隔符为真实控制字符，无 JSON 转义税）；
+/// Tsv/Json 档 JSON 壳——读成功输出 rowCount/truncated/columns + rowset(TSV) 或 rows(JSON)；
+/// 写成功输出 affectedRows；失败输出 error/errorCode/executionTimeMs（Text 档失败不带时间，AI 不据此决策）。
 /// </summary>
 public sealed class QueryResult
 {
@@ -58,9 +60,10 @@ public sealed class QueryResult
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    /// <summary>按指定行编码序列化为 MCP 返回 JSON（字段矩阵见类注释）。</summary>
-    public string ToJson(RowFormat format = RowFormat.Tsv)
+    /// <summary>按指定行编码序列化为 MCP 返回：Text 档纯文本（BuildText），Tsv/Json 档 JSON 壳（字段矩阵见类注释）。</summary>
+    public string Serialize(RowFormat format = RowFormat.Text)
     {
+        if (format == RowFormat.Text) return BuildText();
         // ArrayBufferWriter 无非托管资源，不需要 using/Dispose
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
@@ -118,6 +121,106 @@ public sealed class QueryResult
         if (value is null) writer.WriteNull(name); else writer.WriteString(name, value);
     }
 
+    // ───────── Text 档（缺省）：纯文本，省 JSON 壳键名与字符串内层转义税 ─────────
+
+    /// <summary>
+    /// Text 档序列化：首行状态行（OK/FAIL + 行数 + @项目/环境 + (类型,分页) + [截断]），
+    /// 其后表头行 + TSV 数据（复用 BuildRowset 编码）。失败为 FAIL 单行 + error 原文（可多行跟随）。
+    /// </summary>
+    internal string BuildText()
+    {
+        var sb = new StringBuilder();
+        if (!Success)
+        {
+            sb.Append("FAIL ").Append(ErrorCode ?? "ERROR");
+            AppendTextTarget(sb);
+            if (!string.IsNullOrEmpty(Error)) sb.Append(": ").Append(Error);
+            return sb.ToString();
+        }
+
+        sb.Append("OK ");
+        if (IsWrite)
+        {
+            sb.Append(AffectedRows).Append(" affected");
+            AppendTextTarget(sb);
+            AppendTextDbType(sb);
+            return sb.ToString();
+        }
+
+        // dryRun 预估：COUNT 单行结果折叠为 "~N affected (estimated)" 状态行，避免表体与状态行重复输出数字
+        if (Estimated && Rows.Count == 1 && Rows[0].Length >= 1)
+        {
+            sb.Append('~');
+            AppendCell(sb, Rows[0][0]);
+            sb.Append(" affected (estimated)");
+            AppendTextTarget(sb);
+            AppendTextDbType(sb);
+            return sb.ToString();
+        }
+
+        sb.Append(RowCount).Append(" rows");
+        AppendTextTarget(sb);
+        // 类型与分页回显合并进同一括号： (sqlserver, offset=200)
+        string? type = NormalizeTextDbType();
+        bool hasOffset = Offset is int;
+        if (type is not null || hasOffset)
+        {
+            sb.Append(" (");
+            if (type is not null) sb.Append(type);
+            if (type is not null && hasOffset) sb.Append(", ");
+            if (hasOffset) sb.Append("offset=").Append(Offset!.Value);
+            sb.Append(')');
+        }
+        // 未截断不输出任何标记（省 "truncated":false）；截断时附续翻提示
+        if (Truncated)
+        {
+            sb.Append(" [truncated");
+            if (NextOffset is int next) sb.Append(", nextOffset=").Append(next);
+            sb.Append(']');
+        }
+        AppendTextBody(sb);
+        return sb.ToString();
+    }
+
+    /// <summary>追加表头行 + 数据行（无状态行）。internal 供 db_schema 段拼装复用同一编码。</summary>
+    internal void AppendTextBody(StringBuilder sb)
+    {
+        if (Columns.Count > 0)
+        {
+            sb.Append('\n');
+            for (int c = 0; c < Columns.Count; c++)
+            {
+                if (c > 0) sb.Append('\t');
+                AppendEscaped(sb, Columns[c]);
+            }
+        }
+        if (Rows.Count > 0)
+        {
+            sb.Append('\n');
+            sb.Append(BuildRowset());
+        }
+    }
+
+    /// <summary>追加 @project/environment 定位段；project 为空不输出，environment 为空或 "Unknown" 时省略环境部分。</summary>
+    private void AppendTextTarget(StringBuilder sb)
+    {
+        if (string.IsNullOrEmpty(Project)) return;
+        sb.Append(" @").Append(Project);
+        if (!string.IsNullOrEmpty(Environment) && Environment != "Unknown") sb.Append('/').Append(Environment);
+    }
+
+    private void AppendTextDbType(StringBuilder sb)
+    {
+        string? type = NormalizeTextDbType();
+        if (type is not null) sb.Append(" (").Append(type).Append(')');
+    }
+
+    /// <summary>小写类型名（与 db_list 一致）；空或 "Unknown"（环境解析失败占位）不输出。</summary>
+    private string? NormalizeTextDbType() =>
+        string.IsNullOrEmpty(DatabaseType) || DatabaseType == "Unknown"
+            ? null
+            : DatabaseType!.ToLowerInvariant();
+
     /// <summary>TSV 编码：\t 分列、\n 行间分隔（末行无）；NULL→\N；值内 \ → \\、tab→\t、LF→\n、CR→\r。
     /// internal 供工具层组装分段返回（db_schema 等）复用同一编码。</summary>
     internal string BuildRowset()
@@ -144,7 +247,8 @@ public sealed class QueryResult
         {
             case string s: AppendEscaped(sb, s); break;
             case bool b: sb.Append(b ? "true" : "false"); break;
-            case byte[] bytes: sb.Append(Convert.ToBase64String(bytes)); break;
+            // base64 膨胀 33% 且 AI 无法消费：TSV/Text 档输出长度占位；json 档经 JsonSerializer 序列化仍为 base64（保真回退）
+            case byte[] bytes: sb.Append("<binary ").Append(bytes.Length).Append("B>"); break;
             case DateTime dt: sb.Append(dt.ToString("O", CultureInfo.InvariantCulture)); break;
             case DateTimeOffset dto: sb.Append(dto.ToString("O", CultureInfo.InvariantCulture)); break;
             case double d: sb.Append(d.ToString("R", CultureInfo.InvariantCulture)); break;
