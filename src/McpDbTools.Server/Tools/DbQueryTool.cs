@@ -45,7 +45,7 @@ public sealed class DbQueryTool
     /// 可用 db_list 工具列出所有项目及其环境。
     /// </summary>
     [McpServerTool(Name = "db_query")]
-    [Description("在项目的指定环境执行 SQL。project=项目名(必填)；environment 可选(缺省用项目 defaultEnvironment)；sql 必填；limit 可选(读语句行数上限)；offset 可选(跳过行数,仅读语句;SQL Server/Oracle 需 SQL 带 ORDER BY;SQL 已带 LIMIT/OFFSET/FOR UPDATE 时不可用;截断时状态行标注 nextOffset 续翻)；dryRun 可选(标准形态 UPDATE/DELETE 返回 ~N affected (estimated) 估算而不执行写,估算不含触发器影响;INSERT/DDL/复杂形态返回 DRYRUN_UNSUPPORTED;不可与 limit/offset 同用)；format 可选：text(缺省,纯文本)/tsv(JSON壳+rowset)/json(JSON壳+rows二维数组)。text 返回：首行状态行(OK 行数 @项目/环境 (类型[,offset=N]) [truncated,nextOffset=N] 或 FAIL 错误码: 消息)，第2行列名，其后数据 TSV(tab 分列、\\N=NULL、二进制列显示 <binary NB>)。只读环境仅允许只读语句；写环境(allowWrite=true，非生产)支持 DML/DDL。先用 db_list() 查项目、db_list(project=...) 查环境。")]
+    [Description("在项目的指定环境执行 SQL。project=项目名(必填)；environment 可选(缺省用项目 defaultEnvironment)；sql 必填。limit/offset 可选(仅读语句分页；SQL Server/Oracle 需 ORDER BY；SQL 已带 LIMIT/OFFSET/FOR UPDATE 时不可用)；dryRun 可选(仅标准形态 UPDATE/DELETE 返回估算行数不执行，不可与 limit/offset 同用)；format 可选 text(缺省)/tsv/json。只读环境仅允许只读语句；写环境(allowWrite 且非生产)支持 DML/DDL。返回纯文本：首行状态(OK/FAIL+错误码)+列名+TSV 数据。先用 db_list 查项目与环境。")]
     public async Task<string> ExecuteQuery(
         string project,
         string sql,

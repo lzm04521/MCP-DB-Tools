@@ -39,7 +39,7 @@ public sealed class DbExplainTool
     /// Oracle 经 DBMS_XPLAN 输出(依赖 PLAN_TABLE)。不支持 EXPLAIN ANALYZE(会实际执行)。
     /// </summary>
     [McpServerTool(Name = "db_explain")]
-    [Description("查询执行计划(慢查询分析用)。project=项目名(必填)；sql 必填且仅只读语句(写语句返回 SQL_BLOCKED)；environment 可选(缺省用项目 defaultEnvironment)。返回计划行集(与 db_query 同构,text 纯文本:首行状态行+列名行+TSV 数据)：MySQL 为传统 EXPLAIN 列(id/select_type/table/rows/Extra)，PG 为默认文本格式，SQL Server 为 SHOWPLAN_ALL 计划列(不实际执行)，Oracle 经 DBMS_XPLAN 输出。不支持 EXPLAIN ANALYZE(会实际执行语句)。")]
+    [Description("查询执行计划(慢查询分析用)。project=项目名(必填)；sql 必填且仅只读语句(写语句返回 SQL_BLOCKED)；environment 可选(缺省用项目 defaultEnvironment)。返回计划行集(与 db_query 同构)。各方言输出形态不同：MySQL 传统 EXPLAIN 列 / PG 文本 / SQL Server SHOWPLAN_ALL(不实际执行) / Oracle DBMS_XPLAN。不支持 EXPLAIN ANALYZE。")]
     public async Task<string> Explain(
         string project,
         string sql,

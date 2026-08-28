@@ -39,7 +39,7 @@ public sealed class DbSchemaTool
     /// text 返回：首行状态行(OK tables 或 table=名 @项目/环境 (类型))，每段 "# 段名 (行数)" + 列名行 + TSV 数据(\N=NULL)。
     /// </summary>
     [McpServerTool(Name = "db_schema")]
-    [Description("列出数据库元数据。project=项目名(必填)；environment 可选(缺省用项目 defaultEnvironment)；table 可选——不传返回表清单(schema/表名/注释/行数)，传则返回该表列/索引/外键三段；sample 可选(>0 时附 SELECT * 采样前 N 行,需配合 table,表名仅支持常规标识符)。text 返回：首行状态行(OK tables 或 table=名 @项目/环境 (类型))，每段以 # 段名 (行数) 起始 + 列名行 + TSV 数据(制表符分列、\\N 表示 NULL)。Oracle 对象名以大写存储。可先用 db_list() 查项目与环境。")]
+    [Description("列出数据库元数据。project=项目名(必填)；environment 可选(缺省用项目 defaultEnvironment)；table 可选——不传返回表清单(schema/表名/注释/行数)，传则返回该表列/索引/外键三段；sample 可选(>0 附 SELECT * 采样前 N 行，需配合 table，表名仅支持常规标识符)。返回纯文本：首行状态+按 # 段名分块+列名+TSV 数据。Oracle 对象名大写存储。可先用 db_list 查项目与环境。")]
     public async Task<string> GetSchema(
         string project,
         string? environment = null,
