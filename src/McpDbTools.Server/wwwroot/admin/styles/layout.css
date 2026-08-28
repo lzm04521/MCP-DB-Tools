@@ -18,9 +18,14 @@
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   padding: 0 20px;
+}
+
+/* 工具条推到最右；计数器紧跟品牌区（版本徽章右侧） */
+.brandbar .toolbar {
+  margin-left: auto;
 }
 
 .brandbar__brand {
@@ -227,6 +232,10 @@
 
   .sidenav {
     padding: 8px 6px;
+  }
+
+  .brandbar__counters {
+    display: none; /* 窄屏顶栏空间有限，全局状态让位给操作按钮 */
   }
 
   .nav-group-label,

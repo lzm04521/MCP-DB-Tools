@@ -267,15 +267,28 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
             Total = total,
             Page = query.Page,
             PageSize = query.PageSize,
-            Counters = new AuditCounters
-            {
-                TotalCounter = _counter.TotalCurrent,
-                TodayCounter = _counter.TodayCount,
-                TodayPersisted = CountTodayLocal(connection),
-                TodayDateKey = _counter.TodayDateKey
-            }
+            Counters = BuildCounters(connection)
         };
     }
+
+    /// <summary>
+    /// 读取审计计数器对账快照，供顶栏全局状态独立轮询（不查日志分页）。
+    /// </summary>
+    public AuditCounters GetCounters()
+    {
+        EnsureInitialized();
+        using var connection = OpenConnection();
+        return BuildCounters(connection);
+    }
+
+    /// <summary>拼装计数器对账载荷：内存计数器（总数/当日）+ 今日落盘 COUNT。</summary>
+    private AuditCounters BuildCounters(SqliteConnection connection) => new()
+    {
+        TotalCounter = _counter.TotalCurrent,
+        TodayCounter = _counter.TodayCount,
+        TodayPersisted = CountTodayLocal(connection),
+        TodayDateKey = _counter.TodayDateKey
+    };
 
     /// <summary>构造 WHERE 子句、参数列表，并返回总记录数。</summary>
     private (string Sql, IReadOnlyList<SqliteParameter> Parameters, long Total) BuildWhere(AuditLogQuery query)

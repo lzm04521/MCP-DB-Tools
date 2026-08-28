@@ -221,6 +221,9 @@ static async Task RunAsync(string[] args, int adminPort)
         return Results.Ok(new { applying = true });
     });
 
+    // 审计计数器对账快照：供顶栏全局状态显示与轮询。轻量读取，不查日志分页。
+    api.MapGet("/audit-counters", (AuditLogger audit) => Results.Ok(audit.GetCounters()));
+
     // 审计日志查询：GET /admin/api/audit-logs?project=&environment=&databaseType=&success=&fromTime=&toTime=&sqlContains=&page=&pageSize=
     // success 取 true/false，未传或其它值表示不限定。查询参数全部可选。
     api.MapGet("/audit-logs", (AuditLogger audit,

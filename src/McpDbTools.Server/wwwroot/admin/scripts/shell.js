@@ -13,7 +13,11 @@
     viewTitle: document.getElementById('viewTitle'),
     reloadBtn: document.getElementById('reloadBtn'),
     saveBtn: document.getElementById('saveBtn'),
-    view: document.getElementById('view')
+    view: document.getElementById('view'),
+    brandCounters: document.getElementById('brandCounters'),
+    bcTotal: document.getElementById('bcTotal'),
+    bcToday: document.getElementById('bcToday'),
+    bcPersisted: document.getElementById('bcPersisted')
   };
 
   // 全局 UI 工具所需 DOM 由 shell 统一注册一次，各视图共享
@@ -208,6 +212,38 @@
     }
   })();
 
+  /** 渲染顶栏审计对账三数；当日计数器 ≠ 今日落盘时整块红色警示（差值即丢失的审计日志）。 */
+  function renderAuditCounters(counters) {
+    if (!dom.brandCounters) {
+      return;
+    }
+    const c = counters || {};
+    dom.bcTotal.textContent = c.totalCounter ?? '–';
+    dom.bcToday.textContent = c.todayCounter ?? '–';
+    dom.bcPersisted.textContent = c.todayPersisted ?? '–';
+    const mismatch = typeof c.todayCounter === 'number'
+      && typeof c.todayPersisted === 'number'
+      && c.todayCounter !== c.todayPersisted;
+    dom.brandCounters.classList.toggle('mismatch', mismatch);
+    dom.brandCounters.title = mismatch
+      ? `审计对账异常：今日已执行查询 ${c.todayCounter} 次，但仅 ${c.todayPersisted} 条落盘，相差 ${Math.abs(c.todayCounter - c.todayPersisted)} 条审计日志未落盘`
+      : `审计对账：累计已审计查询 ${c.totalCounter ?? '–'} 次，今日 ${c.todayCounter ?? '–'} 次且全部落盘`;
+  }
+
+  // 审计计数器：启动拉一次 + 低频轮询（页面不可见时跳过本轮）；失败静默保留上次值。
+  async function pollAuditCounters() {
+    if (document.hidden) {
+      return;
+    }
+    try {
+      renderAuditCounters(await window.adminApi.requestJson('/admin/api/audit-counters'));
+    } catch (error) {
+      console.error('加载审计计数器失败：', error);
+    }
+  }
+  pollAuditCounters();
+  setInterval(pollAuditCounters, 60000);
+
   let configPathText = '';
   window.adminShell = {
     /** 供视图在 config 加载完成后回填；顶栏不再展示，值存内存供设置页读取。 */
@@ -221,6 +257,10 @@
     /** 设置页挂载时读取当前配置路径；启动后尚未加载过则返回空串。 */
     getConfigPath() {
       return configPathText;
+    },
+    /** 供审计日志页在查询响应后回填顶栏计数器（与轮询数据同源，后写胜出）。 */
+    setAuditCounters(counters) {
+      renderAuditCounters(counters);
     }
   };
 })();

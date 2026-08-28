@@ -24,6 +24,12 @@
           <span class="brandbar__name">MCP DB Tools</span>
           <span id="appVersion" class="app-version" title="版本">v?</span>
         </div>
+        <div class="brandbar__counters" id="brandCounters"
+             title="审计对账：累计查询次数 / 今日查询次数 / 今日落盘条数（当日两数一致表示审计无丢失）">
+          <span class="bc-cell">累计查询 <strong id="bcTotal">–</strong> 次</span>
+          <span class="bc-cell bc-cell--daily">今日 <strong id="bcToday">–</strong> 次</span>
+          <span class="bc-cell bc-cell--daily">已落盘 <strong id="bcPersisted">–</strong> 条</span>
+        </div>
         <div class="toolbar" aria-label="全局操作">
           <button id="reloadBtn" type="button" class="button secondary">
             重新加载

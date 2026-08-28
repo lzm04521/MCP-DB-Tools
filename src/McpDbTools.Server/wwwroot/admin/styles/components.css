@@ -1124,37 +1124,38 @@ input[readonly] {
   color: var(--color-primary);
 }
 
-/* ============ 审计计数器对账条 ============ */
-.audit-counters {
+/* 品牌栏内审计计数器：全局状态（纯文字，紧跟版本徽章） */
+.brandbar__counters {
   display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding: 12px 16px;
-  margin-bottom: 12px;
-  background: rgba(37, 99, 235, 0.05);
-  border: 1px solid rgba(37, 99, 235, 0.15);
-  border-radius: var(--radius-lg);
-}
-
-.audit-counters .counter-cell {
-  display: inline-flex;
-  gap: 8px;
   align-items: baseline;
+  gap: 16px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
 }
 
-.audit-counters strong {
-  font-size: 1.15rem;
+.brandbar__counters .bc-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.brandbar__counters strong {
+  font-size: 15px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  color: #fff;
 }
 
-/* 当日计数器 ≠ 今日落盘：红色高亮，提示丢日志 */
-.audit-counters.mismatch {
-  background: rgba(220, 38, 38, 0.08);
-  border-color: rgba(220, 38, 38, 0.45);
+/* 当日计数器 ≠ 今日落盘：⚠ 警示符 + 仅当日两数转亮红（差值即丢失的审计日志） */
+.brandbar__counters.mismatch::before {
+  content: '⚠';
+  font-size: 14px;
+  color: #f87171;
 }
 
-.audit-counters.mismatch strong {
-  color: #dc2626;
+.brandbar__counters.mismatch .bc-cell--daily strong {
+  color: #f87171;
 }
 
 /* ============ 环境 tab 标识 badge（生产 / 可写） ============ */

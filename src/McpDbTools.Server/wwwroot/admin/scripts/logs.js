@@ -69,11 +69,6 @@
         </section>
 
         <section class="card">
-          <div class="audit-counters" id="auditCounters">
-            <span class="counter-cell"><span class="muted">计数器总数</span> <strong id="ctrTotal">-</strong></span>
-            <span class="counter-cell"><span class="muted">当日计数器</span> <strong id="ctrToday">-</strong></span>
-            <span class="counter-cell"><span class="muted">今日落盘</span> <strong id="ctrPersisted">-</strong></span>
-          </div>
           <div class="card-title">
             <div>
               <h2>审计日志</h2>
@@ -141,8 +136,7 @@
       'searchBtn', 'resetBtn', 'refreshBtn',
       'resultMeta', 'auditBody', 'pager',
       'sqlDialog', 'sqlDialogTitle', 'sqlDialogContent', 'copySqlBtn',
-      'resultSection', 'resultTitle', 'resultStatus', 'resultTable', 'resultTableWrap', 'errorContent',
-      'auditCounters', 'ctrTotal', 'ctrToday', 'ctrPersisted'
+      'resultSection', 'resultTitle', 'resultStatus', 'resultTable', 'resultTableWrap', 'errorContent'
     ];
     const refs = {};
     for (const id of ids) {
@@ -318,23 +312,11 @@
     renderPager(result);
   }
 
+  /** 查询响应中的计数器回填顶栏全局状态（brandbar 常驻显示，见 shell.js）。 */
   function renderCounters(result) {
-    const c = result && result.counters;
-    if (!c) {
-      el.ctrTotal.textContent = '-';
-      el.ctrToday.textContent = '-';
-      el.ctrPersisted.textContent = '-';
-      el.auditCounters.classList.remove('mismatch');
-      return;
+    if (window.adminShell && typeof window.adminShell.setAuditCounters === 'function') {
+      window.adminShell.setAuditCounters(result && result.counters);
     }
-    el.ctrTotal.textContent = String(c.totalCounter ?? '-');
-    el.ctrToday.textContent = String(c.todayCounter ?? '-');
-    el.ctrPersisted.textContent = String(c.todayPersisted ?? '-');
-    // 当日计数器 ≠ 今日落盘 → 高亮（差值即丢失的审计日志）
-    const mismatch = typeof c.todayCounter === 'number'
-      && typeof c.todayPersisted === 'number'
-      && c.todayCounter !== c.todayPersisted;
-    el.auditCounters.classList.toggle('mismatch', mismatch);
   }
 
   function renderRow(entry) {

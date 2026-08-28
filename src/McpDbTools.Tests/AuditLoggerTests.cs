@@ -579,6 +579,47 @@ public class AuditLoggerTests : IDisposable
         }
     }
 
+    [Fact]
+    public void GetCounters_ReflectsWrittenEntries()
+    {
+        // 顶栏全局状态：写入并落盘后，三个对账数一致（计数器总数 / 当日计数器 / 今日落盘）。
+        var (store, logger, _, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("SELECT 1", true));
+            logger.Log(MakeEntry("SELECT 2", true));
+            logger.Flush();
+
+            AuditCounters counters = logger.GetCounters();
+            Assert.Equal(2, counters.TotalCounter);
+            Assert.Equal(2, counters.TodayCounter);
+            Assert.Equal(2, counters.TodayPersisted);
+            Assert.Equal(DateTime.Today.ToString("yyyy-MM-dd"), counters.TodayDateKey);
+        }
+    }
+
+    [Fact]
+    public void GetCounters_TotalDecreases_AfterCleanup_DailyUntouched()
+    {
+        // 清理只按删除条数扣减 total（既有语义：daily 不动）；GetCounters 反映扣减后快照。
+        // old 条目 entry.time 在 30 天前：TodayPersisted 只统计今日行，old 删前删后均不计入。
+        var (store, logger, _, _) = Create();
+        using (store)
+        {
+            logger.Log(MakeEntry("old", true, time: Iso(30)));
+            logger.Log(MakeEntry("new", true));
+            logger.Flush();
+
+            int deleted = logger.DeleteOlderThan(7);
+            Assert.Equal(1, deleted);
+
+            AuditCounters counters = logger.GetCounters();
+            Assert.Equal(1, counters.TotalCounter);   // 2 - 1
+            Assert.Equal(2, counters.TodayCounter);   // 两条都在今日 Log，daily 不随清理扣减
+            Assert.Equal(1, counters.TodayPersisted); // 仅 new 的 time 在今日
+        }
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }
