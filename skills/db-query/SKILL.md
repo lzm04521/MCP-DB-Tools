@@ -92,9 +92,9 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 
 四工具缺省返回 **text 纯文本**（省 token，无 JSON 外壳）：
 
-- **读成功（db_query / db_explain）**：首行状态行 `OK {行数} rows @项目/环境 (类型[, offset=N]) [truncated, nextOffset=M]`，第 2 行列名，其后数据行 TSV——制表符分列、换行分行、`\N` 表示 NULL、空字段为空字符串；值内 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`；二进制列显示 `<binary NB>`（json 档保留 base64）。
-- **写成功**：`OK {N} affected @项目/环境 (类型)` 单行。
-- **dryRun 预估**：`OK ~{N} affected (estimated) @项目/环境 (类型)` 单行。
+- **读成功（db_query / db_explain）**：首行状态行 `OK {行数} rows @项目/环境 (类型[, offset=N]) {耗时} [truncated, nextOffset=M]`（耗时如 `823ms`/`12.3s`），第 2 行列名，其后数据行 TSV——制表符分列、换行分行、`\N` 表示 NULL、空字段为空字符串；值内 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`；二进制列显示 `<binary NB>`（json 档保留 base64）。读语句 ≥5s 时输出末尾附 `提示: 慢查询 …，建议用 db_explain 分析执行计划`。
+- **写成功**：`OK {N} affected @项目/环境 (类型) {耗时}` 单行。
+- **dryRun 预估**：`OK ~{N} affected (estimated) @项目/环境 (类型) {耗时}` 单行。
 - **失败**：`FAIL {错误码} @项目/环境: {错误消息}`（消息可能多行跟随）。
 - **db_schema**：首行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据。
 - **db_list**：项目索引每项目一行 `name (default env)`；环境详情每环境一行（`name→type→databaseName→prod=y|n→write=y|n→maxRows=N`，tab 分列）。

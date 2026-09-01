@@ -161,6 +161,28 @@ public class SqlGuardTests
         Assert.True(r.Allowed);
     }
 
+    [Theory]
+    [InlineData("SELECT REPLACE(name, 'a', 'b') FROM Users")]
+    [InlineData("SELECT REPLACE (name,'a','b') FROM Users")]  // 空格前缀也是函数调用
+    [InlineData("SELECT id, REPLACE(phone, '-', '') FROM Users WHERE name LIKE '%a%'")]
+    public void ReadOnly_ReplaceFunction_NotBlocked(string sql)
+    {
+        // REPLACE 在只读黑名单，但后随 ( 判定为函数调用放行（doc/20260901 P3，曾误伤 8 次）
+        var r = _guard.Validate(sql, Db(DatabaseType.SqlServer));
+        Assert.True(r.Allowed);
+    }
+
+    [Theory]
+    [InlineData("SELECT 1; REPLACE INTO Users VALUES(1)")]  // 多语句注入：REPLACE INTO 仍拦
+    [InlineData("SELECT 1; REPLACE Users VALUES(1)")]       // MySQL 的 INTO 可省略形态仍拦
+    public void ReadOnly_ReplaceStatement_StillBlocked(string sql)
+    {
+        var r = _guard.Validate(sql, Db(DatabaseType.MySql));
+        Assert.False(r.Allowed);
+        Assert.Equal("SQL_BLOCKED", r.ErrorCode);
+        Assert.Contains("REPLACE", r.Reason);
+    }
+
     [Fact]
     public void Comment_RemovedBeforeValidation()
     {

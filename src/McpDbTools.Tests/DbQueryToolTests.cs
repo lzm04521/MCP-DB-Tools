@@ -390,7 +390,7 @@ public class DbQueryToolTests : IDisposable
         string text = await tool.ExecuteQuery("erp", "SELECT 1", "dev");
 
         // 缺省 text：状态行 + 表头 + TSV（stub 返回单列单行 id/1）
-        Assert.Equal("OK 1 rows @erp/dev (sqlserver)\nid\n1", text);
+        Assert.Equal("OK 1 rows @erp/dev (sqlserver) 0ms\nid\n1", text);
     }
 
     [Fact]
@@ -448,7 +448,7 @@ public class DbQueryToolTests : IDisposable
         var (tool, _) = BuildToolWithSpyProvider(allowWrite: false);
         string text = await tool.ExecuteQuery("erp", "SELECT 1", "dev", format: "xml");
 
-        Assert.Equal("OK 1 rows @erp/dev (sqlserver)\nid\n1", text);
+        Assert.Equal("OK 1 rows @erp/dev (sqlserver) 0ms\nid\n1", text);
     }
 
     [Fact]
@@ -563,7 +563,7 @@ public class DbQueryToolTests : IDisposable
 
         string text = await tool.ExecuteQuery("erp", "SELECT * FROM t ORDER BY id");
 
-        Assert.Equal("OK 1 rows @erp/dev (mysql)\nc\n1", text);
+        Assert.Equal("OK 1 rows @erp/dev (mysql) 5ms\nc\n1", text);
         Assert.Equal("SELECT * FROM t ORDER BY id", stub.LastSql); // SQL 未被改写
     }
 
@@ -581,7 +581,7 @@ public class DbQueryToolTests : IDisposable
         string text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10", dryRun: true);
 
         // dryRun：COUNT 单行折叠为状态行 ~N affected (estimated)，无表体
-        Assert.Equal("OK ~42 affected (estimated) @erp/dev (mysql)", text);
+        Assert.Equal("OK ~42 affected (estimated) @erp/dev (mysql) 5ms", text);
         // provider 收到的是 COUNT 只读查询（走 ExecuteQueryAsync 而非 NonQuery）
         Assert.StartsWith("SELECT COUNT(*) FROM t WHERE id<10", stub.LastSql);
         Assert.True(stub.ExecuteQueryCalled);
@@ -638,7 +638,7 @@ public class DbQueryToolTests : IDisposable
         string text = await tool.ExecuteQuery("erp", "UPDATE t SET a=1 WHERE id<10");
 
         // 正常执行：无 estimated 标记，写形状状态行
-        Assert.Equal("OK 3 affected @erp/dev (mysql)", text);
+        Assert.Equal("OK 3 affected @erp/dev (mysql) 5ms", text);
     }
 
     public void Dispose()

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using McpDbTools.Server.Admin;
 using McpDbTools.Server.Audit;
@@ -61,6 +62,44 @@ static async Task RunAsync(string[] args, int adminPort)
         .WithToolsFromAssembly();
 
     var app = builder.Build();
+
+    // /mcp 非 2xx 响应体日志（doc/20260901 P6）：JsonRpcError 的 code/message 只在响应体内，
+    // 框架 Information 日志不记 body，握手/重连类 400 无法诊断。仅 /mcp 路径做响应体缓冲，
+    // 非 2xx 时 Warning 记 method/path/status/session/body（截 2KB），正常路径回放缓冲后行为不变。
+    app.Use(async (context, next) =>
+    {
+        if (!context.Request.Path.StartsWithSegments("/mcp"))
+        {
+            await next();
+            return;
+        }
+
+        Stream original = context.Response.Body;
+        using var buffer = new MemoryStream();
+        context.Response.Body = buffer;
+        try
+        {
+            await next();
+        }
+        finally
+        {
+            context.Response.Body = original;
+            buffer.Position = 0;
+            if (context.Response.StatusCode >= 400)
+            {
+                byte[] head = new byte[2048];
+                int read = buffer.Read(head, 0, head.Length);
+                string body = Encoding.UTF8.GetString(head, 0, read);
+                string session = context.Request.Headers.TryGetValue("Mcp-Session-Id", out var sid) ? sid.ToString() : "";
+                app.Logger.LogWarning(
+                    "MCP 错误响应: {Method} {Path} → {StatusCode}{Session} body: {Body}",
+                    context.Request.Method, context.Request.Path.Value, context.Response.StatusCode,
+                    string.IsNullOrEmpty(session) ? "" : $" session={session}", body);
+                buffer.Position = 0;
+            }
+            await buffer.CopyToAsync(original);
+        }
+    });
 
     app.UseDefaultFiles();
     app.UseStaticFiles();

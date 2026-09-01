@@ -124,8 +124,9 @@ public sealed class QueryResult
     // ───────── Text 档（缺省）：纯文本，省 JSON 壳键名与字符串内层转义税 ─────────
 
     /// <summary>
-    /// Text 档序列化：首行状态行（OK/FAIL + 行数 + @项目/环境 + (类型,分页) + [截断]），
+    /// Text 档序列化：首行状态行（OK/FAIL + 行数 + @项目/环境 + (类型,分页) + 耗时 + [截断]），
     /// 其后表头行 + TSV 数据（复用 BuildRowset 编码）。失败为 FAIL 单行 + error 原文（可多行跟随）。
+    /// 读成功且 ≥5s 时末尾追加慢查询提示引导 db_explain（doc/20260901 P5）。
     /// </summary>
     internal string BuildText()
     {
@@ -144,6 +145,7 @@ public sealed class QueryResult
             sb.Append(AffectedRows).Append(" affected");
             AppendTextTarget(sb);
             AppendTextDbType(sb);
+            AppendElapsed(sb);
             return sb.ToString();
         }
 
@@ -155,6 +157,7 @@ public sealed class QueryResult
             sb.Append(" affected (estimated)");
             AppendTextTarget(sb);
             AppendTextDbType(sb);
+            AppendElapsed(sb);
             return sb.ToString();
         }
 
@@ -171,6 +174,8 @@ public sealed class QueryResult
             if (hasOffset) sb.Append("offset=").Append(Offset!.Value);
             sb.Append(')');
         }
+        // 状态行耗时：模型对查询快慢无感知（doc/20260901 P5）；先耗时后截断标记
+        AppendElapsed(sb);
         // 未截断不输出任何标记（省 "truncated":false）；截断时附续翻提示
         if (Truncated)
         {
@@ -179,6 +184,12 @@ public sealed class QueryResult
             sb.Append(']');
         }
         AppendTextBody(sb);
+        // 慢查询提示放末尾（不破坏"第 2 行=列名"解析契约）；仅读语句有执行计划可分析
+        if (ExecutionTimeMs >= SlowQueryHintThresholdMs)
+        {
+            sb.Append("\n提示: 慢查询 ").Append(FormatElapsed(ExecutionTimeMs))
+              .Append("，建议用 db_explain 分析执行计划");
+        }
         return sb.ToString();
     }
 
@@ -214,6 +225,18 @@ public sealed class QueryResult
         string? type = NormalizeTextDbType();
         if (type is not null) sb.Append(" (").Append(type).Append(')');
     }
+
+    /// <summary>慢查询提示阈值（毫秒）。与使用分析口径一致：审计统计 >5s 共 111 次（doc/20260901 P5）。</summary>
+    private const long SlowQueryHintThresholdMs = 5000;
+
+    /// <summary>状态行追加耗时：&lt;1s 输出毫秒（823ms），≥1s 一位小数秒（12.3s）。</summary>
+    private void AppendElapsed(StringBuilder sb)
+    {
+        sb.Append(' ').Append(FormatElapsed(ExecutionTimeMs));
+    }
+
+    private static string FormatElapsed(long ms) =>
+        ms < 1000 ? $"{ms}ms" : $"{ms / 1000.0:0.0}s";
 
     /// <summary>小写类型名（与 db_list 一致）；空或 "Unknown"（环境解析失败占位）不输出。</summary>
     private string? NormalizeTextDbType() =>

@@ -151,8 +151,8 @@ public class QueryResultTests
             new List<object?[]> { new object?[] { 1, "张三" }, new object?[] { 2, null } },
             maxRows: 1000, truncated: false, elapsedMs: 5, environment: "test");
 
-        // 缺省 Text：状态行 + 表头行 + TSV 数据（真实 tab/LF，无 JSON 转义）
-        Assert.Equal("OK 2 rows @erp/test (sqlserver)\nId\tName\n1\t张三\n2\t\\N", result.Serialize());
+        // 缺省 Text：状态行（含耗时）+ 表头行 + TSV 数据（真实 tab/LF，无 JSON 转义）
+        Assert.Equal("OK 2 rows @erp/test (sqlserver) 5ms\nId\tName\n1\t张三\n2\t\\N", result.Serialize());
     }
 
     [Fact]
@@ -162,7 +162,7 @@ public class QueryResultTests
             new List<object?[]> { new object?[] { 1 } }, 1000, truncated: true, elapsedMs: 5,
             environment: "test", offset: 200, nextOffset: 201);
 
-        Assert.Equal("OK 1 rows @erp/test (sqlserver, offset=200) [truncated, nextOffset=201]\nId\n1", result.Serialize());
+        Assert.Equal("OK 1 rows @erp/test (sqlserver, offset=200) 5ms [truncated, nextOffset=201]\nId\n1", result.Serialize());
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public class QueryResultTests
             new List<object?[]> { new object?[] { 1 } }, 1000, truncated: false, elapsedMs: 5);
 
         // 未截断无任何标记；无环境省略 /env 段
-        Assert.Equal("OK 1 rows @erp (sqlserver)\nId\n1", result.Serialize());
+        Assert.Equal("OK 1 rows @erp (sqlserver) 5ms\nId\n1", result.Serialize());
     }
 
     [Fact]
@@ -182,16 +182,16 @@ public class QueryResultTests
             new List<object?[]>(), 1000, false, 5, "test");
 
         // 0 行仍输出表头行（列名对 AI 有信息量）
-        Assert.Equal("OK 0 rows @erp/test (sqlserver)\nId", result.Serialize());
+        Assert.Equal("OK 0 rows @erp/test (sqlserver) 5ms\nId", result.Serialize());
     }
 
     [Fact]
     public void Serialize_TextWrite_AffectedStatusLine()
     {
-        Assert.Equal("OK 3 affected @erp/test (sqlserver)",
+        Assert.Equal("OK 3 affected @erp/test (sqlserver) 12ms",
             QueryResult.OkWrite("erp", "SqlServer", 3, 12, "test").Serialize());
         // UPDATE 命中 0 行同样是写成功
-        Assert.Equal("OK 0 affected @erp/test (sqlserver)",
+        Assert.Equal("OK 0 affected @erp/test (sqlserver) 12ms",
             QueryResult.OkWrite("erp", "SqlServer", 0, 12, "test").Serialize());
     }
 
@@ -204,7 +204,7 @@ public class QueryResultTests
             new List<object?[]> { new object?[] { 12345L } },
             maxRows: 1, truncated: false, elapsedMs: 5, environment: "test", estimated: true);
 
-        Assert.Equal("OK ~12345 affected (estimated) @erp/test (sqlserver)", result.Serialize());
+        Assert.Equal("OK ~12345 affected (estimated) @erp/test (sqlserver) 5ms", result.Serialize());
     }
 
     [Fact]
@@ -228,6 +228,31 @@ public class QueryResultTests
         var result = QueryResult.Ok("erp", "SqlServer", new List<string> { "Data" },
             new List<object?[]> { new object?[] { new byte[] { 1, 2, 3 } } }, 1000, false, 5, "test");
 
-        Assert.Equal("OK 1 rows @erp/test (sqlserver)\nData\n<binary 3B>", result.Serialize());
+        Assert.Equal("OK 1 rows @erp/test (sqlserver) 5ms\nData\n<binary 3B>", result.Serialize());
+    }
+
+    [Fact]
+    public void Serialize_Text_ElapsedFormats()
+    {
+        // <1s 输出毫秒；≥1s 一位小数秒（999/1000 分界）
+        string Ok1(long elapsed) => QueryResult.Ok("erp", "SqlServer",
+            new List<string> { "Id" }, new List<object?[]> { new object?[] { 1 } },
+            1000, false, elapsed, "test").Serialize();
+        Assert.StartsWith("OK 1 rows @erp/test (sqlserver) 999ms\n", Ok1(999));
+        Assert.StartsWith("OK 1 rows @erp/test (sqlserver) 1.0s\n", Ok1(1000));
+        Assert.StartsWith("OK 1 rows @erp/test (sqlserver) 12.3s\n", Ok1(12300));
+    }
+
+    [Fact]
+    public void Serialize_Text_SlowQueryHint_OnlyWhenOverThreshold()
+    {
+        // ≥5s（含）末尾追加慢查询提示引导 db_explain；放末尾不破坏"第 2 行=列名"契约；<5s 无提示
+        string Ok(long elapsed, bool truncated) => QueryResult.Ok("erp", "Oracle",
+            new List<string> { "Id" }, new List<object?[]> { new object?[] { 1 } },
+            1000, truncated, elapsed, "prod", offset: 0, nextOffset: 1).Serialize();
+
+        Assert.EndsWith("\n提示: 慢查询 5.0s，建议用 db_explain 分析执行计划", Ok(5000, truncated: false));
+        Assert.EndsWith("\n提示: 慢查询 12.3s，建议用 db_explain 分析执行计划", Ok(12300, truncated: true));
+        Assert.DoesNotContain("提示", Ok(4999, truncated: false));
     }
 }

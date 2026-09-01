@@ -247,6 +247,7 @@ public sealed class SqlGuard : ISqlGuard
     /// SELECT INTO 特殊：SELECT 与 INTO 之间可能有列/星号（"SELECT * INTO newt"），
     /// 但又不能误伤 "SELECT ... INSERT INTO"（INSERT INTO 已有表是合法写），
     /// 故用 negative-lookahead 排除中间出现 INSERT/UPDATE/DELETE 等写动词的场景。
+    /// REPLACE 特殊：后随 ( 为函数调用（SELECT REPLACE(col,'a','b')），仅拦语句形态。
     /// </summary>
     private static string BuildKeywordPattern(string keyword)
     {
@@ -257,6 +258,14 @@ public sealed class SqlGuard : ISqlGuard
         if (trimmed.Equals("SELECT INTO", StringComparison.OrdinalIgnoreCase))
         {
             return @"\bSELECT\b(?:(?!\b(?:INSERT|UPDATE|DELETE|MERGE|REPLACE|CREATE|ALTER|DROP)\b)[^;])*?\bINTO\b";
+        }
+
+        // 只读黑名单的 REPLACE 误伤 REPLACE(col,..) 函数调用（doc/20260901 P3，误伤 8 次）。
+        // 仅拦截语句形态——REPLACE INTO t / REPLACE t VALUES(...)（MySQL 的 INTO 可省略，短语匹配会漏拦）；
+        // 后随 ( （允许空白前缀 REPLACE (col)）判定为函数调用放行。
+        if (trimmed.Equals("REPLACE", StringComparison.OrdinalIgnoreCase))
+        {
+            return @"\bREPLACE\b(?!\s*\()";
         }
 
         // 默认：相邻连接（仅空白），多词短语如 BULK INSERT / ALTER DATABASE / DROP TABLE

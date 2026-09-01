@@ -76,7 +76,7 @@ public class DbExplainToolTests : IDisposable
         Assert.True(stub.ExplainCalled);
         // text 缺省：状态行 + 表头 + TSV（与 db_query 读形状同构）
         Assert.Equal(
-            "OK 1 rows @erp/dev (mysql)\n" +
+            "OK 1 rows @erp/dev (mysql) 3ms\n" +
             "id\tselect_type\ttable\trows\n" +
             "1\tSIMPLE\tt\t100",
             text);
