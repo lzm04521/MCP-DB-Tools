@@ -32,6 +32,13 @@ public interface IDatabaseProvider
     Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct);
 
     /// <summary>
+    /// 执行单条元数据模板查询（sql 为 SchemaDialects 模板，paramValue 绑定 @table 参数）。
+    /// 供 db_schema 模糊搜索（TablesLikeSql/ColumnSearchSql）与 db_query 错误自愈复用；
+    /// 内部生成语句不经 SqlGuard 校验路径（值一律参数化，无拼接）。
+    /// </summary>
+    Task<QueryResult> ExecuteSchemaQueryAsync(string project, ResolvedDatabase db, string sql, string paramValue, CancellationToken ct);
+
+    /// <summary>
     /// 执行计划查询。sql 为已通过只读校验的单条语句；基类默认 EXPLAIN 前缀拼接（MySQL/PG），
     /// SqlServer/Oracle 的会话式实现由子类 override。
     /// </summary>
@@ -276,6 +283,53 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
         {
             // 建连阶段失败（连接串不可达/TNS 解析失败等）与段循环未覆盖的驱动异常：包装为失败段，不逃逸
             return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询错误: {ex.Message}", "QUERY_ERROR", 0, db.Environment)) };
+        }
+    }
+
+    /// <summary>
+    /// 单条元数据模板查询：独立开连接（与 GetSchemaAsync 段循环的建连/超时/异常矩阵一致，
+    /// 失败包装为 FAIL QueryResult 不逃逸）。paramValue 绑定 @table（LIKE 模式值需调用方先经
+    /// QueryErrorAssist.EscapeLikePattern 转义）。
+    /// </summary>
+    public async Task<QueryResult> ExecuteSchemaQueryAsync(string project, ResolvedDatabase db, string sql, string paramValue, CancellationToken ct)
+    {
+        try
+        {
+            await using DbConnection conn = CreateConnection(db.ConnectionString);
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(TimeSpan.FromSeconds(db.ConnectTimeoutSeconds));
+            try
+            {
+                await conn.OpenAsync(connectCts.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", 0, db.Environment);
+            }
+
+            await using DbCommand cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.CommandTimeout = db.CommandTimeout;
+            DbParameter p = cmd.CreateParameter();
+            p.ParameterName = SchemaDialects.TableParamName;
+            p.Value = paramValue;
+            cmd.Parameters.Add(p);
+
+            await using DbDataReader reader = await cmd.ExecuteReaderAsync(ct);
+            var (columns, rows, truncated) = await ReadAsync(reader, db.MaxRows, ct);
+            return QueryResult.Ok(project, DatabaseType.ToString(), columns, rows, db.MaxRows, truncated, 0, db.Environment);
+        }
+        catch (OperationCanceledException)
+        {
+            throw; // 取消向上传播，不包装
+        }
+        catch (DbException ex)
+        {
+            return QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询错误: {ex.Message}", "QUERY_ERROR", 0, db.Environment);
+        }
+        catch (TimeoutException ex)
+        {
+            return QueryResult.Fail(project, DatabaseType.ToString(), $"元数据查询超时: {ex.Message}", "QUERY_TIMEOUT", 0, db.Environment);
         }
     }
 

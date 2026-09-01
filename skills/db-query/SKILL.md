@@ -27,7 +27,7 @@ description: >
 
 - `mcp__db-tools__db_list()`：列出所有 project。
 - `mcp__db-tools__db_list(project=...)`：列出该 project 下的 environment 与 DBMS type。
-- `mcp__db-tools__db_schema(project, environment?, table?, sample?)`：元数据探索——不传 `table` 返回表清单；传 `table` 返回该表列/索引/外键三段（`sample>0` 附采样行）。**优先用它替代手写 information_schema/all_tab_columns 方言 SQL**。Oracle 对象名大写存储。
+- `mcp__db-tools__db_schema(project, environment?, table?, column?, sample?)`：元数据探索——不传 `table` 返回表清单；传 `table` 返回该表列/索引/外键三段（`sample>0` 附采样行）；`table` 含 `%` 模糊搜表名（`_` 按字面）；`column` 按列名（可含 `%`）反查含该列的表（与 table/sample 互斥）。**优先用它替代手写 information_schema/all_tab_columns 方言 SQL**。Oracle 对象名大写存储。
 - `mcp__db-tools__db_explain(project, sql, environment?)`：执行计划（慢查询分析）——仅只读语句（写语句返回 SQL_BLOCKED）；返回计划行集（text：状态行 + 列名 + TSV，与 db_query 同构）。
 - `mcp__db-tools__db_query(project, sql, environment?, limit?, format?, offset?, dryRun?)`：执行 SQL（读或写环境）。`project` 必填；`environment` 不传走 `defaultEnvironment`（通常 Test）；`limit` 与环境 `maxRows` 取较小值；`format` 三档 text（缺省纯文本）/tsv/json（见「返回格式」）；`offset` 分页跳行（见下文）；`dryRun` 写影响预估（见下文）。
 
@@ -46,7 +46,7 @@ description: >
 
 ### schema（列）
 
-优先用 `db_schema(project, table=...)`（列/索引/外键一次返回，方言无关）。手写方言查询仅作 fallback 参考：
+优先用 `db_schema(project, table=...)`（列/索引/外键一次返回，方言无关）。记不清表名用 `db_schema(project, table="关键词%")` 模糊搜；找"哪些表有某列"用 `db_schema(project, column="列名")` 反查。手写方言查询仅作 fallback 参考：
 
 | DBMS | 查列 |
 |---|---|
@@ -95,8 +95,8 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 - **读成功（db_query / db_explain）**：首行状态行 `OK {行数} rows @项目/环境 (类型[, offset=N]) {耗时} [truncated, nextOffset=M]`（耗时如 `823ms`/`12.3s`），第 2 行列名，其后数据行 TSV——制表符分列、换行分行、`\N` 表示 NULL、空字段为空字符串；值内 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`；二进制列显示 `<binary NB>`（json 档保留 base64）。读语句 ≥5s 时输出末尾附 `提示: 慢查询 …，建议用 db_explain 分析执行计划`。
 - **写成功**：`OK {N} affected @项目/环境 (类型) {耗时}` 单行。
 - **dryRun 预估**：`OK ~{N} affected (estimated) @项目/环境 (类型) {耗时}` 单行。
-- **失败**：`FAIL {错误码} @项目/环境: {错误消息}`（消息可能多行跟随）。
-- **db_schema**：首行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据。
+- **失败**：`FAIL {错误码} @项目/环境: {错误消息}`（消息可能多行跟随）。db_query 猜列名/表名报错时，消息自动附相关表真实列清单（`表 X 列: ...`）或相近表（`相近表: ...`），直接据此改写 SQL，无需再查 schema。
+- **db_schema**：首行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`，模糊搜为 `tables~模式`，列名反查为 `column=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据。
 - **db_list**：项目索引每项目一行 `name (default env)`；环境详情每环境一行（`name→type→databaseName→prod=y|n→write=y|n→maxRows=N`，tab 分列）。
 
 结构化回退：db_query 传 `format="tsv"`（JSON 壳 + rowset）或 `format="json"`（JSON 壳 + rows 二维数组，需精确结构时用）；db_list 传 `format="json"`。db_schema/db_explain 不开放 format 参数。

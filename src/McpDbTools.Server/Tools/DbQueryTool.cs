@@ -208,7 +208,120 @@ public sealed class DbQueryTool
             : null;
         _audit.Log(MakeEntry(project, env, db.Type.ToString(), sql, result.RowCount, result.ExecutionTimeMs, result.Success, result.Error, resultJson));
 
+        // 6.5 错误自愈（doc/20260901 P1）：猜列名/表名失败自动附真实列清单/相近表，省一轮无效往返。
+        //     审计主条目已记原始错误（上一行），附加文本只进返回消息；仅读路径，辅助限流/异常一律降级返回原错误。
+        if (!result.Success && guardResult.Kind == StatementKind.Read && !cancellationToken.IsCancellationRequested)
+        {
+            string? assist = await TryBuildErrorAssistAsync(project, env, db, provider, sql, result, cancellationToken);
+            if (assist is not null)
+            {
+                result = QueryResult.Fail(
+                    result.Project ?? project,
+                    result.DatabaseType ?? db.Type.ToString(),
+                    result.Error + "\n" + assist,
+                    result.ErrorCode ?? "QUERY_ERROR",
+                    result.ExecutionTimeMs,
+                    result.Environment);
+            }
+        }
+
         return result.Serialize(rowFormat);
+    }
+
+    /// <summary>
+    /// 错误辅助编排（doc/20260901 P1）：分类失败消息 → 列名错误附相关表真实列清单（SQL 提取表名，逐表查），
+    /// 表名错误附相近表（模糊搜）。辅助查询经 ExecuteSchemaQueryAsync（值参数化，内部生成不经 SqlGuard），
+    /// 逐条走并发闸门并记 [assist] 前缀审计；限流/取消/异常返回 null 静默降级（主失败已记审计，辅助永不放大失败）。
+    /// </summary>
+    private async Task<string?> TryBuildErrorAssistAsync(
+        string project, string env, ResolvedDatabase db, IDatabaseProvider provider, string sql, QueryResult failed, CancellationToken ct)
+    {
+        QueryErrorAssist.ErrorSignal signal = QueryErrorAssist.Classify(db.Type, failed.Error ?? string.Empty);
+        if (signal.Kind == QueryErrorAssist.AssistKind.None)
+        {
+            return null;
+        }
+
+        if (signal.Kind == QueryErrorAssist.AssistKind.InvalidTable)
+        {
+            // 坏名优先取错误消息（ORA-00942 除外），回退 SQL 提取；去 schema 前缀后须为纯标识符（防消息值混入特殊字符）
+            string? name = signal.BadName is not null
+                ? QueryErrorAssist.StripSchema(signal.BadName)
+                : QueryErrorAssist.ExtractTableNames(sql).Select(QueryErrorAssist.StripSchema).FirstOrDefault();
+            if (!QueryErrorAssist.IsPlainIdentifier(name))
+            {
+                return null;
+            }
+
+            QueryResult? search = await RunAssistQueryAsync(project, env, db, provider,
+                SchemaDialects.TablesLikeSql(db.Type),
+                "%" + SchemaDialects.EscapeLikePattern(name!) + "%",
+                $"[assist] 相近表 %{name}%", ct);
+            if (search is null || !search.Success)
+            {
+                return null;
+            }
+
+            // TablesLikeSql 列序：schema_name, table_name, ...——候选取表名去重（同表名多 schema 只展示一次）
+            List<string> candidates = search.Rows
+                .Select(row => row.Length > 1 ? row[1]?.ToString() : null)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Select(s => s!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return QueryErrorAssist.FormatTableAssist(candidates);
+        }
+
+        // InvalidColumn：SQL 提取相关表（≤3），逐表附真实列清单；某表也不存在（查列失败/空）自然跳过
+        IReadOnlyList<string> tables = QueryErrorAssist.ExtractTableNames(sql);
+        if (tables.Count == 0)
+        {
+            return null;
+        }
+
+        var found = new List<(string Table, IReadOnlyList<string> Columns)>();
+        foreach (string t in tables)
+        {
+            QueryResult? cols = await RunAssistQueryAsync(project, env, db, provider,
+                SchemaDialects.ColumnsSql(db.Type), t, $"[assist] {t} 列清单", ct);
+            if (cols is null)
+            {
+                break; // 限流/取消：已有部分结果也可用
+            }
+            if (!cols.Success || cols.RowCount == 0)
+            {
+                continue; // 该表不存在（表名也猜错）或列清单为空：跳过
+            }
+            found.Add((t, cols.Rows.Select(row => row[0]?.ToString() ?? "").Where(s => s.Length > 0).ToList()));
+        }
+        return found.Count > 0 ? QueryErrorAssist.FormatColumnAssist(found) : null;
+    }
+
+    /// <summary>单条辅助元数据查询：同一并发闸门 + [assist] 审计；限流/取消/异常返回 null（辅助永不放大失败）。</summary>
+    private async Task<QueryResult?> RunAssistQueryAsync(
+        string project, string env, ResolvedDatabase db, IDatabaseProvider provider,
+        string sql, string value, string auditLabel, CancellationToken ct)
+    {
+        try
+        {
+            await using IAsyncDisposable slot = await _limiter.AcquireAsync(project, env, db, ct);
+            QueryResult r = await provider.ExecuteSchemaQueryAsync(project, db, sql, value, ct);
+            _audit.Log(MakeEntry(project, env, db.Type.ToString(), auditLabel, r.RowCount, r.ExecutionTimeMs, r.Success, r.Error));
+            return r;
+        }
+        catch (QueryRateLimitedException)
+        {
+            return null; // 辅助不与主查询争抢：限流即放弃
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _audit.Log(MakeEntry(project, env, db.Type.ToString(), auditLabel, 0, 0, false, $"辅助查询异常: {ex.GetType().Name}: {ex.Message}"));
+            return null;
+        }
     }
 
     /// <summary>format 参数宽容解析：tsv/json 显式匹配，text 或任何其他值回落 text（与旧版"其他值回落"同哲学，仅回落点变为缺省档）。</summary>

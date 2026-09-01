@@ -12,11 +12,17 @@ public sealed record SchemaSectionTemplate(string Name, string Sql, bool HasTabl
 /// 列 column_name/data_type/is_nullable/column_default/column_comment/is_primary_key；
 /// 索引 index_name/is_unique/is_primary/column_name/ordinal；外键 fk_name/column_name/ref_table/ref_column。</para>
 /// <para>Oracle all_* 视图仅返回当前用户有权限可见的对象（权限特性，非缺陷）；
-/// Oracle 元数据字典区分大小写，模板内以 UPPER(@table) 匹配。</para>
+/// Oracle 元数据字典区分大小写，模板内以 UPPER(@table) 匹配（PG 对应 LOWER）。</para>
+/// <para>模糊匹配（TablesLikeSql/ColumnSearchSql 非 exact）统一 ESCAPE '!'：调用方传值需经
+/// QueryErrorAssist.EscapeLikePattern 转义（_→!_、!→!!，% 保留通配）。不用反斜杠——
+/// MySQL NO_BACKSLASH_ESCAPES 模式下 '\' 字面量解析因模式而异。</para>
 /// </summary>
 public static class SchemaDialects
 {
     public const string TableParamName = "@table";
+
+    /// <summary>LIKE 模式值转义（ESCAPE '!' 约定）：!→!!、_→!_，% 保留为通配符。仅含 % 的模糊模式需转义；精确匹配传原值。</summary>
+    public static string EscapeLikePattern(string pattern) => pattern.Replace("!", "!!").Replace("_", "!_");
 
     /// <summary>表清单模板（table=null 用）。返回单段 [tables]。</summary>
     public static IReadOnlyList<SchemaSectionTemplate> Tables(DatabaseType type) => new[]
@@ -30,6 +36,125 @@ public static class SchemaDialects
         new SchemaSectionTemplate("columns", ColumnsSql(type), HasTableParam: true),
         new SchemaSectionTemplate("indexes", IndexesSql(type), HasTableParam: true),
         new SchemaSectionTemplate("foreignKeys", ForeignKeysSql(type), HasTableParam: true),
+    };
+
+    /// <summary>
+    /// 表名模糊搜索 SQL（table 含 % 的模糊模式与 P1 错误自愈共用）。
+    /// @table 绑定 LIKE 模式值（% 通配、_ 字面，经 EscapeLikePattern 转义 + ESCAPE '!'）。
+    /// 输出列与表清单模板同构。
+    /// </summary>
+    public static string TablesLikeSql(DatabaseType type) => type switch
+    {
+        DatabaseType.SqlServer => """
+            SELECT s.name AS schema_name, t.name AS table_name,
+                   CAST(ep.value AS nvarchar(500)) AS table_comment,
+                   SUM(CASE WHEN p.index_id IN (0,1) THEN p.rows ELSE 0 END) AS row_count
+            FROM sys.tables t
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            LEFT JOIN sys.partitions p ON p.object_id = t.object_id
+            LEFT JOIN sys.extended_properties ep ON ep.major_id = t.object_id AND ep.minor_id = 0 AND ep.name = 'MS_Description'
+            WHERE t.name LIKE @table ESCAPE '!'
+            GROUP BY s.name, t.name, CAST(ep.value AS nvarchar(500))
+            ORDER BY schema_name, table_name
+            """,
+        DatabaseType.MySql => """
+            SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name,
+                   TABLE_COMMENT AS table_comment, TABLE_ROWS AS row_count
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+              AND TABLE_NAME LIKE @table ESCAPE '!'
+            ORDER BY table_name
+            """,
+        DatabaseType.Oracle => """
+            SELECT t.owner AS schema_name, t.table_name AS table_name,
+                   c.comments AS table_comment, t.num_rows AS row_count
+            FROM all_tables t
+            LEFT JOIN all_tab_comments c ON c.owner = t.owner AND c.table_name = t.table_name
+            WHERE t.table_name LIKE UPPER(@table) ESCAPE '!'
+            ORDER BY t.owner, t.table_name
+            """,
+        DatabaseType.PostgreSql => """
+            SELECT n.nspname AS schema_name, c.relname AS table_name,
+                   pg_catalog.obj_description(c.oid, 'pg_class') AS table_comment,
+                   c.reltuples::bigint AS row_count
+            FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+              AND c.relname LIKE LOWER(@table) ESCAPE '!'
+            ORDER BY n.nspname, c.relname
+            """,
+        _ => throw new NotSupportedException($"不支持的数据库类型: {type}"),
+    };
+
+    /// <summary>
+    /// 列名反查 SQL（db_schema column 参数）：返回含该列的表清单，输出列 schema_name/table_name/column_name。
+    /// @table 绑定列名（exact）或 LIKE 模式值（非 exact，% 通配、_ 字面）。
+    /// </summary>
+    public static string ColumnSearchSql(DatabaseType type, bool exact) => type switch
+    {
+        DatabaseType.SqlServer => exact
+            ? """
+              SELECT s.name AS schema_name, t.name AS table_name, c.name AS column_name
+              FROM sys.tables t
+              JOIN sys.schemas s ON s.schema_id = t.schema_id
+              JOIN sys.columns c ON c.object_id = t.object_id
+              WHERE c.name = @table
+              ORDER BY s.name, t.name, c.column_id
+              """
+            : """
+              SELECT s.name AS schema_name, t.name AS table_name, c.name AS column_name
+              FROM sys.tables t
+              JOIN sys.schemas s ON s.schema_id = t.schema_id
+              JOIN sys.columns c ON c.object_id = t.object_id
+              WHERE c.name LIKE @table ESCAPE '!'
+              ORDER BY s.name, t.name, c.column_id
+              """,
+        DatabaseType.MySql => exact
+            ? """
+              SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, COLUMN_NAME AS column_name
+              FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = @table
+              ORDER BY TABLE_NAME, ORDINAL_POSITION
+              """
+            : """
+              SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, COLUMN_NAME AS column_name
+              FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME LIKE @table ESCAPE '!'
+              ORDER BY TABLE_NAME, ORDINAL_POSITION
+              """,
+        DatabaseType.Oracle => exact
+            ? """
+              SELECT c.owner AS schema_name, c.table_name AS table_name, c.column_name AS column_name
+              FROM all_tab_columns c
+              WHERE c.column_name = UPPER(@table)
+              ORDER BY c.owner, c.table_name, c.column_id
+              """
+            : """
+              SELECT c.owner AS schema_name, c.table_name AS table_name, c.column_name AS column_name
+              FROM all_tab_columns c
+              WHERE c.column_name LIKE UPPER(@table) ESCAPE '!'
+              ORDER BY c.owner, c.table_name, c.column_id
+              """,
+        DatabaseType.PostgreSql => exact
+            ? """
+              SELECT n.nspname AS schema_name, t.relname AS table_name, a.attname AS column_name
+              FROM pg_attribute a
+              JOIN pg_class t ON t.oid = a.attrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+              WHERE a.attnum > 0 AND NOT a.attisdropped AND t.relkind = 'r'
+                AND a.attname = LOWER(@table)
+              ORDER BY n.nspname, t.relname, a.attnum
+              """
+            : """
+              SELECT n.nspname AS schema_name, t.relname AS table_name, a.attname AS column_name
+              FROM pg_attribute a
+              JOIN pg_class t ON t.oid = a.attrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+              WHERE a.attnum > 0 AND NOT a.attisdropped AND t.relkind = 'r'
+                AND a.attname LIKE LOWER(@table) ESCAPE '!'
+              ORDER BY n.nspname, t.relname, a.attnum
+              """,
+        _ => throw new NotSupportedException($"不支持的数据库类型: {type}"),
     };
 
     private static string TablesSql(DatabaseType type) => type switch
@@ -71,7 +196,8 @@ public static class SchemaDialects
         _ => throw new NotSupportedException($"不支持的数据库类型: {type}"),
     };
 
-    private static string ColumnsSql(DatabaseType type) => type switch
+    /// <summary>单表列清单 SQL（TableDetail 组装用；P1 错误自愈附列清单复用，故 internal）。</summary>
+    internal static string ColumnsSql(DatabaseType type) => type switch
     {
         DatabaseType.SqlServer => """
             SELECT c.name AS column_name, tp.name AS data_type,

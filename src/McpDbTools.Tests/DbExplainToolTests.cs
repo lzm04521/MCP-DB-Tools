@@ -118,5 +118,7 @@ public class DbExplainToolTests : IDisposable
             => throw new NotSupportedException();
         public Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
             => throw new NotSupportedException();
+        public Task<QueryResult> ExecuteSchemaQueryAsync(string project, ResolvedDatabase db, string sql, string paramValue, CancellationToken ct)
+            => throw new NotSupportedException();
     }
 }

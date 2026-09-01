@@ -48,6 +48,66 @@ public class SchemaDialectsTests
         Assert.All(SchemaDialects.TableDetail(type), t => Assert.DoesNotContain("{table}", t.Sql));
     }
 
+    // ───────── 模糊搜索模板（doc/20260901 P2）：LIKE + ESCAPE '!' + 参数化，防误改退化 ─────────
+
+    [Theory]
+    [MemberData(nameof(AllTypesData))]
+    public void TablesLikeSql_AllDialects_ParameterizedLikeWithEscape(DatabaseType type)
+    {
+        string sql = SchemaDialects.TablesLikeSql(type);
+        Assert.Contains(TablesSourceFor(type), sql); // 与表清单同一权威表源
+        Assert.Contains(SchemaDialects.TableParamName, sql);
+        Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ESCAPE '!'", sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllTypesData))]
+    public void TablesLikeSql_DictionaryCaseNormalization(DatabaseType type)
+    {
+        // Oracle/PG 字典区分大小写，模式值在 SQL 内 UPPER/LOWER 归一；其余方言原生不敏感不动
+        string sql = SchemaDialects.TablesLikeSql(type);
+        if (type == DatabaseType.Oracle) Assert.Contains("UPPER(@table)", sql);
+        else if (type == DatabaseType.PostgreSql) Assert.Contains("LOWER(@table)", sql);
+        else Assert.DoesNotContain("UPPER(@table)", sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllTypesData))]
+    public void ColumnSearchSql_Exact_EqualsParam_NoLike(DatabaseType type)
+    {
+        string sql = SchemaDialects.ColumnSearchSql(type, exact: true);
+        // 精确匹配形态：Oracle/PG 在 SQL 内做大小写归一
+        string equals = type switch
+        {
+            DatabaseType.Oracle => "= UPPER(@table)",
+            DatabaseType.PostgreSql => "= LOWER(@table)",
+            _ => "= @table"
+        };
+        Assert.Contains(equals, sql);
+        Assert.DoesNotContain("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(AllTypesData))]
+    public void ColumnSearchSql_Fuzzy_LikeWithEscape(DatabaseType type)
+    {
+        string sql = SchemaDialects.ColumnSearchSql(type, exact: false);
+        Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ESCAPE '!'", sql);
+        Assert.Contains(SchemaDialects.TableParamName, sql);
+    }
+
+    [Theory]
+    [InlineData("AB_C", "AB!_C")]
+    [InlineData("A!B", "A!!B")]
+    [InlineData("A!_B", "A!!!_B")] // 先转义 ! 再转义 _，避免自嵌套
+    [InlineData("AUD%", "AUD%")]   // % 保留为通配符
+    public void EscapeLikePattern_UnderscoreAndBangEscaped_PercentKept(string input, string expected)
+    {
+        Assert.Equal(expected, SchemaDialects.EscapeLikePattern(input));
+    }
+
     private static string TablesSourceFor(DatabaseType type) => type switch
     {
         DatabaseType.SqlServer => "sys.tables",

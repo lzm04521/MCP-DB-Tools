@@ -105,6 +105,16 @@ public class DbQueryToolTests : IDisposable
         // spy：记录 provider 实际收到的 SQL 与 maxRows（offset 拼接/dryRun 变换断言用）
         public string? LastSql { get; private set; }
         public int LastMaxRows { get; private set; }
+        // P1 错误自愈断言用：记录元数据辅助查询 (sql, value)，可注入按 sql 路由的返回结果
+        public List<(string Sql, string Value)> SchemaCalls { get; } = new();
+        public Func<string, string, QueryResult>? SchemaQueryHandler { get; set; }
+        public Task<QueryResult> ExecuteSchemaQueryAsync(string project, ResolvedDatabase db, string sql, string paramValue, CancellationToken ct)
+        {
+            SchemaCalls.Add((sql, paramValue));
+            return Task.FromResult(SchemaQueryHandler is not null
+                ? SchemaQueryHandler(sql, paramValue)
+                : QueryResult.Fail(project, db.Type.ToString(), "stub 未配置 SchemaQueryHandler", "QUERY_ERROR"));
+        }
         public Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
         {
             ExecuteQueryCalled = true;
@@ -320,6 +330,8 @@ public class DbQueryToolTests : IDisposable
             => Task.FromResult<(bool, long, string?)>((false, 0, _ex.Message));
         public Task<IReadOnlyList<SchemaSection>> GetSchemaAsync(string project, ResolvedDatabase db, string? table, CancellationToken ct)
             => Task.FromException<IReadOnlyList<SchemaSection>>(_ex);
+        public Task<QueryResult> ExecuteSchemaQueryAsync(string project, ResolvedDatabase db, string sql, string paramValue, CancellationToken ct)
+            => Task.FromException<QueryResult>(_ex);
         public Task<QueryResult> ExplainAsync(string project, ResolvedDatabase db, string sql, CancellationToken ct)
             => Task.FromException<QueryResult>(_ex);
     }
@@ -639,6 +651,86 @@ public class DbQueryToolTests : IDisposable
 
         // 正常执行：无 estimated 标记，写形状状态行
         Assert.Equal("OK 3 affected @erp/dev (mysql) 5ms", text);
+    }
+
+    // ───────── 错误自愈（doc/20260901 P1）：猜列名/表名失败自动附真实列清单/相近表 ─────────
+
+    private const string DevSqlServerConfig =
+        """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"sqlserver","connectionString":"cs"}}}}""";
+
+    private const string DevOracleConfig =
+        """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"oracle","connectionString":"cs"}}}}""";
+
+    [Fact]
+    public async Task ErrorAssist_InvalidColumn_AppendsRealColumns()
+    {
+        var fail = QueryResult.Fail("erp", "SqlServer", "Invalid column name 'usr_nme'", "QUERY_ERROR", 10, "dev");
+        var stub = new StubProvider(fail, DatabaseType.SqlServer)
+        {
+            SchemaQueryHandler = (_, _) => QueryResult.Ok("erp", "SqlServer",
+                new List<string> { "column_name" },
+                new List<object?[]> { new object?[] { "ID" }, new object?[] { "USER_NAME" } }, 1000, false, 2, "dev")
+        };
+        var (tool, spy) = CreateToolWithStub(stub, DevSqlServerConfig);
+
+        string text = await tool.ExecuteQuery("erp", "SELECT id, usr_nme FROM T_USERS");
+
+        Assert.StartsWith("FAIL QUERY_ERROR @erp/dev: Invalid column name 'usr_nme'", text);
+        Assert.Contains("表 T_USERS 列: ID, USER_NAME", text);
+        (string sql, string value) = Assert.Single(spy.SchemaCalls);
+        Assert.Equal("T_USERS", value); // 列清单模板按表名参数化查
+        Assert.Contains("@table", sql);
+    }
+
+    [Fact]
+    public async Task ErrorAssist_InvalidTable_AppendsSimilarTables_WithEscapedPattern()
+    {
+        // ORA-00942 不含坏名 → 从 SQL 提取；模糊值 %name%（_ 转义 !_
+        var fail = QueryResult.Fail("erp", "Oracle", "ORA-00942: table or view does not exist", "QUERY_ERROR", 10, "dev");
+        var stub = new StubProvider(fail, DatabaseType.Oracle)
+        {
+            SchemaQueryHandler = (_, _) => QueryResult.Ok("erp", "Oracle",
+                new List<string> { "schema_name", "table_name", "table_comment", "row_count" },
+                new List<object?[]> { new object?[] { "SCOTT", "T_USERS", null, 5L }, new object?[] { "SCOTT", "T_USER_LOG", null, 9L } },
+                1000, false, 3, "dev")
+        };
+        var (tool, spy) = CreateToolWithStub(stub, DevOracleConfig);
+
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM T_USR");
+
+        Assert.Contains("相近表: T_USERS, T_USER_LOG", text);
+        (_, string value) = Assert.Single(spy.SchemaCalls);
+        Assert.Equal("%T!_USR%", value);
+    }
+
+    [Fact]
+    public async Task ErrorAssist_UnknownErrorFamily_NoAssistQueries()
+    {
+        var fail = QueryResult.Fail("erp", "SqlServer", "Execution Timeout Expired.", "QUERY_TIMEOUT", 10, "dev");
+        var (tool, spy) = CreateToolWithStub(new StubProvider(fail, DatabaseType.SqlServer), DevSqlServerConfig);
+
+        string text = await tool.ExecuteQuery("erp", "SELECT * FROM T_SLOW");
+
+        // 超时不在辅助范围：原错误原样返回，无辅助查询
+        Assert.Equal("FAIL QUERY_TIMEOUT @erp/dev: Execution Timeout Expired.", text);
+        Assert.Empty(spy.SchemaCalls);
+    }
+
+    [Fact]
+    public async Task ErrorAssist_SchemaQueryFails_DegradesToOriginalError()
+    {
+        // 辅助查询抛异常：静默降级返回原错误（辅助永不放大失败）
+        var fail = QueryResult.Fail("erp", "MySql", "Unknown column 'x' in 'field list'", "QUERY_ERROR", 10, "dev");
+        var stub = new StubProvider(fail, DatabaseType.MySql)
+        {
+            SchemaQueryHandler = (_, _) => throw new InvalidOperationException("assist boom")
+        };
+        var (tool, _) = CreateToolWithStub(stub,
+            """{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}""");
+
+        string text = await tool.ExecuteQuery("erp", "SELECT x FROM t1");
+
+        Assert.Equal("FAIL QUERY_ERROR @erp/dev: Unknown column 'x' in 'field list'", text);
     }
 
     public void Dispose()
