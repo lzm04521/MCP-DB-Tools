@@ -1,8 +1,10 @@
 /* 关于视图（SPA 视图模块，只读）。
    负责：当前版本展示 + 应用更新（自系统设置页迁来并重做为一键流）。
    数据流：
-     - GET /admin/api/update/status（currentVersion + 缓存检查结果）→ 版本行 + 检查按钮初始态
-     - POST /admin/api/update/check → 展开结果区（最新版本 + 状态徽章 + 一键更新 + 更新说明原文）
+     - GET /admin/api/update/status（currentVersion + 缓存检查结果含 checkedAtUtc）→ 版本行 + 检查按钮初始态
+       （hint 显示上次检查时间，可辨"已是最新"是实时结果还是最多 1 小时前的缓存）
+     - POST /admin/api/update/check → 展开结果区（最新版本 + 状态徽章 + 一键更新 + 更新说明原文）；
+       检查失败时结果区显示红色"检查失败"徽章，不保留上次成功的徽章误导
      - 一键更新：POST /download（期间 500ms 轮询 /status 刷新进度条）→ 下载完成自动 POST /apply
        （Velopack 接管重启；轮询 /version 直到版本变化自动刷新页面），无"下载完等手动安装"中间态
    版本显示统一 v 前缀且只加一次（后端 /version 与 targetVersion 均不带 v）。
@@ -11,7 +13,7 @@
    公共能力（toast/confirm/busy）来自 window.adminUi / window.adminApi。 */
 (function () {
   const state = {
-    update: { currentVersion: null, configured: false, installed: false, checked: false, hasUpdate: false, targetVersion: null, downloaded: false, error: null, downloadInProgress: false, downloadPercent: 0, notes: null, releaseUrl: null },
+    update: { currentVersion: null, configured: false, installed: false, checked: false, checkedAtUtc: null, hasUpdate: false, targetVersion: null, downloaded: false, error: null, downloadInProgress: false, downloadPercent: 0, notes: null, releaseUrl: null },
     checkedOnce: false, // 检查成功后置位：控制结果区展开（/update/status 不含 notes，缓存态不展开）
     downloading: false, // 本地下载中标志（POST /download 未返回期间，先于服务端 downloadInProgress 置位）
     applying: false // 已进入应用更新阶段（apply 后禁用操作，等待重启）
@@ -69,6 +71,15 @@
     return v ? `v${v}` : '?';
   }
 
+  /** UTC ISO 渲染成本地时间（与 backups.js 同实现，视图模块各自独立）。 */
+  function isoToLocal(iso) {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
   async function loadAbout() {
     window.adminUi.setBusy(true);
     try {
@@ -109,6 +120,11 @@
     } else if (u.downloaded && !state.checkedOnce) {
       // 边界恢复：上个会话已下载但未走到重启（如中途离开页面）——重新检查后可一键安装
       hint = `已下载新版本 ${u.targetVersion || ''}，点"检查更新"后可一键安装。`;
+    } else if (u.checkedAtUtc) {
+      // 已检查过（手动或自动缓存）：显示检查时间，让"已是最新"可辨新旧（缓存最多滞后 1 小时）
+      hint = `上次检查：${isoToLocal(u.checkedAtUtc)}`;
+    } else if (u.configured && u.installed) {
+      hint = '尚未自动检查更新，可点击"检查更新"。';
     } else {
       hint = '';
     }
@@ -122,6 +138,18 @@
   /** 渲染检查结果区：最新版本 + 状态徽章 + 一键更新按钮 + 进度条 + 更新说明。 */
   function renderResult(u, downloading) {
     el.aboutResult.hidden = false;
+
+    // 检查失败态：显示红色失败徽章，不渲染上次成功的"已是最新/有新版本"误导信息
+    if (u.error) {
+      el.aboutTargetVersion.textContent = '—';
+      el.aboutBadge.textContent = '检查失败';
+      el.aboutBadge.className = 'pill pill--danger';
+      el.aboutOneClickBtn.hidden = true;
+      renderProgress(false, 0);
+      el.aboutNotes.textContent = '';
+      return;
+    }
+
     // 已是最新时 latest 即当前版本
     el.aboutTargetVersion.textContent = displayVersion(u.hasUpdate ? u.targetVersion : u.currentVersion);
 

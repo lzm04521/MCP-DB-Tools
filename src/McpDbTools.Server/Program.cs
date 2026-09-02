@@ -237,6 +237,7 @@ static async Task RunAsync(string[] args, int adminPort)
             s.Configured,
             s.Installed,
             s.Checked,
+            s.CheckedAtUtc,
             s.HasUpdate,
             s.TargetVersion,
             s.Downloaded,

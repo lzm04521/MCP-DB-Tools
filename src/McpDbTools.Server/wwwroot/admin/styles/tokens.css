@@ -9,6 +9,7 @@
   --color-secondary: #3b82f6;                     /* hover 层次与链接强调 */
   --color-accent: #059669;
   --color-danger: #b42318;
+  --color-danger-soft: #fdece9;                   /* 危险态浅底（徽章） */
   --color-warning: #9a6700;
 
   /* 中性色 */

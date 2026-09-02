@@ -986,6 +986,12 @@ input[readonly] {
   color: var(--color-subtle);
 }
 
+/* 红色徽章变体（更新"检查失败"）：浅红底红字，对齐 danger 语义色 */
+.pill--danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
 /* 检查结果区：与版本行之间加分隔线 */
 .about-result {
   margin-top: 14px;

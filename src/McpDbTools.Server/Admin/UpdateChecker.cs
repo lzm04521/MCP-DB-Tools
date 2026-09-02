@@ -56,10 +56,11 @@ public sealed class UpdateChecker
 
     public UpdateChecker(string? githubRepoUrl)
     {
-        // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）
+        // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）；
+        // 注入定制下载器（连接复用/检查短超时/短路小写重试），见 VelopackFileDownloader
         if (!string.IsNullOrWhiteSpace(githubRepoUrl))
         {
-            _mgr = new UpdateManager(new GithubSource(githubRepoUrl, null, false));
+            _mgr = new UpdateManager(new GithubSource(githubRepoUrl, null, false, new VelopackFileDownloader()));
             _repoPath = ParseRepoPath(githubRepoUrl);
         }
     }
@@ -145,6 +146,11 @@ public sealed class UpdateChecker
             _lastStatus = notInstalled;
             return notInstalled;
         }
+        // release notes 拉取与 Velopack 检查并行（原串行排在成功路径尾部，多叠一轮慢 GitHub 往返）。
+        // FetchReleaseMetaAsync 内部全 catch 不抛；异常路径也 await 收尾，防孤儿任务
+        Task<(string? Notes, string? ReleaseUrl)> notesTask = _repoPath is { } repoPath
+            ? FetchReleaseMetaAsync(repoPath)
+            : Task.FromResult<(string? Notes, string? ReleaseUrl)>((null, null));
         try
         {
             _lastInfo = await _mgr.CheckForUpdatesAsync();
@@ -154,21 +160,27 @@ public sealed class UpdateChecker
                 Installed = true,
                 Checked = true,
                 HasUpdate = _lastInfo is not null,
-                TargetVersion = _lastInfo?.TargetFullRelease?.Version?.ToString()
+                TargetVersion = _lastInfo?.TargetFullRelease?.Version?.ToString(),
+                CheckedAtUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)
             };
-            // best-effort 拉取 release notes / 发布页（已是最新也展示说明）：失败置 null，不阻塞检查
-            if (_repoPath is { } repo)
-            {
-                (status.Notes, status.ReleaseUrl) = await FetchReleaseMetaAsync(repo);
-            }
+            // best-effort 拉取的 release notes / 发布页（已是最新也展示说明）：失败为 null，不阻塞检查
+            (status.Notes, status.ReleaseUrl) = await notesTask;
             _lastStatus = status;
             MarkCheckedAtUtc();
             return status;
         }
         catch (Exception ex)
         {
+            _ = await notesTask; // 收尾并行任务（不会抛），结果丢弃
             // 出错：缓存错误态供 status 展示，但不写持久化（下次启动/自动检查仍会重试）
-            var failed = new UpdateStatus { Configured = true, Installed = true, Checked = true, Error = ex.Message };
+            var failed = new UpdateStatus
+            {
+                Configured = true,
+                Installed = true,
+                Checked = true,
+                Error = ex.Message,
+                CheckedAtUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)
+            };
             _lastStatus = failed;
             return failed;
         }
@@ -317,6 +329,8 @@ public sealed class UpdateStatus
     public bool Installed { get; set; }
     /// <summary>是否已进行过一次检查（有结果，可能是无更新/有更新/失败）。进程重启后为 false 直到首次检查。</summary>
     public bool Checked { get; set; }
+    /// <summary>本次检查完成时间（ISO 8601 UTC）。随进程内缓存经 /update/status 返回，重启后为 null。</summary>
+    public string? CheckedAtUtc { get; set; }
     /// <summary>是否有新版本。</summary>
     public bool HasUpdate { get; set; }
     /// <summary>新版本号。</summary>
