@@ -4,6 +4,8 @@
 
 ## 最近更新
 
+- **v0.11.4**：`db_query` 错误自愈——猜列名/表名报错时 FAIL 消息自动附相关表真实列清单或相近表候选；`db_schema` 模糊搜索（`table` 含 `%` 模糊搜表名、`column` 参数按列名反查含该列的表）；text 状态行显示查询耗时并在 ≥5s 时附慢查询提示；修复 `REPLACE` 函数被只读黑名单误伤；`/mcp` 错误响应体落日志
+- **v0.11.1**：四工具缺省返回 text 纯文本（省 token），`format` 参数三档 `text`/`tsv`/`json`
 - **v0.11.0**：Admin 管理页全新改版——品牌顶栏 + 左侧图标导航 + 紧凑视觉；新增「关于」页，应用更新迁入并重做为一键更新（下载 → 自动安装重启），检查更新时展示 GitHub Release 更新说明；全局设置页展示配置文件路径
 - **v0.10.8**：修复发布包 favicon 丢失、更新下载完成后进度条卡死
 
@@ -21,7 +23,8 @@
 - **审计日志**：本地 SQLite 全局记录查询与阻止，支持自动/手动清理；可选记录查询结果（弹窗懒加载查看）
 - **AI 友好返回**：四工具缺省返回 text 纯文本（首行状态行 + 列名行 + TSV 数据，无 JSON 外壳与转义税，省 token）；`db_query` 可传 `format="tsv"/"json"`、`db_list` 可传 `format="json"` 回退结构化 JSON
 - **分页与写影响预估**：`db_query` 支持 `offset` 分页（方言自动拼接、截断时状态行标 `nextOffset` 续翻）与 `dryRun` 预估（UPDATE/DELETE 变换 COUNT 只读查询返回 `~N affected (estimated)`，不执行写）
-- **元数据探索**：`db_schema` 工具两级按需加载表清单/列/索引/外键（表名参数化过滤，`sample` 可采样），替代手写四方言 `information_schema` 系 SQL
+- **元数据探索**：`db_schema` 工具两级按需加载表清单/列/索引/外键（表名参数化过滤，`sample` 可采样）；`table` 含 `%` 模糊搜表名、`column` 参数按列名反查含该列的表，替代手写四方言 `information_schema` 系 SQL
+- **错误自愈**：`db_query` 猜列名/表名报错（列名无效 / ORA-00904 / ORA-00942 等）时，FAIL 消息自动附相关表真实列清单或相近表候选，Agent 可直接据此改写 SQL，省一轮无效往返
 - **执行计划**：`db_explain` 工具对只读语句返回执行计划（MySQL/PG EXPLAIN、SQL Server SHOWPLAN 不实际执行、Oracle DBMS_XPLAN），慢查询分析用
 - **本机 Admin UI**：浏览器维护 `config.json`，含测试连接、配置迁移、备份管理、审计查看、全局设置、系统设置与关于页一键更新
 - **系统托盘应用**：WinExe 单 exe，双击运行常驻系统托盘（无控制台黑窗）；Velopack 打包，支持应用内在线更新
@@ -121,7 +124,7 @@ url = "http://127.0.0.1:61123/mcp"
 
 1. 先调用 `db_list`（不传参数）查看可用项目；
 2. 再用 `db_list(project="xxx")` 查看该项目环境；
-3. 探索表结构用 `db_schema`（不传 table 得表清单，传 table 得列/索引/外键）；
+3. 探索表结构用 `db_schema`（不传 table 得表清单，传 table 得列/索引/外键；table 含 `%` 模糊搜表名，`column` 参数反查列所在表）；
 4. 最后调用 `db_query` 执行只读查询；慢查询分析用 `db_explain`。
 
 ## 运行模式
@@ -213,17 +216,17 @@ crm (default prod)
 缺省返回 text 纯文本（首行状态行 + 列名行 + TSV 数据，制表符分列、换行分行、`\N` 表示 NULL、二进制列显示 `<binary NB>`）：
 
 ```
-OK 2 rows @my-project/test (sqlserver)
+OK 2 rows @my-project/test (sqlserver) 123ms
 Id	Name	CreatedAt
 1	张三	2024-01-15
 2	李四	2024-03-22
 ```
 
-状态行标注规则：`offset` 分页时类型后附 `, offset=N`；截断时行尾附 `[truncated, nextOffset=M]`（未截断无标记）；dryRun 单行 `OK ~N affected (estimated) @...`；写成功单行 `OK N affected @...`；失败单行 `FAIL 错误码 @项目/环境: 错误消息`（不带执行耗时）。
+状态行标注规则：成功行末尾附查询耗时（<1s 为 `823ms`，≥1s 为 `12.3s`）；`offset` 分页时类型后附 `, offset=N`；截断时行尾附 `[truncated, nextOffset=M]`（未截断无标记）；dryRun 单行 `OK ~N affected (estimated) @...`；写成功单行 `OK N affected @...`；读语句耗时 ≥5s 时输出末尾附一句慢查询提示（引导用 `db_explain` 分析执行计划）；失败单行 `FAIL 错误码 @项目/环境: 错误消息`（不带执行耗时）。
 
 `format="tsv"` 返回 JSON 壳（`columns` + `rowset`，字段含 `rowCount`/`truncated`），`format="json"` 时 `rowset` 替换为 `rows` 二维数组——两档为结构化回退，适合程序化消费。
 
-错误以结构化 JSON 返回，不抛到协议层。常见错误码：
+错误以 FAIL 状态行（text 缺省）或结构化 JSON（tsv/json 档）返回，不抛到协议层；猜列名/表名类错误（`QUERY_ERROR`）的消息会自动附相关表真实列清单（`表 X 列: ...`）或相近表候选（`相近表: ...`）。常见错误码：
 
 | 错误码                  | 说明                                 |
 | ----------------------- | ------------------------------------ |
@@ -242,16 +245,17 @@ Id	Name	CreatedAt
 
 ### db_schema
 
-列出数据库元数据，两级按需加载（与 `db_list` 哲学一致）：不传 `table` 返回表清单（schema、表名、注释、估算行数）；传 `table` 返回该表列/索引/外键三段。替代手写四方言 `information_schema` / `sys.*` / `all_*` 元数据 SQL。
+列出数据库元数据，两级按需加载（与 `db_list` 哲学一致）：不传 `table` 返回表清单（schema、表名、注释、估算行数）；传 `table` 返回该表列/索引/外键三段；`table` 含 `%` 为表名模糊搜索；`column` 参数按列名反查含该列的表。替代手写四方言 `information_schema` / `sys.*` / `all_*` 元数据 SQL。
 
 | 参数          | 类型   | 必填 | 说明                                                       |
 | ------------- | ------ | ---- | ---------------------------------------------------------- |
 | `project`     | string | 是   | 项目名                                                     |
 | `environment` | string | 否   | 环境名；未传时使用项目的 `defaultEnvironment`              |
-| `table`       | string | 否   | 表名（可带 `schema.table` 前缀）；仅允许常规标识符字符     |
-| `sample`      | int    | 否   | >0 时附 `SELECT *` 采样前 N 行（需配合 `table`，取 `min(sample, maxRows)`） |
+| `table`       | string | 否   | 表名（可带 `schema.table` 前缀），仅允许常规标识符字符；**含 `%` 时转为表名模糊搜索**（`%` 通配、`_` 按字面） |
+| `column`      | string | 否   | 按列名反查含该列的表（返回 schema/表名/列名三列）；可含 `%` 模糊；与 `table` / `sample` 互斥 |
+| `sample`      | int    | 否   | >0 时附 `SELECT *` 采样前 N 行（需配合精确 `table`，取 `min(sample, maxRows)`） |
 
-返回 text 纯文本：首行状态行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据（段体与 `db_query` 同一编码）：表清单模式单段 `tables`；单表模式三段 `columns` / `indexes` / `foreignKeys`，sample 时追加 `sample` 段。说明：Oracle 对象名以大写存储（模板内部按 `UPPER` 匹配），且 `all_*` 视图仅返回当前用户有权限可见的对象；各库行数为统计信息估算值，非精确计数。
+返回 text 纯文本：首行状态行 `OK tables @项目/环境 (类型)`（单表模式为 `table=名`，模糊搜索为 `tables~模式`，列名反查为 `column=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据（段体与 `db_query` 同一编码）：表清单/模糊搜索模式单段 `tables`；单表模式三段 `columns` / `indexes` / `foreignKeys`，sample 时追加 `sample` 段；列名反查单段 `matches`。说明：Oracle 对象名以大写存储（模板内部按 `UPPER` 匹配），且 `all_*` 视图仅返回当前用户有权限可见的对象；各库行数为统计信息估算值，非精确计数。
 
 ### db_explain
 
