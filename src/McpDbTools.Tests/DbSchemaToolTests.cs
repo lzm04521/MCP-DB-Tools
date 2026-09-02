@@ -3,6 +3,7 @@ using McpDbTools.Server.Audit;
 using McpDbTools.Server.Configuration;
 using McpDbTools.Server.Database;
 using McpDbTools.Server.Tools;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -297,6 +298,56 @@ public class DbSchemaToolTests : IDisposable
         string text = await tool.GetSchema("erp", column: "c1;--");
 
         Assert.StartsWith("FAIL PARAMETER_ERROR", text);
+    }
+
+    // ───────── 审计结果记录：db_schema 成功路径落盘 sections 格式 result_json（doc/20260902 审计结果记录） ─────────
+
+    [Fact]
+    public async Task Success_WritesSectionsResultJsonToAudit()
+    {
+        var stub = new SchemaStubProvider(DatabaseType.MySql)
+        {
+            Sections = new List<SchemaSection>
+            {
+                new("columns", QueryResult.Ok("erp", "MySql",
+                    new List<string> { "column_name", "data_type" },
+                    new List<object?[]> { new object?[] { "id", "int" } }, 1000, false, 1, "dev")),
+                new("indexes", QueryResult.Ok("erp", "MySql",
+                    new List<string> { "index_name" },
+                    new List<object?[]> { new object?[] { "pk_orders" } }, 1000, false, 1, "dev")),
+            }
+        };
+        // 不走 CreateTool：需要保留 audit 引用，用 DisposeAsync 排空队列后查 audit.db
+        string configPath = Path.Combine(_tempDir, "config.json");
+        File.WriteAllText(configPath, """{"databases":{"erp":{"defaultEnvironment":"dev","environments":{"dev":{"type":"mysql","connectionString":"cs"}}}}}""");
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var options = Options.Create(new ConfigStoreOptions { ConfigPath = configPath });
+        var store = new ConfigStore(loggerFactory.CreateLogger<ConfigStore>(), options);
+        var audit = new AuditLogger(options, loggerFactory.CreateLogger<AuditLogger>(), new AuditCounter(options, loggerFactory.CreateLogger<AuditCounter>()));
+        var factory = new DatabaseProviderFactory(new Dictionary<DatabaseType, IDatabaseProvider> { [stub.DatabaseType] = stub });
+        var tool = new DbSchemaTool(store, factory, audit, new QueryConcurrencyLimiter());
+
+        string text = await tool.GetSchema("erp", table: "ORDERS");
+
+        Assert.StartsWith("OK table=ORDERS", text);
+        await audit.DisposeAsync(); // 排空队列，保证审计落盘
+
+        using var conn = new SqliteConnection($"Data Source={Path.Combine(_tempDir, "audit.db")}");
+        conn.Open();
+        using (var logCmd = conn.CreateCommand())
+        {
+            logCmd.CommandText = "SELECT success FROM audit_log WHERE sql = 'db_schema:ORDERS'";
+            Assert.Equal(1L, (long)logCmd.ExecuteScalar()!); // 成功记录一条
+        }
+        using (var resultCmd = conn.CreateCommand())
+        {
+            resultCmd.CommandText = "SELECT result_json FROM audit_log_result WHERE audit_id = (SELECT id FROM audit_log WHERE sql = 'db_schema:ORDERS')";
+            string json = (string)resultCmd.ExecuteScalar()!;
+            Assert.Contains("\"sections\"", json);          // 多段格式与 db_query 单结果格式区分
+            Assert.Contains("\"name\":\"columns\"", json);
+            Assert.Contains("\"name\":\"indexes\"", json);
+            Assert.Contains("pk_orders", json);             // 段内数据在
+        }
     }
 
     internal sealed class SchemaStubProvider : IDatabaseProvider

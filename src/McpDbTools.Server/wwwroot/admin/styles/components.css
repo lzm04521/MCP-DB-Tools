@@ -820,6 +820,17 @@ input[readonly] {
   border-radius: var(--radius-md);
 }
 
+.result-section-name {
+  /* db_schema 多段结果：每段一个小标题(段名+行数)，置于各自表格上方 */
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-subtle);
+}
+.result-section-name:first-child {
+  margin-top: 2px;
+}
+
 .result-table {
   /* 列少时填满容器(min-width:100%),列多或内容宽时按内容撑开(width:max-content),
      由 .result-table-wrap 的 overflow:auto 提供横向滚动。 */

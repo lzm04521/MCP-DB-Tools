@@ -551,6 +551,17 @@ public sealed class AuditLogger : IAsyncDisposable, IDisposable
         return JsonSerializer.Serialize(new { columns = r.Columns, rows = r.Rows }, SResultOptions);
     }
 
+    /// <summary>
+    /// 把 db_schema 的多段结果序列化为 {"sections":[{"name":"columns","columns":[...],"rows":[[...]]},...]} JSON。
+    /// 与单结果格式区分，前端按 sections 字段分流渲染。
+    /// </summary>
+    public static string SerializeSections(IReadOnlyList<SchemaSection> sections)
+    {
+        return JsonSerializer.Serialize(
+            new { sections = sections.Select(s => new { name = s.Name, columns = s.Result.Columns, rows = s.Result.Rows }) },
+            SResultOptions);
+    }
+
     private static readonly JsonSerializerOptions SResultOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

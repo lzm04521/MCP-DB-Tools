@@ -349,8 +349,8 @@
 
   /** 打开 SQL 详情弹窗：成功查询懒加载结果表格；失败查询在结果区展示异常信息（取代结果集）。entry.success 为布尔。 */
   function openSqlDetail(entry) {
-    // 清空上一次残留（表格/状态/错误/显隐）
-    el.resultTable.innerHTML = '';
+    // 清空上一次残留（表格/状态/错误/显隐）；表格区按单表或多段动态重建，清整个 wrap
+    el.resultTableWrap.innerHTML = '';
     el.resultStatus.textContent = '';
     el.errorContent.textContent = '';
 
@@ -455,14 +455,43 @@
       el.resultStatus.textContent = '结果解析失败';
       return;
     }
-    renderResultTable(parsed);
-    el.resultStatus.textContent = `共 ${parsed.rows.length} 行`;
+    if (myToken !== resultLoadToken) return;     // 已被新请求取代
+
+    // db_schema 多段结果 {"sections":[{name,columns,rows},...]}；db_query 单结果 {columns,rows}
+    if (Array.isArray(parsed.sections)) {
+      renderSectionTables(parsed.sections);
+      const totalRows = parsed.sections.reduce((n, s) => n + (Array.isArray(s.rows) ? s.rows.length : 0), 0);
+      el.resultStatus.textContent = `共 ${parsed.sections.length} 段 / ${totalRows} 行`;
+    } else {
+      renderResultTable(parsed);
+      el.resultStatus.textContent = `共 ${parsed.rows.length} 行`;
+    }
   }
 
-  /** 渲染结果表格：行号列 + columns 表头 + rows 表体。 */
+  /** 渲染单结果表格：清空容器后挂载一张表。 */
   function renderResultTable(data) {
-    const table = el.resultTable;
-    table.innerHTML = '';
+    el.resultTableWrap.innerHTML = '';
+    el.resultTableWrap.appendChild(buildTableNode(data));
+  }
+
+  /** 渲染多段结果（db_schema）：每段一个小标题（段名+行数）+ 一张表，纵向排列在同一滚动容器。 */
+  function renderSectionTables(sections) {
+    const wrap = el.resultTableWrap;
+    wrap.innerHTML = '';
+    for (const section of sections) {
+      const title = document.createElement('div');
+      title.className = 'result-section-name';
+      const rows = Array.isArray(section.rows) ? section.rows.length : 0;
+      title.textContent = `${section.name || '(未命名段)'} (${rows} 行)`;
+      wrap.appendChild(title);
+      wrap.appendChild(buildTableNode(section));
+    }
+  }
+
+  /** 构建单张结果表格节点：行号列 + columns 表头 + rows 表体。 */
+  function buildTableNode(data) {
+    const table = document.createElement('table');
+    table.className = 'result-table';
 
     const thead = document.createElement('thead');
     const headTr = document.createElement('tr');
@@ -503,6 +532,7 @@
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
+    return table;
   }
 
   async function copySql() {
@@ -543,7 +573,7 @@
 
     // 弹窗关闭后（点关闭 / ESC）清空结果区，避免下次打开残留
     el.sqlDialog.addEventListener('close', () => {
-      el.resultTable.innerHTML = '';
+      el.resultTableWrap.innerHTML = '';
       el.resultStatus.textContent = '';
       el.errorContent.textContent = '';
       el.resultSection.hidden = true;

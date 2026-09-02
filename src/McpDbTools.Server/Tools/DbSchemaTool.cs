@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using McpDbTools.Server.Audit;
@@ -53,6 +54,9 @@ public sealed class DbSchemaTool
         int? sample = null,
         CancellationToken cancellationToken = default)
     {
+        // 审计耗时：覆盖分流后全部执行路径（元数据段 + 采样），工具层统一计时
+        var sw = Stopwatch.StartNew();
+
         // 1/2. 解析项目与环境（与 db_query 同一矩阵）
         ResolvedConfig config = _configStore.GetResolved();
         if (!config.Projects.TryGetValue(project, out ResolvedProject? proj))
@@ -204,14 +208,17 @@ public sealed class DbSchemaTool
         }
 
         // 7. 审计 + 组装返回（text：头部状态行 + 每段 "# 段名 (行数)" + 表头 + TSV，段体复用 QueryResult 同一编码）
-        int totalRows = sections.Sum(s => s.Result.RowCount) + (sampleSection?.Result.RowCount ?? 0);
-        _audit.Log(MakeEntry(project, env, db.Type.ToString(), auditLabel, totalRows, 0, true, null));
+        // 成功路径与 db_query 一致落 result_json（多段 sections 格式），Admin 详情可见查询结果
+        List<SchemaSection> allSections = sampleSection is null ? sections : sections.Append(sampleSection).ToList();
+        int totalRows = allSections.Sum(s => s.Result.RowCount);
+        _audit.Log(MakeEntry(project, env, db.Type.ToString(), auditLabel, totalRows, sw.ElapsedMilliseconds, true, null,
+            resultJson: AuditLogger.SerializeSections(allSections)));
 
         var sb = new StringBuilder();
         sb.Append("OK ").Append(header)
             .Append(" @").Append(project).Append('/').Append(env)
             .Append(" (").Append(db.Type.ToString().ToLowerInvariant()).Append(')');
-        foreach (SchemaSection section in sampleSection is null ? sections : sections.Append(sampleSection))
+        foreach (SchemaSection section in allSections)
         {
             sb.Append("\n# ").Append(section.Name).Append(" (").Append(section.Result.RowCount).Append(')');
             if (section.Result.Truncated) sb.Append(" [truncated]");
@@ -252,7 +259,7 @@ public sealed class DbSchemaTool
         }
     }
 
-    private static AuditEntry MakeEntry(string project, string environment, string dbType, string sql, int rowCount, long elapsedMs, bool success, string? error) => new()
+    private static AuditEntry MakeEntry(string project, string environment, string dbType, string sql, int rowCount, long elapsedMs, bool success, string? error, string? resultJson = null) => new()
     {
         Time = AuditLogger.NowUtcIso(),
         Project = project,
@@ -262,6 +269,7 @@ public sealed class DbSchemaTool
         RowCount = rowCount,
         ElapsedMs = elapsedMs,
         Success = success,
-        Error = success ? null : error
+        Error = success ? null : error,
+        ResultJson = resultJson
     };
 }
