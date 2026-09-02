@@ -14,6 +14,9 @@ public sealed class OracleProvider : DatabaseProviderBase
     protected override DbConnection CreateConnection(string connectionString)
         => new OracleConnection(connectionString);
 
+    /// <summary>ODP.NET 绑定变量仅识别 : 前缀且 TABLE 为 Oracle 保留字（ORA-00936/ORA-01745），元数据占位符改写为 :tbl（见基类 SchemaPlaceholder）。</summary>
+    protected override (string Token, string ParamName) SchemaPlaceholder => (":tbl", ":tbl");
+
     /// <summary>
     /// Oracle 执行计划：同连接两条语句——EXPLAIN PLAN FOR（仅硬解析，不执行）写入 PLAN_TABLE，
     /// 再经 DBMS_XPLAN.DISPLAY() 读计划行集。无会话级 SET 状态，无需复位。

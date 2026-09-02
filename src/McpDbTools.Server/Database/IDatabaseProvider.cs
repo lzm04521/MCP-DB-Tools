@@ -222,6 +222,28 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
     }
 
     /// <summary>
+    /// 元数据模板占位符的方言形式（SQL 内 token 与 DbParameter.ParameterName）。
+    /// 模板固定用 @table：SqlClient/MySqlConnector/Npgsql 均兼容 @ 命名绑定，默认不改写字节不变。
+    /// ODP.NET 仅识别 : 前缀绑定变量（@table 原样发服务器报 ORA-00936），且 TABLE 是 Oracle
+    /// 保留字不可作绑定变量名（报 ORA-01745），OracleProvider 改写为 :tbl。
+    /// 各模板占位符仅出现一次，ODP.NET 按位置绑定即可，无需 BindByName。
+    /// </summary>
+    protected virtual (string Token, string ParamName) SchemaPlaceholder
+        => (SchemaDialects.TableParamName, SchemaDialects.TableParamName);
+
+    /// <summary>
+    /// 按方言适配元数据模板：SQL 内占位符 @table 改写为方言 token，参数名同步返回。
+    /// token 与模板占位符一致时原样返回（零替换）。模板为固定文本，@table 子串仅作占位符出现，Replace 无误伤面。
+    /// </summary>
+    internal (string Sql, string ParamName) AdaptSchemaTemplate(string templateSql)
+    {
+        (string token, string paramName) = SchemaPlaceholder;
+        return token == SchemaDialects.TableParamName
+            ? (templateSql, paramName)
+            : (templateSql.Replace(SchemaDialects.TableParamName, token), paramName);
+    }
+
+    /// <summary>
     /// 元数据查询执行：按 SchemaExecutor 选模板，逐段执行（表名经 DbParameter 参数化），
     /// 任一段失败即短路返回失败段。建连/超时/异常矩阵与 ExecuteQueryAsync 一致：
     /// 建连抛出的 DbException（如 ORA-12154）同样包装为失败段，不逃逸到 MCP SDK 层。
@@ -250,12 +272,13 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
                 try
                 {
                     await using DbCommand cmd = conn.CreateCommand();
-                    cmd.CommandText = section.Sql;
+                    (string sectionSql, string paramName) = AdaptSchemaTemplate(section.Sql);
+                    cmd.CommandText = sectionSql;
                     cmd.CommandTimeout = db.CommandTimeout;
                     if (section.HasTableParam)
                     {
                         DbParameter p = cmd.CreateParameter();
-                        p.ParameterName = SchemaDialects.TableParamName;
+                        p.ParameterName = paramName;
                         p.Value = table;
                         cmd.Parameters.Add(p);
                     }
@@ -308,10 +331,11 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
             }
 
             await using DbCommand cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
+            (string adaptedSql, string paramName) = AdaptSchemaTemplate(sql);
+            cmd.CommandText = adaptedSql;
             cmd.CommandTimeout = db.CommandTimeout;
             DbParameter p = cmd.CreateParameter();
-            p.ParameterName = SchemaDialects.TableParamName;
+            p.ParameterName = paramName;
             p.Value = paramValue;
             cmd.Parameters.Add(p);
 
