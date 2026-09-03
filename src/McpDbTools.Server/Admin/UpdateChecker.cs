@@ -56,11 +56,13 @@ public sealed class UpdateChecker
 
     public UpdateChecker(string? githubRepoUrl)
     {
-        // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）；
-        // 注入定制下载器（连接复用/检查短超时/短路小写重试），见 VelopackFileDownloader
+        // 更新源为 GitHub Releases：repoUrl 为空时不创建 UpdateManager（UI 显示"未配置"）。
+        // 用自研 GithubFastSource 替换官方 GithubSource——官方一次检查要串行下载最近 10 个 release 的
+        // feed 文件（本项目每个 feed 只含单版本 Full 记录，聚合是纯浪费）；新 source 2 个请求完成检查，
+        // 且复用 VelopackFileDownloader 的连接池/15s 超时/短路小写重试。下载与应用更新仍走 Velopack。
         if (!string.IsNullOrWhiteSpace(githubRepoUrl))
         {
-            _mgr = new UpdateManager(new GithubSource(githubRepoUrl, null, false, new VelopackFileDownloader()));
+            _mgr = new UpdateManager(new GithubFastSource(githubRepoUrl, false, new VelopackFileDownloader()));
             _repoPath = ParseRepoPath(githubRepoUrl);
         }
     }
