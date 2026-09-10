@@ -490,7 +490,7 @@ src/McpDbTools.Server/
 
 ### 技术栈
 
-.NET 8（net8.0-windows + WinForms 托盘）、ASP.NET Core Minimal API、原生 HTML/CSS/JS、[ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 1.4.0、[Velopack](https://github.com/velopack/velopack)（Windows 安装包 + 应用内在线更新）、SqlClient / MySqlConnector / Oracle.ManagedDataAccess.Core / Npgsql、Microsoft.Data.Sqlite、xUnit。
+.NET 8（net8.0-windows + WinForms 托盘）、ASP.NET Core Minimal API、原生 HTML/CSS/JS、[ModelContextProtocol](https://github.com/modelcontextprotocol/csharp-sdk) 2.2.0、[Velopack](https://github.com/velopack/velopack)（Windows 安装包 + 应用内在线更新）、SqlClient / MySqlConnector / Oracle.ManagedDataAccess.Core / Npgsql、Microsoft.Data.Sqlite、xUnit。
 
 ## 已知限制
 

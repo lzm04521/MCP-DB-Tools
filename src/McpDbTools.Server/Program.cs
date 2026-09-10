@@ -18,6 +18,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.AspNetCore;
 using Velopack;
 
 VelopackApp.Build().Run();
@@ -55,10 +56,12 @@ static async Task RunAsync(string[] args, int adminPort)
     });
     builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, adminPort));
 
-    // MCP HTTP transport：与 Admin 同进程同端口，端点 /mcp
+    // MCP HTTP transport：与 Admin 同进程同端口，端点 /mcp。
+    // Stateless（无状态）：不签发 Mcp-Session-Id，每个 POST 独立处理——服务重启/更新后客户端会话不失效
+    // （工具均为无状态请求-响应，会话纯属多余；显式声明防 SDK 未来默认值漂移）。
     builder.Services
         .AddMcpServer()
-        .WithHttpTransport()
+        .WithHttpTransport(options => options.SessionMode = HttpServerSessionMode.Stateless)
         .WithToolsFromAssembly();
 
     var app = builder.Build();
@@ -103,7 +106,7 @@ static async Task RunAsync(string[] args, int adminPort)
 
     app.UseDefaultFiles();
     app.UseStaticFiles();
-    // MCP Streamable HTTP 端点（不鉴权，仅 127.0.0.1，spec 第 6 节）
+    // MCP Streamable HTTP 端点（不鉴权，仅 127.0.0.1，spec 第 6 节；无会话模式）
     app.MapMcp("/mcp");
     app.MapGet("/", () => Results.Redirect("/admin"));
     app.MapGet("/admin", () => Results.Redirect("/admin/index.html"));
