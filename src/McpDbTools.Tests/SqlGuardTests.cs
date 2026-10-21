@@ -348,4 +348,33 @@ public class SqlGuardTests
         Assert.True(r.Allowed);
         Assert.Equal(StatementKind.Write, r.Kind);
     }
+
+    // ===== COMMENT ON：补表/列中文注释的合法运维语句（写池放行，只读/生产拒绝） =====
+
+    [Fact]
+    public void WriteEnv_Allows_CommentOn_ReportsWrite()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.Oracle, allowWrite: true);
+        var r = _guard.Validate("COMMENT ON TABLE PRINTER_DEVICE IS '网络打印机配置台账'", db);
+        Assert.True(r.Allowed, $"expected allow: {r.Reason}");
+        Assert.Equal(StatementKind.Write, r.Kind);
+
+        var rc = _guard.Validate("COMMENT ON COLUMN ITEM.GLUE_LABEL_TEMPLATE_ID IS '胶水标签模板Id'", db);
+        Assert.True(rc.Allowed, $"expected allow: {rc.Reason}");
+    }
+
+    [Fact]
+    public void ReadOnlyEnv_Blocks_CommentOn()
+    {
+        var db = BuildResolvedDatabase(DatabaseType.Oracle, allowWrite: false);
+        Assert.False(_guard.Validate("COMMENT ON TABLE t IS 'x'", db).Allowed);
+    }
+
+    [Fact]
+    public void Production_Blocks_CommentOn()
+    {
+        // 生产环境兜底只读（ResolvedConfigBuilder 已强制 allowWrite=false），COMMENT 仍拒绝
+        var db = BuildResolvedDatabase(DatabaseType.Oracle, allowWrite: false, isProduction: true);
+        Assert.False(_guard.Validate("COMMENT ON COLUMN t.c IS 'x'", db).Allowed);
+    }
 }

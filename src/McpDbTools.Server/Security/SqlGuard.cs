@@ -78,11 +78,12 @@ public sealed class SqlGuard : ISqlGuard
     /// <summary>
     /// 写白名单：在只读白名单基础上追加的写动词首关键字。仅用于 AllowWrite=true 环境。
     /// <para>不放 EXEC/EXECUTE/CALL/PREPARE —— 动态 SQL 是多语句注入主路径，必须经黑名单拦截。</para>
+    /// <para>COMMENT 放行补表/列中文注释的运维需求（仅元数据注释，风险低于 ALTER/DROP）；只读环境仍拒绝。</para>
     /// </summary>
     private static readonly IReadOnlySet<string> WriteVerbKeywords =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "MERGE", "REPLACE"
+            "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "MERGE", "REPLACE", "COMMENT"
         };
 
     /// <summary>
