@@ -171,7 +171,8 @@ public static class ResolvedConfigBuilder
                     ConnectionString = finalConnectionString,
                     DatabaseName = ResolveDatabaseName(db.ConnectionString, db.Type),
                     MaxRows = db.MaxRows <= 0 ? 1000 : db.MaxRows,
-                    CommandTimeout = db.CommandTimeout <= 0 ? 600 : db.CommandTimeout,
+                    // 客户端 30s 已放弃后服务端继续执行只是空耗数据库；120s 覆盖全部非断连慢查询场景（doc/20260901 第三批）
+                    CommandTimeout = db.CommandTimeout <= 0 ? 120 : db.CommandTimeout,
                     MaxPoolSize = maxPoolSize,
                     ConnectTimeoutSeconds = connectTimeout,
                     MaxConcurrency = maxConcurrency,

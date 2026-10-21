@@ -498,7 +498,7 @@
     el.isProduction.checked = Boolean(env.isProduction);
     el.allowWrite.checked = Boolean(env.allowWrite);
     el.maxRows.value = env.maxRows || 1000;
-    el.commandTimeout.value = env.commandTimeout || 600;
+    el.commandTimeout.value = env.commandTimeout || 120;
     el.maxConcurrency.value = env.maxConcurrency || '';
     el.maxPoolSize.value = env.maxPoolSize || '';
     el.connectTimeoutSeconds.value = env.connectTimeoutSeconds || '';
@@ -599,7 +599,7 @@
       type: 'sqlserver',
       connectionString: '',
       maxRows: 1000,
-      commandTimeout: 600,
+      commandTimeout: 120,
       // 并发/池默认 0 = 未配置，resolve 时回退全局默认
       maxConcurrency: 0,
       maxPoolSize: 0,

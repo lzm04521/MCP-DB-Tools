@@ -123,7 +123,7 @@ public class ConfigMergeTests
         ResolvedDatabase db = ResolvedConfigBuilder.Build(raw).Projects["p"].Environments["prod"];
 
         Assert.Equal(1000, db.MaxRows);
-        Assert.Equal(600, db.CommandTimeout);
+        Assert.Equal(120, db.CommandTimeout);
     }
 
     [Fact]

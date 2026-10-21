@@ -136,7 +136,7 @@ public sealed class AdminEnvironmentDto
     public int MaxRows { get; init; } = 1000;
 
     [JsonPropertyName("commandTimeout")]
-    public int CommandTimeout { get; init; } = 600;
+    public int CommandTimeout { get; init; } = 120;
 
     /// <summary>连接池上限。0 表示未配置，回退全局默认。</summary>
     [JsonPropertyName("maxPoolSize")]

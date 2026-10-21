@@ -44,9 +44,9 @@ public sealed class DatabaseConfig
     [JsonPropertyName("maxRows")]
     public int MaxRows { get; init; } = 1000;
 
-    /// <summary>命令执行超时（秒），默认 600。</summary>
+    /// <summary>命令执行超时（秒），默认 120（客户端 30s 已放弃后无需继续空耗数据库）。</summary>
     [JsonPropertyName("commandTimeout")]
-    public int CommandTimeout { get; init; } = 600;
+    public int CommandTimeout { get; init; } = 120;
 
     /// <summary>
     /// 连接池上限。&lt;=0 表示未配置，回退到全局 defaultMaxPoolSize（内置默认 100）。
