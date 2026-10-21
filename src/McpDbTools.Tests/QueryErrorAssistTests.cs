@@ -107,6 +107,16 @@ public class QueryErrorAssistTests
     }
 
     [Fact]
+    public void FormatColumnAssist_DeduplicatesColumns_KeepsFirstOccurrence()
+    {
+        // 跨 schema 列并集的防御：重复列名只保留首次出现，截断前先去重（否则重复项挤掉有效信息）
+        var columns = new List<string> { "ID", "ID", "CODE", "ID", "NAME" };
+        string text = QueryErrorAssist.FormatColumnAssist(
+            new List<(string, IReadOnlyList<string>)> { ("T1", columns) });
+        Assert.Equal("表 T1 列: ID, CODE, NAME", text);
+    }
+
+    [Fact]
     public void FormatTableAssist_EmptyGuidesToFallback()
     {
         Assert.Contains("db_schema", QueryErrorAssist.FormatTableAssist(new List<string>()));

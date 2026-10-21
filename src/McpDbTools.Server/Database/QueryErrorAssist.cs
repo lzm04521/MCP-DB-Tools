@@ -104,14 +104,16 @@ public static class QueryErrorAssist
         return lastDot >= 0 && lastDot < name.Length - 1 ? name[(lastDot + 1)..] : name;
     }
 
-    /// <summary>列名错误辅助文本：每表一行 "表 X 列: a, b, c"（每表截前 15 列，超出加 …）。</summary>
+    /// <summary>列名错误辅助文本：每表一行 "表 X 列: a, b, c"（先去重再截前 15 列，超出加 …）。
+    /// 去重防跨 schema 列并集的重复项挤掉有效信息（保留首次出现顺序）。</summary>
     public static string FormatColumnAssist(IReadOnlyList<(string Table, IReadOnlyList<string> Columns)> tables)
     {
         var sb = new System.Text.StringBuilder();
         foreach ((string table, IReadOnlyList<string> columns) in tables)
         {
-            sb.Append("表 ").Append(table).Append(" 列: ").Append(string.Join(", ", columns.Take(15)));
-            if (columns.Count > 15)
+            IReadOnlyList<string> distinct = columns.Distinct().ToList();
+            sb.Append("表 ").Append(table).Append(" 列: ").Append(string.Join(", ", distinct.Take(15)));
+            if (distinct.Count > 15)
             {
                 sb.Append(", …");
             }
