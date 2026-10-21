@@ -108,6 +108,29 @@ public class SchemaDialectsTests
         Assert.Equal(expected, SchemaDialects.EscapeLikePattern(input));
     }
 
+    [Fact]
+    public void ColumnsSql_Oracle_LimitsOwner_CurrentSchemaFirst()
+    {
+        // 同表名多 schema 时 all_tab_columns 只按表名过滤会返回跨 schema 列并集（重复列名）；
+        // 限定 owner：当前 schema 优先，无命中回退列数最多的 owner（11g 兼容，ROWNUM 而非 FETCH FIRST）
+        string sql = SchemaDialects.ColumnsSql(DatabaseType.Oracle);
+        Assert.Contains("SYS_CONTEXT('USERENV','CURRENT_SCHEMA')", sql);
+        Assert.Contains("ROWNUM", sql);
+        Assert.Contains("UPPER(@table)", sql);
+    }
+
+    [Theory]
+    [InlineData(DatabaseType.SqlServer)]
+    [InlineData(DatabaseType.MySql)]
+    [InlineData(DatabaseType.PostgreSql)]
+    public void ColumnsSql_NonOracle_NoOwnerSubquery(DatabaseType type)
+    {
+        // 三方言各自已限定作用域（OBJECT_ID / DATABASE() / current_schema()），不应引入 Oracle 的 owner 子查询
+        string sql = SchemaDialects.ColumnsSql(type);
+        Assert.DoesNotContain("SYS_CONTEXT", sql);
+        Assert.DoesNotContain("ROWNUM", sql);
+    }
+
     private static string TablesSourceFor(DatabaseType type) => type switch
     {
         DatabaseType.SqlServer => "sys.tables",

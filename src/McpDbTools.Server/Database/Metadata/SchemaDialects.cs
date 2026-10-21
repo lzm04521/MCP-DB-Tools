@@ -235,6 +235,13 @@ public static class SchemaDialects
                        WHERE ac.constraint_type = 'P') pk
                   ON pk.owner = c.owner AND pk.table_name = c.table_name AND pk.column_name = c.column_name
             WHERE c.table_name = UPPER(@table)
+              -- 同名表多 schema 时只按表名过滤会返回跨 schema 列并集（列名重复）；限定单 owner：当前 schema 优先，回退列数最多者
+              AND c.owner = (SELECT owner FROM (
+                    SELECT owner FROM all_tab_columns
+                    WHERE table_name = UPPER(@table)
+                    GROUP BY owner
+                    ORDER BY (CASE WHEN owner = SYS_CONTEXT('USERENV','CURRENT_SCHEMA') THEN 0 ELSE 1 END), COUNT(*) DESC
+                  ) WHERE ROWNUM = 1)
             ORDER BY c.column_id
             """,
         DatabaseType.PostgreSql => """
