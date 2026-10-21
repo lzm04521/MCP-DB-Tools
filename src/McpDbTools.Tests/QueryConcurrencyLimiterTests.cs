@@ -15,6 +15,7 @@ public class QueryConcurrencyLimiterTests
         {
             ProjectName = project,
             Environment = env,
+            RequiresVpn = true,
             IsProduction = false,
             AllowWrite = false,
             Type = DatabaseType.SqlServer,

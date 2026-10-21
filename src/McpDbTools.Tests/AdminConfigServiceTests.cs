@@ -1088,6 +1088,56 @@ public class AdminConfigServiceTests : IDisposable
         Assert.Equal("Server=m;", dbs.GetProperty("crm").GetProperty("environments").GetProperty("prod").GetProperty("connectionString").GetString());
     }
 
+    [Fact]
+    public async Task SaveConfig_RequiresVpn_RoundTripsAndDefaultsToTrue()
+    {
+        // 存量配置无 requiresVpn 字段 → 读回 null（前端/运行时按 true 处理）；保存 false 后往返为 false
+        var (store, service, configPath) = Create("""
+        {
+          "databases": {
+            "erp": {
+              "defaultEnvironment": "prod",
+              "environments": {
+                "prod": { "type": "sqlserver", "connectionString": "Server=.;Database=db;", "maxRows": 100, "commandTimeout": 30 }
+              }
+            }
+          }
+        }
+        """);
+
+        using (store)
+        {
+            // 存量缺字段：DTO 读回 null
+            Assert.Null(service.GetConfig().Projects.Single().RequiresVpn);
+
+            AdminSaveResult result = await service.SaveConfigAsync(new AdminConfigRequest
+            {
+                Projects = new List<AdminProjectDto>
+                {
+                    new()
+                    {
+                        Name = "erp",
+                        DefaultEnvironment = "prod",
+                        RequiresVpn = false,
+                        Environments = new List<AdminEnvironmentDto>
+                        {
+                            new() { Name = "prod", Type = "sqlserver", ConnectionString = "Server=.;Database=db;", MaxRows = 100, CommandTimeout = 30 }
+                        }
+                    }
+                }
+            }, CancellationToken.None);
+
+            Assert.True(result.Success);
+            // GetConfig 走 _configStore.Current（文件监视器异步热重载，立即读有竞态）；
+            // 保存返回的 Config 即 ToResponse(next)，即时反映保存结果
+            Assert.False(result.Config!.Projects.Single().RequiresVpn);
+        }
+
+        // 落盘验证：项目节点写入 requiresVpn=false
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(configPath));
+        Assert.False(doc.RootElement.GetProperty("databases").GetProperty("erp").GetProperty("requiresVpn").GetBoolean());
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* 测试清理，忽略 */ }

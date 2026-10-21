@@ -220,7 +220,56 @@ public class ConfigMergeTests
         Assert.Equal(10, db.MaxConcurrency);
         Assert.Equal(5, db.MaxConcurrencyWaitSeconds);
         Assert.Equal(100, db.MaxPoolSize);
-        Assert.Equal(60, db.ConnectTimeoutSeconds);
+        // 默认建连超时 15s：断连时 TCP 层要 42s 才失败，须靠 CTS 先砍断、FAIL 先于客户端 30s 超时返回
+        Assert.Equal(15, db.ConnectTimeoutSeconds);
+    }
+
+    [Fact]
+    public void RequiresVpn_DefaultsToTrue_WhenMissing()
+    {
+        // 存量 config.json 无 requiresVpn 字段（null）→ 项目与环境快照均默认 true
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["prod"] = Db(DatabaseType.SqlServer)
+                    }
+                }
+            }
+        };
+
+        ResolvedProject proj = ResolvedConfigBuilder.Build(raw).Projects["p"];
+
+        Assert.True(proj.RequiresVpn);
+        Assert.True(proj.Environments["prod"].RequiresVpn);
+    }
+
+    [Fact]
+    public void RequiresVpn_ExplicitFalse_PropagatesToEnvironments()
+    {
+        var raw = new DatabasesConfig
+        {
+            Projects = new Dictionary<string, ProjectConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["p"] = new ProjectConfig
+                {
+                    RequiresVpn = false,
+                    Environments = new Dictionary<string, DatabaseConfig>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["prod"] = Db(DatabaseType.Oracle)
+                    }
+                }
+            }
+        };
+
+        ResolvedProject proj = ResolvedConfigBuilder.Build(raw).Projects["p"];
+
+        Assert.False(proj.RequiresVpn);
+        Assert.False(proj.Environments["prod"].RequiresVpn);
     }
 
     [Fact]

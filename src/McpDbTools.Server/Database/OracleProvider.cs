@@ -35,7 +35,7 @@ public sealed class OracleProvider : DatabaseProviderBase
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
+            return QueryResult.Fail(project, DatabaseType.ToString(), ConnectTimeoutMessage(db.ConnectTimeoutSeconds, db.RequiresVpn), "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
         }
         catch (DbException ex)
         {

@@ -52,6 +52,7 @@ public class GetSchemaAsyncTests
     {
         ProjectName = "erp",
         Environment = "prod",
+        RequiresVpn = true,
         Type = DatabaseType.Oracle,
         ConnectionString = "cs",
         DatabaseName = null,

@@ -17,6 +17,7 @@ public class SqlGuardTests
         {
             ProjectName = "test",
             Environment = "test",
+            RequiresVpn = true,
             IsProduction = false,
             AllowWrite = false,
             Type = type,
@@ -48,6 +49,7 @@ public class SqlGuardTests
         {
             ProjectName = "test",
             Environment = "test",
+            RequiresVpn = true,
             IsProduction = isProduction,
             AllowWrite = allowWrite,
             Type = type,

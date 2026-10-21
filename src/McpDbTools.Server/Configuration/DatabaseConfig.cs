@@ -94,6 +94,13 @@ public sealed class ProjectConfig
     [JsonPropertyName("defaultEnvironment")]
     public string? DefaultEnvironment { get; init; }
 
+    /// <summary>
+    /// 该项目的数据库是否需要 VPN 才能访问。null（存量配置缺字段）视为 true。
+    /// 仅影响连接失败提示文案的分流（提示检查 VPN / 网络），不影响任何执行行为。
+    /// </summary>
+    [JsonPropertyName("requiresVpn")]
+    public bool? RequiresVpn { get; init; }
+
     /// <summary>环境名 → 该环境的数据库配置。环境名自由命名（如 dev/test/prod/xiqing-prod）。</summary>
     [JsonPropertyName("environments")]
     public Dictionary<string, DatabaseConfig> Environments { get; init; } = new();

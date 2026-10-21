@@ -130,6 +130,7 @@ public class ProviderSchemaPlaceholderTests
     {
         ProjectName = "erp",
         Environment = "prod",
+        RequiresVpn = true,
         Type = type,
         ConnectionString = "cs",
         DatabaseName = null,

@@ -29,6 +29,12 @@ public sealed record ResolvedProject
     /// <summary>默认环境名。db_query 未指定 environment 时使用；为空则必须显式指定。</summary>
     public required string? DefaultEnvironment { get; init; }
 
+    /// <summary>
+    /// 该项目是否需要 VPN 访问（存量配置缺字段默认 true）。
+    /// 下发到各环境快照，仅用于连接失败提示文案分流。
+    /// </summary>
+    public required bool RequiresVpn { get; init; }
+
     /// <summary>环境名 → 该环境的最终数据库配置（含合并后的阻止关键字）。</summary>
     public required IReadOnlyDictionary<string, ResolvedDatabase> Environments { get; init; }
 }
@@ -48,6 +54,12 @@ public sealed record ResolvedDatabase
 
     /// <summary>是否允许写操作。已应用 IsProduction 兜底（生产环境强制 false）。</summary>
     public required bool AllowWrite { get; init; }
+
+    /// <summary>
+    /// 该项目是否需要 VPN 访问（项目级下发，存量配置默认 true）。
+    /// 仅供连接失败提示文案分流（VPN / 网络不通），不影响执行行为。
+    /// </summary>
+    public required bool RequiresVpn { get; init; }
 
     public required DatabaseType Type { get; init; }
     public required string ConnectionString { get; init; }
@@ -87,7 +99,8 @@ public static class ResolvedConfigBuilder
     private const int DefaultMaxConcurrency = 10;
     private const int DefaultMaxConcurrencyWaitSeconds = 5;
     private const int DefaultMaxPoolSize = 100;
-    private const int DefaultConnectTimeoutSeconds = 60;
+    // 客户端 MCP 工具超时普遍 30s：建连超时须显著小于它，FAIL 才能先于客户端超时返回（doc/20260901 第三批）
+    private const int DefaultConnectTimeoutSeconds = 15;
 
     public static ResolvedConfig Build(DatabasesConfig raw)
     {
@@ -100,6 +113,9 @@ public static class ResolvedConfigBuilder
         var projects = new Dictionary<string, ResolvedProject>(StringComparer.OrdinalIgnoreCase);
         foreach ((string projectName, ProjectConfig proj) in raw.Projects)
         {
+            // 项目级 requiresVpn：存量配置缺字段（null）默认视为需要 VPN
+            bool requiresVpn = proj.RequiresVpn ?? true;
+
             var envs = new Dictionary<string, ResolvedDatabase>(StringComparer.OrdinalIgnoreCase);
             foreach ((string envName, DatabaseConfig db) in proj.Environments)
             {
@@ -150,6 +166,7 @@ public static class ResolvedConfigBuilder
                     Environment = envName,
                     IsProduction = db.IsProduction,
                     AllowWrite = allowWrite,
+                    RequiresVpn = requiresVpn,
                     Type = db.Type,
                     ConnectionString = finalConnectionString,
                     DatabaseName = ResolveDatabaseName(db.ConnectionString, db.Type),
@@ -167,6 +184,7 @@ public static class ResolvedConfigBuilder
             {
                 ProjectName = projectName,
                 DefaultEnvironment = proj.DefaultEnvironment,
+                RequiresVpn = requiresVpn,
                 Environments = new ReadOnlyDictionary<string, ResolvedDatabase>(envs)
             };
         }

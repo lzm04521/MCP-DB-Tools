@@ -97,6 +97,10 @@ public sealed class AdminProjectDto
     [JsonPropertyName("defaultEnvironment")]
     public string? DefaultEnvironment { get; init; }
 
+    /// <summary>该项目的数据库是否需要 VPN 访问（连接失败提示文案分流）。null 视为 true（存量默认）。</summary>
+    [JsonPropertyName("requiresVpn")]
+    public bool? RequiresVpn { get; init; }
+
     [JsonPropertyName("environments")]
     public List<AdminEnvironmentDto> Environments { get; init; } = new();
 }

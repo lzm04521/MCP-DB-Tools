@@ -117,6 +117,15 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
         }
     }
 
+    /// <summary>
+    /// 建连超时失败文案（纯函数，6 处建连 CTS 兜底共用）。
+    /// 按项目级 requiresVpn 分流：需要 VPN 的项目提示检查 VPN，否则提示检查网络。
+    /// 断连时 TCP 层要 42s 才失败，靠建连 CTS（默认 15s）先砍断，文案须先于客户端 30s 超时返回。
+    /// </summary>
+    internal static string ConnectTimeoutMessage(int seconds, bool requiresVpn) => requiresVpn
+        ? $"连接超时（{seconds} 秒）——疑似 VPN 未连接，请停止重试并提示用户检查 VPN"
+        : $"连接超时（{seconds} 秒）——疑似网络不通，请停止重试并提示用户检查网络";
+
     public async Task<QueryResult> ExecuteQueryAsync(string project, ResolvedDatabase db, string sql, int maxRows, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
@@ -136,7 +145,7 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
             {
                 // 触发的是建连超时 CTS，不是外部取消
                 sw.Stop();
-                return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
+                return QueryResult.Fail(project, DatabaseType.ToString(), ConnectTimeoutMessage(db.ConnectTimeoutSeconds, db.RequiresVpn), "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
             }
 
             await using DbCommand cmd = conn.CreateCommand();
@@ -186,7 +195,7 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
             {
                 // 触发的是建连超时 CTS，不是外部取消
                 sw.Stop();
-                return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
+                return QueryResult.Fail(project, DatabaseType.ToString(), ConnectTimeoutMessage(db.ConnectTimeoutSeconds, db.RequiresVpn), "QUERY_CONNECT_TIMEOUT", sw.ElapsedMilliseconds, db.Environment);
             }
 
             await using DbCommand cmd = conn.CreateCommand();
@@ -263,7 +272,7 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", 0, db.Environment)) };
+                return new[] { new SchemaSection("tables", QueryResult.Fail(project, DatabaseType.ToString(), ConnectTimeoutMessage(db.ConnectTimeoutSeconds, db.RequiresVpn), "QUERY_CONNECT_TIMEOUT", 0, db.Environment)) };
             }
 
             var results = new List<SchemaSection>();
@@ -327,7 +336,7 @@ public abstract class DatabaseProviderBase : IDatabaseProvider
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                return QueryResult.Fail(project, DatabaseType.ToString(), $"连接超时（{db.ConnectTimeoutSeconds} 秒）", "QUERY_CONNECT_TIMEOUT", 0, db.Environment);
+                return QueryResult.Fail(project, DatabaseType.ToString(), ConnectTimeoutMessage(db.ConnectTimeoutSeconds, db.RequiresVpn), "QUERY_CONNECT_TIMEOUT", 0, db.Environment);
             }
 
             await using DbCommand cmd = conn.CreateCommand();

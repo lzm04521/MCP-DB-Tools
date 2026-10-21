@@ -103,6 +103,7 @@ public sealed class AdminConfigService
                 OriginalName = project.Key,
                 DisplayName = project.Value.DisplayName,
                 DefaultEnvironment = project.Value.DefaultEnvironment,
+                RequiresVpn = project.Value.RequiresVpn,
                 Environments = project.Value.Environments
                     .Select(env => new AdminEnvironmentDto
                     {
@@ -271,6 +272,7 @@ public sealed class AdminConfigService
             {
                 DisplayName = NullIfWhiteSpace(project.DisplayName),
                 DefaultEnvironment = defaultEnvironment,
+                RequiresVpn = project.RequiresVpn,
                 Environments = environments
             };
         }
@@ -527,6 +529,7 @@ public sealed class AdminConfigService
             OriginalName = originalName,
             DisplayName = p.DisplayName,
             DefaultEnvironment = p.DefaultEnvironment,
+            RequiresVpn = p.RequiresVpn,
             Environments = envs
         };
     }
@@ -567,6 +570,7 @@ public sealed class AdminConfigService
             {
                 DisplayName = proj.DisplayName,
                 DefaultEnvironment = proj.DefaultEnvironment,
+                RequiresVpn = proj.RequiresVpn,
                 Environments = envs
             };
         }

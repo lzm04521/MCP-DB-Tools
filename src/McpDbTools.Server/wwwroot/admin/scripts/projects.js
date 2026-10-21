@@ -106,6 +106,11 @@
                   <span>默认环境</span>
                   <select id="defaultEnvironment"></select>
                 </label>
+                <!-- 项目级 VPN 标记：仅影响连接失败提示文案（VPN / 网络不通），存量配置缺字段默认勾选 -->
+                <label class="switch-row">
+                  <input id="requiresVpn" type="checkbox" checked />
+                  <span>需要 VPN</span>
+                </label>
               </div>
             </section>
 
@@ -312,7 +317,7 @@
   function collectElements(root) {
     const ids = [
       'projectList', 'emptyState', 'editor', 'projectName', 'projectNameHelp', 'projectDisplayName',
-      'defaultEnvironment', 'copyProjectBtn', 'deleteProjectBtn', 'addEnvironmentBtn',
+      'defaultEnvironment', 'requiresVpn', 'copyProjectBtn', 'deleteProjectBtn', 'addEnvironmentBtn',
       'environmentTabs', 'environmentEditor', 'deleteEnvironmentBtn',
       'testConnectionBtn', 'testConnectionResult',
       'productionWarning', 'allowWriteWarning', 'environmentName', 'environmentNameHelp', 'environmentDisplayName',
@@ -445,6 +450,8 @@
       }
     }
     el.defaultEnvironment.value = project.defaultEnvironment || '';
+    // 存量配置无 requiresVpn 字段（undefined）默认勾选，与后端 null→true 同语义
+    el.requiresVpn.checked = project.requiresVpn !== false;
   }
 
   function renderEnvironmentTabs() {
@@ -514,6 +521,7 @@
       project.name = el.projectName.value.trim();
       project.displayName = window.adminUi.emptyToNull(el.projectDisplayName.value);
       project.defaultEnvironment = window.adminUi.emptyToNull(el.defaultEnvironment.value);
+      project.requiresVpn = el.requiresVpn.checked;
     }
 
     const env = activeEnvironment();
@@ -544,6 +552,7 @@
       originalName: null,
       displayName: null,
       defaultEnvironment: 'Test',
+      requiresVpn: true,
       environments: [createEnvironment('Test')]
     });
     state.selectedProject = state.config.projects.length - 1;
