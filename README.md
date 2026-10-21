@@ -2,6 +2,7 @@
 
 [![release](https://github.com/lzm04521/MCP-DB-Tools/actions/workflows/release.yml/badge.svg)](https://github.com/lzm04521/MCP-DB-Tools/actions/workflows/release.yml)
 [![GitHub release](https://img.shields.io/github/v/release/lzm04521/MCP-DB-Tools)](https://github.com/lzm04521/MCP-DB-Tools/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
 为支持 MCP（Model Context Protocol）的 Agent（[Claude Code](https://docs.anthropic.com/claude-code)、[Codex](https://developers.openai.com/codex) 等）提供安全数据库访问能力的本机工具服务。基于 .NET 8 + 官方 `ModelContextProtocol` SDK（无状态 Streamable HTTP），支持 SQL Server、MySQL、Oracle、PostgreSQL 四种数据库，内置 SQL 安全守卫、多项目多环境配置、审计日志与本机 Admin UI。
 
@@ -535,3 +536,7 @@ McpDbTools.Server.exe --admin-port 61123
 - **v0.11.0**：Admin 管理页全新改版——品牌顶栏 + 左侧图标导航 + 紧凑视觉；新增「关于」页与一键更新
 
 完整变更见 [Releases](https://github.com/lzm04521/MCP-DB-Tools/releases)。
+
+## License
+
+[MIT](./LICENSE) © 2026 lzm04521
