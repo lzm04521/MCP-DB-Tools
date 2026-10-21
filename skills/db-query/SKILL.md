@@ -95,7 +95,7 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 - **读成功（db_query / db_explain）**：首行状态行 `OK {行数} rows @项目/环境 (类型[, offset=N]) {耗时} [truncated, nextOffset=M]`（耗时如 `823ms`/`12.3s`），第 2 行列名，其后数据行 TSV——制表符分列、换行分行、`\N` 表示 NULL、空字段为空字符串；值内 tab/换行/反斜杠转义为 `\t`/`\n`/`\r`/`\\`；二进制列显示 `<binary NB>`（json 档保留 base64）。读语句 ≥5s 时输出末尾附 `提示: 慢查询 …，建议用 db_explain 分析执行计划`。
 - **写成功**：`OK {N} affected @项目/环境 (类型) {耗时}` 单行。
 - **dryRun 预估**：`OK ~{N} affected (estimated) @项目/环境 (类型) {耗时}` 单行。
-- **失败**：`FAIL {错误码} @项目/环境: {错误消息}`（消息可能多行跟随）。db_query 猜列名/表名报错时，消息自动附相关表真实列清单（`表 X 列: ...`）或相近表（`相近表: ...`），直接据此改写 SQL，无需再查 schema。
+- **失败**：`FAIL {错误码} @项目/环境: {错误消息}`（消息可能多行跟随）。db_query 猜列名/表名报错时，消息自动附相关表真实列清单（`表 X 列: ...`，已去重）或相近表（`相近表: ...`），直接据此改写 SQL，无需再查 schema。**连接类失败**（`QUERY_CONNECT_TIMEOUT`，15 秒内快速返回）消息按项目配置提示"疑似 VPN 未连接"或"疑似网络不通"，并明示**请停止重试**——收到即停手并告知用户检查网络/VPN，不要连续盲试（每次重试都白等）。
 - **db_schema**：首行 `OK tables @项目/环境 (类型)`（表模式为 `table=名`，模糊搜为 `tables~模式`，列名反查为 `column=名`），其后每段以 `# 段名 (行数)` 起始 + 列名行 + TSV 数据。
 - **db_list**：项目索引每项目一行 `name (default env)`；环境详情每环境一行（`name→type→databaseName→prod=y|n→write=y|n→maxRows=N`，tab 分列）。
 
@@ -103,7 +103,9 @@ PostgreSQL 标识符未加引号会折叠为小写；不区分大小写的模糊
 
 ## 写影响预估（dryRun）
 
-写环境执行 `UPDATE`/`DELETE` 前，先 `dryRun=true` 预估影响行数（工具变换为 `COUNT` 只读查询，不执行写），返回 `OK ~N affected (estimated)` 状态行；超过预期就缩小 WHERE 范围。限制：仅标准形态（无别名/单表/SET 无子查询）；INSERT/DDL/复杂形态返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用。估算不含触发器影响，审计记 `[dryRun]` 前缀。
+写环境执行 `UPDATE`/`DELETE` 前，先 `dryRun=true` 预估影响行数（工具变换为 `COUNT` 只读查询，不执行写），返回 `OK ~N affected (estimated)` 状态行；超过预期就缩小 WHERE 范围。限制：仅标准形态（无别名/单表/SET 无子查询）；INSERT/DDL/别名/多表/TOP/CTE 等返回 `DRYRUN_UNSUPPORTED`；不可与 `limit`/`offset` 同用。估算不含触发器影响，审计记 `[dryRun]` 前缀。
+
+补表/列中文注释（建表规范类任务）用 `COMMENT ON TABLE t IS '...'` / `COMMENT ON COLUMN t.c IS '...'`，写环境直接放行；只读与生产环境拒绝，不要尝试。
 
 ## 执行计划（db_explain，慢查询分析）
 
